@@ -71,10 +71,7 @@ class ProductRepository:
             if "UNIQUE constraint failed: products.code" in str(error):
                 raise ValueError("Ya existe un producto con ese código.") from error
             raise
-        products = self.find_active(code)
-        if not products or products[0].id != product_id:
-            raise RuntimeError("No se pudo leer el producto actualizado.")
-        return products[0]
+        return Product(product_id, code.strip(), name.strip(), price_cents, stock)
 
     def deactivate(self, product_id: int) -> None:
         with self.database.connect() as connection:
@@ -88,6 +85,8 @@ class SaleRepository:
     def register(self, sale: Sale) -> int:
         validate_sale(sale)
         with self.database.connect() as connection:
+            # Take the write lock up front so concurrent sales cannot oversell.
+            connection.execute("BEGIN IMMEDIATE")
             for item in sale.items:
                 row = connection.execute(
                     "SELECT stock FROM products WHERE id = ? AND active = 1",
@@ -133,10 +132,15 @@ class SaleRepository:
                         item.unit_price_cents,
                     ),
                 )
-                connection.execute(
-                    "UPDATE products SET stock = stock - ? WHERE id = ?",
-                    (item.quantity, item.product_id),
+                updated = connection.execute(
+                    """
+                    UPDATE products SET stock = stock - ?
+                    WHERE id = ? AND active = 1 AND stock >= ?
+                    """,
+                    (item.quantity, item.product_id, item.quantity),
                 )
+                if updated.rowcount != 1:
+                    raise ValueError(f"Stock insuficiente para {item.product_name}.")
             for payment in sale.payments:
                 connection.execute(
                     """

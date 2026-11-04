@@ -4,7 +4,7 @@ import tempfile
 from contextlib import closing
 from pathlib import Path
 
-from suitelocal.infrastructure.database import Database
+from suitelocal.infrastructure.database import REQUIRED_TABLES, Database
 
 
 class BackupError(RuntimeError):
@@ -49,6 +49,12 @@ def restore_backup(
         raise BackupError("El respaldo y la base de datos no pueden ser el mismo archivo.")
 
     try:
+        # Validate the backup completely before the live database is touched.
+        with closing(
+            sqlite3.connect(f"{source_path.resolve().as_uri()}?mode=ro", uri=True)
+        ) as source:
+            _ensure_healthy(source)
+            _ensure_suitelocal_schema(source)
         safety_path = None
         if safety_backup_path is not None:
             safety_path = create_backup(database, safety_backup_path)
@@ -56,7 +62,6 @@ def restore_backup(
             closing(sqlite3.connect(source_path)) as source,
             closing(sqlite3.connect(database.path)) as target,
         ):
-            _ensure_healthy(source)
             source.backup(target)
             target.commit()
             _ensure_healthy(target)
@@ -69,6 +74,12 @@ def _ensure_healthy(connection: sqlite3.Connection) -> None:
     result = connection.execute("PRAGMA integrity_check").fetchone()
     if result is None or result[0] != "ok":
         raise BackupError("La base de datos no superó la comprobación de integridad.")
+
+
+def _ensure_suitelocal_schema(connection: sqlite3.Connection) -> None:
+    rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    if not REQUIRED_TABLES <= {row[0] for row in rows}:
+        raise BackupError("El archivo indicado no pertenece a SuiteLocal.")
 
 
 def _temporary_path(target: Path) -> Path:

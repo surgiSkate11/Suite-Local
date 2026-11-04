@@ -5,6 +5,9 @@ from suitelocal.domain.policies import require_owner
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.security import hash_password, verify_password
 
+# Verified when the username does not exist so a failed login always costs one scrypt run.
+_DUMMY_PASSWORD_HASH = hash_password("suitelocal-dummy-password")
+
 
 class AuthService:
     def __init__(self, database: Database) -> None:
@@ -29,6 +32,7 @@ class AuthService:
         self._validate_password_confirmation(password, password_confirmation)
         password_hash = hash_password(password)
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             if connection.execute("SELECT 1 FROM users LIMIT 1").fetchone():
                 raise ValueError("La instalación ya tiene un usuario.")
             business = connection.execute(
@@ -69,7 +73,9 @@ class AuthService:
                 """,
                 (username.strip(),),
             ).fetchone()
-        if row is None or not row["active"] or not verify_password(password, row["password_hash"]):
+        stored_hash = _DUMMY_PASSWORD_HASH if row is None else row["password_hash"]
+        password_matches = verify_password(password, stored_hash)
+        if row is None or not row["active"] or not password_matches:
             raise ValueError("Usuario o contraseña incorrectos.")
         user = User(row["id"], row["business_id"], row["username"], row["role"], True)
         return Session(user)

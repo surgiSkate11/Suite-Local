@@ -1,5 +1,9 @@
 import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
+
+REQUIRED_TABLES = frozenset({"businesses", "business_settings", "users", "products", "sales"})
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -71,13 +75,22 @@ class Database:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Generator[sqlite3.Connection]:
+        """Open a connection that commits on success, rolls back on error and always closes."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+        connection = sqlite3.connect(self.path, timeout=10)
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA journal_mode = WAL")
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def initialize(self) -> None:
         with self.connect() as connection:
