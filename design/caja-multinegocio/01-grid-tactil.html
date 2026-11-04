@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caja · Grilla táctil</title>
+<style>
+  :root {
+    --brand-900: #0E1E5B; --brand-600: #2B54D6; --brand-500: #3B6BF0; --brand-100: #E6EDFE; --brand-50: #F2F5FF;
+    --bg: #F5F7FB; --surface: #FFFFFF; --border: #E5E9F2; --border-strong: #D3DAE8;
+    --text-900: #0F1B3D; --text-700: #36456B; --text-500: #5E6B8C;
+    --success: #0E8A45; --success-bg: #E7F7EE; --warning: #8A5800; --warning-bg: #FFF4D6; --danger: #C92A45; --danger-bg: #FDEBEE;
+    --r-control: 10px; --r-card: 14px; --r-panel: 18px;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1440px; height: 900px; background: var(--bg); color: var(--text-900); display: grid; grid-template-columns: 76px 1fr 420px; overflow: hidden; }
+  :focus-visible { outline: 3px solid var(--brand-500); outline-offset: 2px; }
+  button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+
+  .rail { background: var(--brand-900); display: flex; flex-direction: column; align-items: center; padding: 18px 0; gap: 8px; }
+  .logo { width: 44px; height: 44px; border-radius: 12px; background: var(--brand-500); color: #fff; display: grid; place-items: center; font-weight: 700; margin-bottom: 18px; }
+  .rail a { width: 52px; height: 52px; border-radius: 12px; display: grid; place-items: center; color: #B9C6F2; text-decoration: none; font-size: 11px; flex-direction: column; }
+  .rail a svg { width: 22px; height: 22px; }
+  .rail a[aria-current="page"] { background: rgba(255,255,255,.12); color: #fff; }
+  .rail .spacer { flex: 1; }
+
+  main { padding: 22px 28px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .topbar { display: flex; align-items: center; gap: 16px; }
+  .topbar h1 { font-size: 22px; font-weight: 650; }
+  .status { display: inline-flex; align-items: center; gap: 8px; background: var(--success-bg); color: var(--success); padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+  .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+  .who { margin-left: auto; color: var(--text-700); font-size: 14px; }
+  .search { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-control); height: 48px; padding: 0 14px; }
+  .search input { border: 0; flex: 1; font: inherit; font-size: 16px; background: none; color: var(--text-900); }
+  .search input:focus { outline: none; }
+  .search:focus-within { border-color: var(--brand-500); box-shadow: 0 0 0 3px var(--brand-100); }
+  kbd { font-family: inherit; font-size: 12px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 6px; padding: 1px 6px; color: var(--text-500); }
+
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { height: 38px; padding: 0 16px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); font-size: 14px; color: var(--text-700); }
+  .chip[aria-pressed="true"] { background: var(--brand-600); color: #fff; border-color: var(--brand-600); }
+
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; overflow: hidden; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 14px; text-align: left; display: flex; flex-direction: column; gap: 10px; min-height: 150px; transition: transform .12s, box-shadow .12s; }
+  .tile:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(15,27,61,.08); }
+  .thumb { height: 64px; border-radius: 10px; display: grid; place-items: center; font-size: 22px; font-weight: 700; color: rgba(15,27,61,.75); }
+  .tile .name { font-size: 14px; font-weight: 600; line-height: 1.3; }
+  .tile .row { display: flex; justify-content: space-between; align-items: center; margin-top: auto; }
+  .price { font-weight: 700; font-size: 16px; }
+  .stock { font-size: 12px; color: var(--text-500); }
+  .stock.low { color: var(--warning); background: var(--warning-bg); padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+
+  aside { background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+  .ticket-head { padding: 22px 24px 14px; display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--border); }
+  .ticket-head h2 { font-size: 18px; }
+  .ticket-head span { color: var(--text-500); font-size: 13px; }
+  .lines { flex: 1; overflow: auto; padding: 8px 24px; list-style: none; }
+  .line { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 14px 0; border-bottom: 1px dashed var(--border); }
+  .line .n { font-weight: 600; font-size: 15px; }
+  .line .t { font-weight: 700; text-align: right; }
+  .stepper { display: inline-flex; align-items: center; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+  .stepper button { width: 32px; height: 30px; font-size: 18px; color: var(--brand-600); }
+  .stepper output { min-width: 32px; text-align: center; font-weight: 600; }
+  .unit { color: var(--text-500); font-size: 13px; align-self: center; text-align: right; }
+  .totals { padding: 16px 24px; border-top: 1px solid var(--border); display: grid; gap: 6px; font-size: 14px; color: var(--text-700); }
+  .totals div { display: flex; justify-content: space-between; }
+  .totals .grand { font-size: 28px; font-weight: 750; color: var(--text-900); margin-top: 6px; }
+  .methods { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 0 24px 12px; }
+  .method { height: 46px; border: 1px solid var(--border-strong); border-radius: var(--r-control); font-weight: 600; font-size: 14px; }
+  .method[aria-pressed="true"] { border: 2px solid var(--brand-600); background: var(--brand-50); color: var(--brand-600); }
+  .pay { margin: 0 24px 24px; height: 60px; border-radius: 14px; background: var(--brand-600); color: #fff; font-size: 19px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; padding: 0 22px; }
+  .pay:hover { background: var(--brand-500); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <nav class="rail" aria-label="Secciones">
+    <div class="logo" aria-hidden="true">SL</div>
+    <a href="#" aria-current="page" title="Caja"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M7 7V4h10v3M3 12h18"/></svg>Caja</a>
+    <a href="#" title="Inventario"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4zM3 7v10l9 4 9-4V7"/></svg>Stock</a>
+    <a href="#" title="Reportes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Reportes</a>
+    <a href="#" title="Clientes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6"/></svg>Equipo</a>
+    <div class="spacer"></div>
+    <a href="#" title="Configuración"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>Ajustes</a>
+  </nav>
+
+  <main>
+    <header class="topbar">
+      <h1>Caja 1</h1>
+      <span class="status">Caja abierta desde 7:02 a. m.</span>
+      <span class="who">Laura Gómez · Cajera</span>
+    </header>
+    <label class="search">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <span class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Buscar producto</span>
+      <input type="search" placeholder="Buscá un producto o escaneá el código de barras">
+      <kbd>F2</kbd>
+    </label>
+    <div class="chips" role="group" aria-label="Categorías">
+      <button class="chip" aria-pressed="true">Todo</button>
+      <button class="chip" aria-pressed="false">Bebidas</button>
+      <button class="chip" aria-pressed="false">Panadería</button>
+      <button class="chip" aria-pressed="false">Despensa</button>
+      <button class="chip" aria-pressed="false">Lácteos</button>
+      <button class="chip" aria-pressed="false">Aseo</button>
+      <button class="chip" aria-pressed="false">Más vendidos</button>
+    </div>
+    <section class="grid" aria-label="Productos">
+      <button class="tile"><span class="thumb" style="background:#FFE3D6">GP</span><span class="name">Gaseosa Postobón Manzana 400 ml</span><span class="row"><span class="price">$ 2.800</span><span class="stock">48 u.</span></span></button>
+      <button class="tile"><span class="thumb" style="background:#FDF1C7">PT</span><span class="name">Pan tajado Bimbo 600 g</span><span class="row"><span class="price">$ 7.900</span><span class="stock low">3 u.</span></span></button>
+      <button class="tile"><span class="thumb" style="background:#E6EDFE">AD</span><span class="name">Arroz Diana 500 g</span><span class="row"><span class="price">$ 3.200</span><span class="stock">62 u.</span></span></button>
+      <button class="tile"><span class="thumb" style="background:#E7F7EE">LA</span><span class="name">Leche Alquería entera 1 L</span><span class="row"><span class="price">$ 4.600</span><span class="stock">24 u.</span></span></button>
+      <button class="tile"><span class="thumb" style="background:#F3E8FF">HC</span><span class="name">Huevos AA x 12</span><span class="row"><span class="price">$ 9.500</span><span class="stock">15 u.</span></span></button>
+      <button class="tile"><span class="thumb" style="background:#FFE3D6">CC</span><span class="name">Café Sello Rojo 250 g</span><span class="row"><span class="price">$ 11.200</span><span class="stock">20 u.</span></span></button>
+      <button class="tile"><span class="thumb" style="background:#E6EDFE">AA</span><span class="name">Agua Cristal 600 ml</span><span class="row"><span class="price">$ 1.900</span><span class="stock">80 u.</span></span></button>
+      <button class="tile"><span class="thumb" style="background:#FDF1C7">AP</span><span class="name">Aceite Premier 900 ml</span><span class="row"><span class="price">$ 13.900</span><span class="stock low">2 u.</span></span></button>
+      <button class="tile"><span class="thumb" style="background:#E7F7EE">JF</span><span class="name">Jabón Fab 500 g</span><span class="row"><span class="price">$ 6.300</span><span class="stock">18 u.</span></span></button>
+      <button class="tile"><span class="thumb" style="background:#F3E8FF">CJ</span><span class="name">Chocolatina Jet x 6</span><span class="row"><span class="price">$ 5.400</span><span class="stock">30 u.</span></span></button>
+    </section>
+  </main>
+
+  <aside aria-label="Venta actual">
+    <div class="ticket-head"><h2>Venta actual</h2><span>4 productos · Cliente general</span></div>
+    <ul class="lines">
+      <li class="line"><span class="n">Arroz Diana 500 g</span><span class="t">$ 6.400</span><span class="stepper"><button aria-label="Quitar uno">−</button><output>2</output><button aria-label="Agregar uno">+</button></span><span class="unit">$ 3.200 c/u</span></li>
+      <li class="line"><span class="n">Leche Alquería entera 1 L</span><span class="t">$ 4.600</span><span class="stepper"><button aria-label="Quitar uno">−</button><output>1</output><button aria-label="Agregar uno">+</button></span><span class="unit">$ 4.600 c/u</span></li>
+      <li class="line"><span class="n">Huevos AA x 12</span><span class="t">$ 9.500</span><span class="stepper"><button aria-label="Quitar uno">−</button><output>1</output><button aria-label="Agregar uno">+</button></span><span class="unit">$ 9.500 c/u</span></li>
+      <li class="line"><span class="n">Gaseosa Postobón Manzana 400 ml</span><span class="t">$ 2.800</span><span class="stepper"><button aria-label="Quitar uno">−</button><output>1</output><button aria-label="Agregar uno">+</button></span><span class="unit">$ 2.800 c/u</span></li>
+    </ul>
+    <div class="totals">
+      <div><span>Subtotal</span><span>$ 19.664</span></div>
+      <div><span>IVA 19 %</span><span>$ 3.636</span></div>
+      <div class="grand"><span>Total</span><span>$ 23.300</span></div>
+    </div>
+    <div class="methods" role="group" aria-label="Forma de pago">
+      <button class="method" aria-pressed="true">Efectivo</button>
+      <button class="method" aria-pressed="false">Transferencia</button>
+      <button class="method" aria-pressed="false">Tarjeta</button>
+    </div>
+    <button class="pay"><span>Cobrar</span><span>$ 23.300 <kbd style="color:#fff;border-color:rgba(255,255,255,.5)">F4</kbd></span></button>
+  </aside>
+</body>
+</html>

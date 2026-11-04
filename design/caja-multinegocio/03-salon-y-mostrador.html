@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caja · Salón y mostrador</title>
+<style>
+  :root {
+    --cream: #FBF7F2; --paper: #FFFFFF; --sand: #F1E8DC; --line: #E7DCCD;
+    --cocoa: #2B1D14; --cocoa-2: #5A4636; --muted: #7A6656;
+    --terra: #B4462C; --terra-dark: #93361F; --terra-soft: #FBE7E1;
+    --olive: #3F6B2A; --olive-soft: #E6F0DF; --gold: #8A5800; --gold-soft: #FFF1D2;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1440px; height: 900px; background: var(--cream); color: var(--cocoa); display: grid; grid-template-columns: 1fr 460px; overflow: hidden; }
+  :focus-visible { outline: 3px solid var(--terra); outline-offset: 2px; }
+  button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+
+  main { padding: 24px 28px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .top { display: flex; align-items: center; gap: 18px; }
+  .brand { font-size: 22px; font-weight: 750; letter-spacing: -.2px; }
+  .brand small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+  .tabs { display: flex; background: var(--sand); border-radius: 12px; padding: 4px; margin-left: 12px; }
+  .tabs button { padding: 9px 18px; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--cocoa-2); }
+  .tabs button[aria-selected="true"] { background: var(--paper); color: var(--cocoa); box-shadow: 0 1px 3px rgba(43,29,20,.12); }
+  .legend { margin-left: auto; display: flex; gap: 14px; font-size: 13px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+
+  .zones { display: flex; gap: 8px; }
+  .zone { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper); font-size: 13px; color: var(--cocoa-2); }
+  .zone[aria-pressed="true"] { background: var(--cocoa); color: #fff; border-color: var(--cocoa); }
+
+  .floor { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+  .table { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; padding: 16px; text-align: left; display: flex; flex-direction: column; gap: 8px; min-height: 132px; position: relative; }
+  .table .num { font-size: 24px; font-weight: 750; }
+  .table .meta { font-size: 13px; color: var(--muted); }
+  .table .amt { margin-top: auto; font-weight: 700; font-size: 15px; }
+  .table .pill { position: absolute; top: 14px; right: 14px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
+  .free { border-style: dashed; background: transparent; }
+  .free .pill { background: var(--olive-soft); color: var(--olive); }
+  .busy .pill { background: var(--terra-soft); color: var(--terra-dark); }
+  .bill .pill { background: var(--gold-soft); color: var(--gold); }
+  .bill { border-color: #E9C98B; }
+  .selected { border: 2px solid var(--terra); box-shadow: 0 10px 24px rgba(180,70,44,.15); }
+
+  .counter { display: flex; gap: 12px; align-items: center; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; font-size: 14px; color: var(--cocoa-2); }
+  .counter b { color: var(--cocoa); }
+  .counter button { margin-left: auto; padding: 8px 14px; border-radius: 9px; background: var(--sand); font-weight: 600; }
+
+  aside { background: var(--paper); border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+  .order-head { padding: 22px 24px 16px; border-bottom: 1px solid var(--line); }
+  .order-head h2 { font-size: 20px; }
+  .order-head p { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .items { list-style: none; padding: 6px 24px; flex: 1; overflow: auto; }
+  .item { display: grid; grid-template-columns: 32px 1fr auto; gap: 2px 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .item .q { font-weight: 700; color: var(--terra); }
+  .item .name { font-weight: 600; }
+  .item .price { font-weight: 700; text-align: right; }
+  .item .note { grid-column: 2 / 4; font-size: 13px; color: var(--muted); font-style: italic; }
+  .item .state { grid-column: 2 / 4; font-size: 12px; font-weight: 600; }
+  .sent { color: var(--olive); }
+  .pending { color: var(--gold); }
+
+  .tip { padding: 14px 24px; border-top: 1px solid var(--line); }
+  .tip legend { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  .tip fieldset { border: 0; padding: 0; }
+  .tip-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .tip-options button { height: 40px; border-radius: 10px; border: 1px solid var(--line); font-weight: 600; font-size: 14px; }
+  .tip-options button[aria-pressed="true"] { border: 2px solid var(--terra); background: var(--terra-soft); color: var(--terra-dark); }
+  .sum { padding: 4px 24px 14px; display: grid; gap: 6px; font-size: 14px; color: var(--cocoa-2); }
+  .sum div { display: flex; justify-content: space-between; }
+  .sum .grand { font-size: 26px; font-weight: 750; color: var(--cocoa); }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 24px 24px; }
+  .btn { height: 52px; border-radius: 12px; font-weight: 700; font-size: 15px; border: 1px solid var(--line); }
+  .btn.primary { grid-column: 1 / 3; height: 60px; background: var(--terra); color: #fff; border: 0; font-size: 18px; }
+  .btn.primary:hover { background: var(--terra-dark); }
+  .btn.kitchen { background: var(--cocoa); color: #fff; border: 0; }
+</style>
+</head>
+<body>
+  <main>
+    <div class="top">
+      <div class="brand">Café La Esquina<small>Sesión de Camila · Caja abierta 6:45 a. m.</small></div>
+      <div class="tabs" role="tablist" aria-label="Modo de venta">
+        <button role="tab" aria-selected="false">Mostrador</button>
+        <button role="tab" aria-selected="true">Salón</button>
+        <button role="tab" aria-selected="false">Domicilios</button>
+      </div>
+      <div class="legend" aria-hidden="true"><span><i style="background:var(--olive)"></i>Libre</span><span><i style="background:var(--terra)"></i>Ocupada</span><span><i style="background:#D99A2B"></i>Pidió la cuenta</span></div>
+    </div>
+    <div class="zones" role="group" aria-label="Zonas">
+      <button class="zone" aria-pressed="true">Salón principal</button>
+      <button class="zone" aria-pressed="false">Terraza</button>
+      <button class="zone" aria-pressed="false">Barra</button>
+    </div>
+    <section class="floor" aria-label="Mesas del salón principal">
+      <button class="table busy"><span class="pill">Ocupada</span><span class="num">1</span><span class="meta">2 personas · 35 min</span><span class="amt">$ 28.000</span></button>
+      <button class="table free"><span class="pill">Libre</span><span class="num">2</span><span class="meta">4 puestos</span></button>
+      <button class="table bill"><span class="pill">Cuenta</span><span class="num">3</span><span class="meta">3 personas · 1 h 10 min</span><span class="amt">$ 64.500</span></button>
+      <button class="table busy selected" aria-current="true"><span class="pill">Ocupada</span><span class="num">4</span><span class="meta">2 personas · 18 min · Julián</span><span class="amt">$ 31.200</span></button>
+      <button class="table free"><span class="pill">Libre</span><span class="num">5</span><span class="meta">2 puestos</span></button>
+      <button class="table free"><span class="pill">Libre</span><span class="num">6</span><span class="meta">6 puestos</span></button>
+      <button class="table busy"><span class="pill">Ocupada</span><span class="num">7</span><span class="meta">4 personas · 8 min</span><span class="amt">$ 12.000</span></button>
+      <button class="table free"><span class="pill">Libre</span><span class="num">8</span><span class="meta">4 puestos</span></button>
+      <button class="table busy"><span class="pill">Ocupada</span><span class="num">9</span><span class="meta">1 persona · 52 min</span><span class="amt">$ 9.800</span></button>
+      <button class="table free"><span class="pill">Libre</span><span class="num">10</span><span class="meta">2 puestos</span></button>
+    </section>
+    <div class="counter"><span>Mostrador: <b>3 pedidos para llevar</b> en preparación · el más antiguo hace 6 min</span><button>Ver pedidos</button></div>
+  </main>
+
+  <aside aria-label="Comanda de la mesa 4">
+    <div class="order-head"><h2>Mesa 4 · Comanda #212</h2><p>Mesero Julián · abierta 9:12 a. m.</p></div>
+    <ul class="items">
+      <li class="item"><span class="q">2×</span><span class="name">Café con leche grande</span><span class="price">$ 9.000</span><span class="note">Uno deslactosado, sin azúcar</span><span class="state sent">✓ Enviado a barra</span></li>
+      <li class="item"><span class="q">1×</span><span class="name">Calentado paisa</span><span class="price">$ 16.500</span><span class="note">Huevos revueltos</span><span class="state sent">✓ Enviado a cocina</span></li>
+      <li class="item"><span class="q">1×</span><span class="name">Pandebono</span><span class="price">$ 2.700</span><span class="state pending">● Sin enviar</span></li>
+      <li class="item"><span class="q">1×</span><span class="name">Jugo de mora en agua</span><span class="price">$ 3.000</span><span class="state pending">● Sin enviar</span></li>
+    </ul>
+    <div class="tip">
+      <fieldset><legend>Propina sugerida (voluntaria)</legend>
+        <div class="tip-options"><button aria-pressed="false">Sin propina</button><button aria-pressed="true">10 %</button><button aria-pressed="false">15 %</button><button aria-pressed="false">Otra</button></div>
+      </fieldset>
+    </div>
+    <div class="sum">
+      <div><span>Consumo</span><span>$ 31.200</span></div>
+      <div><span>Propina 10 %</span><span>$ 3.120</span></div>
+      <div class="grand"><span>Total</span><span>$ 34.320</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn kitchen">Enviar 2 a cocina</button>
+      <button class="btn">Imprimir precuenta</button>
+      <button class="btn primary">Cobrar mesa 4 · $ 34.320</button>
+    </div>
+  </aside>
+</body>
+</html>

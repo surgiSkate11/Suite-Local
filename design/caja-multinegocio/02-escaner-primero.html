@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caja · Escáner primero</title>
+<style>
+  :root {
+    --ink: #111827; --ink-2: #1F2937; --ink-3: #374151; --muted: #6B7280; --line: #E5E7EB; --paper: #FFFFFF; --bg: #F3F4F6;
+    --accent: #0B7A4B; --accent-2: #0E9F62; --accent-soft: #E3F5EC; --amber: #8A5800; --amber-soft: #FFF4D6;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1440px; height: 900px; background: var(--bg); color: var(--ink); display: grid; grid-template-rows: 64px 1fr 40px; overflow: hidden; }
+  :focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
+  button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+  kbd { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25); border-radius: 5px; padding: 1px 6px; }
+
+  header { background: var(--ink); color: #F9FAFB; display: flex; align-items: center; gap: 24px; padding: 0 24px; }
+  .brand { font-weight: 700; font-size: 17px; letter-spacing: .2px; }
+  header nav { display: flex; gap: 4px; }
+  header nav a { color: #D1D5DB; text-decoration: none; padding: 8px 14px; border-radius: 8px; font-size: 14px; }
+  header nav a[aria-current="page"] { background: rgba(255,255,255,.1); color: #fff; }
+  .shift { margin-left: auto; font-size: 13px; color: #D1D5DB; display: flex; gap: 18px; }
+  .shift b { color: #fff; }
+
+  .work { display: grid; grid-template-columns: 1fr 440px; gap: 0; min-height: 0; }
+  .left { padding: 22px 24px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  .scan { display: flex; align-items: center; gap: 14px; background: var(--paper); border: 2px solid var(--accent); border-radius: 12px; height: 68px; padding: 0 18px; box-shadow: 0 0 0 4px var(--accent-soft); }
+  .scan svg { color: var(--accent); flex: none; }
+  .scan input { flex: 1; border: 0; font: inherit; font-size: 22px; font-family: "Cascadia Mono", Consolas, monospace; color: var(--ink); background: none; }
+  .scan input:focus { outline: none; }
+  .scan .qty { font-size: 14px; color: var(--muted); border-left: 1px solid var(--line); padding-left: 14px; }
+  .scan .qty b { color: var(--ink); font-size: 18px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--paper); border-radius: 12px; overflow: hidden; font-size: 15px; }
+  caption { text-align: left; font-size: 13px; color: var(--muted); padding-bottom: 8px; }
+  th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 600; padding: 12px 16px; border-bottom: 1px solid var(--line); background: #FAFAFA; }
+  td { padding: 13px 16px; border-bottom: 1px solid var(--line); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.code { font-family: "Cascadia Mono", Consolas, monospace; color: var(--muted); font-size: 13px; }
+  tr.last td { background: var(--accent-soft); }
+  tr.last td:first-child { box-shadow: inset 4px 0 0 var(--accent); }
+  .tag { font-size: 11px; font-weight: 700; color: var(--amber); background: var(--amber-soft); padding: 2px 7px; border-radius: 999px; margin-left: 8px; }
+
+  .right { background: var(--ink-2); color: #F9FAFB; padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+  .total-label { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #9CA3AF; }
+  .total { font-size: 64px; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1; }
+  .breakdown { display: grid; grid-template-columns: 1fr auto; gap: 6px; font-size: 14px; color: #D1D5DB; padding-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,.12); }
+  .breakdown span:nth-child(even) { text-align: right; font-variant-numeric: tabular-nums; }
+  .cash { display: grid; gap: 10px; }
+  .cash label { font-size: 13px; color: #D1D5DB; }
+  .cash input { height: 52px; border-radius: 10px; border: 1px solid rgba(255,255,255,.2); background: var(--ink-3); color: #fff; font: inherit; font-size: 24px; padding: 0 14px; font-variant-numeric: tabular-nums; }
+  .quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .quick button { height: 40px; border-radius: 8px; background: rgba(255,255,255,.08); font-size: 14px; }
+  .change { display: flex; justify-content: space-between; align-items: baseline; background: rgba(14,159,98,.18); border: 1px solid rgba(14,159,98,.5); border-radius: 12px; padding: 14px 16px; }
+  .change b { font-size: 30px; font-variant-numeric: tabular-nums; }
+  .pay { margin-top: auto; height: 64px; border-radius: 12px; background: var(--accent-2); color: #fff; font-size: 20px; font-weight: 700; }
+  .keys { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: 13px; color: #D1D5DB; }
+  .keys div { display: flex; gap: 8px; align-items: center; }
+
+  footer { background: var(--paper); border-top: 1px solid var(--line); display: flex; align-items: center; gap: 22px; padding: 0 24px; font-size: 13px; color: var(--muted); }
+  .ok::before { content: "●"; color: var(--accent-2); margin-right: 6px; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">Minimercado La 14</span>
+    <nav aria-label="Secciones">
+      <a href="#" aria-current="page">Caja</a><a href="#">Inventario</a><a href="#">Reportes</a><a href="#">Cierre de caja</a><a href="#">Ajustes</a>
+    </nav>
+    <div class="shift"><span>Turno <b>mañana</b></span><span>Cajero <b>Andrés Ríos</b></span><span>Ventas hoy <b>37</b></span></div>
+  </header>
+
+  <div class="work">
+    <main class="left">
+      <label class="scan">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M16 8v8"/></svg>
+        <span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Código de barras o nombre</span>
+        <input value="7702354" aria-describedby="scan-hint">
+        <span class="qty" id="scan-hint">Cantidad <b>×1</b> · <span>escribí 3* para multiplicar</span></span>
+      </label>
+      <table>
+        <caption>Venta #1.284 · 5 líneas · el último producto escaneado queda resaltado</caption>
+        <thead><tr><th>Código</th><th>Producto</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">Subtotal</th></tr></thead>
+        <tbody>
+          <tr><td class="code">7702189000124</td><td>Arroz Diana 500 g</td><td class="num">2</td><td class="num">$ 3.200</td><td class="num">$ 6.400</td></tr>
+          <tr><td class="code">7702001043215</td><td>Leche Alquería entera 1 L</td><td class="num">1</td><td class="num">$ 4.600</td><td class="num">$ 4.600</td></tr>
+          <tr><td class="code">7702024002917</td><td>Aceite Premier 900 ml<span class="tag">Quedan 2</span></td><td class="num">1</td><td class="num">$ 13.900</td><td class="num">$ 13.900</td></tr>
+          <tr><td class="code">7707211500093</td><td>Papa pastusa (kg)</td><td class="num">1,250</td><td class="num">$ 2.400</td><td class="num">$ 3.000</td></tr>
+          <tr class="last"><td class="code">7702354931207</td><td>Gaseosa Postobón Manzana 400 ml</td><td class="num">3</td><td class="num">$ 2.800</td><td class="num">$ 8.400</td></tr>
+        </tbody>
+      </table>
+    </main>
+
+    <aside class="right" aria-label="Cobro">
+      <div><div class="total-label">Total a cobrar</div><div class="total">$ 36.300</div></div>
+      <div class="breakdown"><span>Subtotal</span><span>$ 30.504</span><span>IVA</span><span>$ 5.796</span><span>Artículos</span><span>8,25</span></div>
+      <div class="cash">
+        <label for="received">Recibido en efectivo</label>
+        <input id="received" value="$ 50.000" inputmode="numeric">
+        <div class="quick" role="group" aria-label="Billetes rápidos"><button>Exacto</button><button>$ 40.000</button><button>$ 50.000</button><button>$ 100.000</button></div>
+      </div>
+      <div class="change"><span>Cambio</span><b>$ 13.700</b></div>
+      <button class="pay">Cobrar e imprimir ticket</button>
+      <div class="keys" aria-label="Atajos de teclado">
+        <div><kbd>F4</kbd> Cobrar</div><div><kbd>F6</kbd> Descuento</div>
+        <div><kbd>F8</kbd> Suspender venta</div><div><kbd>Supr</kbd> Quitar línea</div>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    <span class="ok">Funcionando sin internet</span>
+    <span class="ok">Impresora térmica conectada</span>
+    <span>Último respaldo: hoy 6:00 a. m.</span>
+    <span style="margin-left:auto">Base de caja: $ 150.000 · Efectivo esperado: $ 812.400</span>
+  </footer>
+</body>
+</html>

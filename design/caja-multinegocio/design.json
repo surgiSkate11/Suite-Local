@@ -1,0 +1,10 @@
+{
+  "title": "Caja multinegocio",
+  "brief": "Rediseño de la pantalla de caja de SuiteLocal para tiendas/minimarkets y cafeterías/restaurantes, con apertura de caja, cobro rápido, tickets y personalización por tipo de negocio",
+  "feature": "odd/tasks/rediseno-multinegocio.md",
+  "artboards": [
+    { "file": "01-grid-tactil.html", "title": "Grilla táctil", "tradeoff": "Rápida con mouse o pantalla táctil y fácil de aprender; con catálogos grandes depende de buscar y de las categorías", "width": 1440, "height": 900 },
+    { "file": "02-escaner-primero.html", "title": "Escáner primero", "tradeoff": "La más veloz para minimarkets con lector de código de barras y teclado; menos visual y más dura para quien recién empieza", "width": 1440, "height": 900 },
+    { "file": "03-salon-y-mostrador.html", "title": "Salón y mostrador", "tradeoff": "Resuelve mesas, comandas y propinas de una cafetería; para una tienda sobra, así que solo se muestra con el perfil cafetería", "width": 1440, "height": 900 }
+  ]
+}
