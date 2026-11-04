@@ -1,4 +1,4 @@
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtGui import QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -27,6 +27,8 @@ from suitelocal.ui.theme.icons import icon
 
 
 class AppShell(QMainWindow):
+    logout_requested = Signal()
+
     def __init__(
         self,
         products: ProductRepository,
@@ -118,7 +120,7 @@ class AppShell(QMainWindow):
         logout = QPushButton("Cerrar sesión")
         logout.setObjectName("logoutButton")
         logout.setIcon(icon("logout", "#FFFFFF", 16))
-        logout.clicked.connect(self.close)
+        logout.clicked.connect(self._logout)
         sidebar_layout = QVBoxLayout()
         sidebar_layout.setContentsMargins(16, 18, 16, 18)
         sidebar_layout.setSpacing(10)
@@ -176,6 +178,10 @@ class AppShell(QMainWindow):
         self._set_sidebar_collapsed(self.width() < 1200)
         self.pos_widget.sale_registered.connect(self.dashboard.refresh)
         self.dashboard.quick_action.clicked.connect(lambda: self.pages.setCurrentIndex(1))
+
+    def _logout(self) -> None:
+        self.logout_requested.emit()
+        self.close()
 
     def _add_page(self, page: QWidget) -> None:
         page.setObjectName("pageContent")

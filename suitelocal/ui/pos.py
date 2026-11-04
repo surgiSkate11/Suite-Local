@@ -190,10 +190,19 @@ class PosWidget(QWidget):
         layout.setSpacing(16)
         layout.addLayout(heading)
         layout.addLayout(content)
-        shortcut = QShortcut(QKeySequence("Ctrl+Enter"), self)
-        shortcut.activated.connect(confirm_button.click)
+        for sequence in ("Ctrl+Return", "Ctrl+Enter"):
+            confirm_shortcut = QShortcut(QKeySequence(sequence), self)
+            confirm_shortcut.activated.connect(confirm_button.click)
+        remove_shortcut = QShortcut(QKeySequence("Delete"), self)
+        remove_shortcut.activated.connect(self.remove_selected_line)
+        quantity_shortcut = QShortcut(QKeySequence("F2"), self)
+        quantity_shortcut.activated.connect(self.edit_selected_quantity)
         self._compact_layout = False
         self._relayout(900)
+        self.refresh_products()
+        self.refresh_cart()
+        self._update_payment_fields()
+        self.search_input.setFocus()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -214,14 +223,6 @@ class PosWidget(QWidget):
             self.content_grid.addWidget(self.products_box, 0, 0)
             self.content_grid.addWidget(self.cart_box, 0, 1)
             self.content_grid.setColumnMinimumWidth(1, 400)
-        remove_shortcut = QShortcut(QKeySequence("Delete"), self)
-        remove_shortcut.activated.connect(self.remove_selected_line)
-        quantity_shortcut = QShortcut(QKeySequence("F2"), self)
-        quantity_shortcut.activated.connect(self.edit_selected_quantity)
-        self.refresh_products()
-        self.refresh_cart()
-        self._update_payment_fields()
-        self.search_input.setFocus()
 
     def refresh_products(self) -> None:
         self.product_list.clear()
