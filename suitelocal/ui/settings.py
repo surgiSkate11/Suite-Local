@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -9,7 +10,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -19,9 +19,12 @@ from PySide6.QtWidgets import (
 from suitelocal.infrastructure.backups import BackupError, create_backup, restore_backup
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
+from suitelocal.ui.components import InlineMessage, confirm_action
 
 
 class SettingsWidget(QWidget):
+    notification = Signal(str, str)
+
     def __init__(
         self,
         settings: BusinessSettingsRepository,
@@ -50,8 +53,7 @@ class SettingsWidget(QWidget):
         self.card.setMinimumWidth(0)
         save = QPushButton("Guardar configuración")
         save.clicked.connect(self.save)
-        self.message = QLabel()
-        self.message.setObjectName("inlineMessage")
+        self.message = InlineMessage()
         form = QFormLayout()
         form.addRow("Nombre del negocio:", self.name)
         form.addRow("Símbolo monetario:", self.currency)
@@ -140,9 +142,12 @@ class SettingsWidget(QWidget):
                 self.tax_rate.text(),
             )
         except ValueError as error:
-            QMessageBox.warning(self, "No se puede guardar", str(error))
+            self.message.show_error(str(error))
             return
-        self.message.setText(f"Configuración de {self.name.text().strip()} actualizada.")
+        self.message.clear_message()
+        self.notification.emit(
+            f"Configuración de {self.name.text().strip()} actualizada.", "success"
+        )
 
     def create_backup(self) -> None:
         destination, _ = QFileDialog.getSaveFileName(
@@ -156,9 +161,10 @@ class SettingsWidget(QWidget):
         try:
             path = create_backup(self.database, destination)
         except BackupError as error:
-            QMessageBox.warning(self, "No se pudo crear el respaldo", str(error))
+            self.message.show_error(f"No se pudo crear el respaldo. {error}")
             return
-        self.message.setText(f"Respaldo creado: {path.name}.")
+        self.message.clear_message()
+        self.notification.emit(f"Respaldo creado: {path.name}.", "success")
 
     def restore_backup(self) -> None:
         source, _ = QFileDialog.getOpenFileName(
@@ -169,14 +175,11 @@ class SettingsWidget(QWidget):
         )
         if not source:
             return
-        answer = QMessageBox.question(
+        if not confirm_action(
             self,
             "Confirmar restauración",
             "La restauración reemplazará los datos actuales del negocio. ¿Deseas continuar?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             safety_path = (
@@ -186,9 +189,9 @@ class SettingsWidget(QWidget):
             )
             restore_backup(self.database, source, safety_path)
         except BackupError as error:
-            QMessageBox.warning(self, "No se pudo restaurar", str(error))
+            self.message.show_error(f"No se pudo restaurar. {error}")
             return
-        self.message.setText(
+        self.message.show_success(
             "Restauración completada. "
             f"Copia de seguridad previa: {safety_path.name}. "
             "Reinicia SuiteLocal para cargar los datos restaurados."

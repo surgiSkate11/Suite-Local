@@ -176,6 +176,11 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         border-radius: {tokens.radius_control}px;
         padding: 8px 10px;
     }}
+    #inlineMessage[state="error"] {{
+        color: {tokens.danger};
+        background: {tokens.danger_background};
+        border: 1px solid {tokens.danger_border};
+    }}
     #textField[state="error"] {{
         border: 1px solid {tokens.danger};
     }}
@@ -243,6 +248,11 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     }}
     #toast[state="success"] {{ border-left: 4px solid {tokens.success}; }}
     #toast[state="danger"] {{ border-left: 4px solid {tokens.danger}; }}
+    #toast[state="info"] {{ border-left: 4px solid {tokens.info}; }}
+    #toastText {{ color: {tokens.text_900}; }}
+    #toastClose {{ background: transparent; border-radius: 14px; min-height: 0; padding: 0; }}
+    #toastClose:hover {{ background: {tokens.background}; }}
+    #dangerAction {{ background: {tokens.danger}; color: {tokens.surface}; }}
     #appDialog, #drawer {{ background: {tokens.surface}; border-radius: {tokens.radius_panel}px; }}
     #ghostButton {{ background: transparent; color: {tokens.text_500}; padding: 0; }}
     #sidebar {{

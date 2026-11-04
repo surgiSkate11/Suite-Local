@@ -20,6 +20,7 @@ from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
+from suitelocal.ui.components import ToastHost
 from suitelocal.ui.dashboard import DashboardWidget
 from suitelocal.ui.inventory import InventoryWidget
 from suitelocal.ui.pos import PosWidget
@@ -64,12 +65,18 @@ class AppShell(QMainWindow):
         self._add_page(self.pos_widget)
         labels = ["Panel principal", "Caja"]
         if session.is_owner:
-            self._add_page(InventoryWidget(products, session))
+            inventory = InventoryWidget(products, session)
+            inventory.notification.connect(self._show_toast)
+            self._add_page(inventory)
             from suitelocal.ui.settings import SettingsWidget
             from suitelocal.ui.users import UsersWidget
 
-            self._add_page(SettingsWidget(settings, session.user.business_id, database))
-            self._add_page(UsersWidget(auth, session))
+            settings_page = SettingsWidget(settings, session.user.business_id, database)
+            settings_page.notification.connect(self._show_toast)
+            self._add_page(settings_page)
+            users = UsersWidget(auth, session)
+            users.notification.connect(self._show_toast)
+            self._add_page(users)
             labels.extend(["Inventario", "Configuración", "Usuarios"])
 
         navigation = QListWidget()
@@ -175,12 +182,17 @@ class AppShell(QMainWindow):
         container.setObjectName("centralContainer")
         container.setLayout(layout)
         self.setCentralWidget(container)
+        self.toasts = ToastHost(container)
+        self.pos_widget.notification.connect(self._show_toast)
         self.top_date = date
         self.top_account = account
         self._sidebar_collapsed = False
         self._set_sidebar_collapsed(self.width() < 1200)
         self.pos_widget.sale_registered.connect(self.dashboard.refresh)
         self.dashboard.quick_action.clicked.connect(lambda: self.pages.setCurrentIndex(1))
+
+    def _show_toast(self, message: str, state: str) -> None:
+        self.toasts.show_toast(message, state)
 
     def _logout(self) -> None:
         self.logout_requested.emit()

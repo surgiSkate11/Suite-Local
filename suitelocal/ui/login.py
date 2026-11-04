@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -13,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session
+from suitelocal.ui.components import InlineMessage
 
 
 def add_field(form: QFormLayout, label: str, field: QLineEdit) -> None:
@@ -88,6 +88,7 @@ class SetupDialog(QDialog):
         self.password_confirmation = QLineEdit()
         self.password_confirmation.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_confirmation.setPlaceholderText("Repite la contraseña")
+        self.message = InlineMessage()
         save = QPushButton("Crear instalación")
         save.setObjectName("authButton")
         save.clicked.connect(self.create_owner)
@@ -99,6 +100,7 @@ class SetupDialog(QDialog):
         add_field(form, "Confirmar contraseña", self.password_confirmation)
         layout.addSpacing(20)
         layout.addLayout(form)
+        layout.addWidget(self.message)
         layout.addWidget(save)
         layout.addStretch()
 
@@ -111,7 +113,7 @@ class SetupDialog(QDialog):
                 self.password_confirmation.text(),
             )
         except ValueError as error:
-            QMessageBox.warning(self, "No se puede configurar", str(error))
+            self.message.show_error(str(error))
             return
         self.accept()
 

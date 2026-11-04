@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QTableWidgetItem,
     QVBoxLayout,
@@ -33,6 +32,7 @@ def format_money(cents: int, currency_symbol: str = "$") -> str:
 
 class PosWidget(QWidget):
     sale_registered = Signal()
+    notification = Signal(str, str)
 
     def __init__(
         self,
@@ -269,7 +269,7 @@ class PosWidget(QWidget):
         try:
             self.cart.add(product)
         except ValueError as error:
-            QMessageBox.warning(self, "No se puede agregar", str(error))
+            self.notification.emit(f"No se puede agregar. {error}", "danger")
             self.scanner_status.setText(str(error))
             self.scanner_status.setProperty("state", "error")
             self._refresh_scanner_status()
@@ -318,7 +318,7 @@ class PosWidget(QWidget):
         try:
             self.cart.set_quantity(product_id, quantity)
         except ValueError as error:
-            QMessageBox.warning(self, "No se puede cambiar la cantidad", str(error))
+            self.notification.emit(f"No se puede cambiar la cantidad. {error}", "danger")
             return
         self.refresh_cart()
 
@@ -371,25 +371,18 @@ class PosWidget(QWidget):
             sale = self.cart.to_sale(payments)
             sale_id = self.sales.register(sale)
         except (ValueError, SaleError) as error:
-            QMessageBox.warning(self, "No se puede confirmar", str(error))
+            self.notification.emit(f"No se puede confirmar. {error}", "danger")
             return
-        paid = sale.payment_cents
-        summary = (
-            f"Venta N.º {sale_id} registrada correctamente.\n\n"
-            f"Subtotal: {format_money(sale.subtotal_cents, self.currency_symbol)}\n"
-            f"IVA ({sale.tax_rate_basis_points / 100:g}%): "
-            f"{format_money(sale.tax_cents, self.currency_symbol)}\n"
-            f"Total: {format_money(sale.total_cents, self.currency_symbol)}\n"
-            f"Pago recibido: {format_money(paid, self.currency_symbol)}\n"
+        change = (
+            format_money(sale.change_cents, self.currency_symbol)
+            if sale.change_cents
+            else "No aplica"
         )
-        if sale.change_cents:
-            summary += f"Vuelto: {format_money(sale.change_cents, self.currency_symbol)}"
-        else:
-            summary += "Vuelto: No aplica"
-        QMessageBox.information(
-            self,
-            "Venta completada",
-            summary,
+        self.notification.emit(
+            f"Venta N.º {sale_id} registrada · "
+            f"Total {format_money(sale.total_cents, self.currency_symbol)} · "
+            f"Vuelto: {change}",
+            "success",
         )
         self.cart.clear()
         self.payment_table.setRowCount(0)
@@ -398,6 +391,7 @@ class PosWidget(QWidget):
         self.refresh_cart()
         self._refresh_payment_status()
         self.refresh_products()
+        self.search_input.setFocus()
         self.sale_registered.emit()
 
     def add_payment(self) -> None:
@@ -410,7 +404,7 @@ class PosWidget(QWidget):
             if self._has_payment_method(method):
                 raise ValueError("Esa forma de pago ya fue agregada.")
         except ValueError as error:
-            QMessageBox.warning(self, "No se puede agregar el pago", str(error))
+            self.notification.emit(f"No se puede agregar el pago. {error}", "danger")
             return
         row = self.payment_table.rowCount()
         self.payment_table.insertRow(row)

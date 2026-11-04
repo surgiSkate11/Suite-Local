@@ -1,12 +1,12 @@
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidgetItem,
     QVBoxLayout,
@@ -16,11 +16,21 @@ from PySide6.QtWidgets import (
 from suitelocal.application.inventory import InventoryService
 from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.repositories import ProductRepository
-from suitelocal.ui.components import DataTable, Drawer, EmptyState, SearchField, StatusBadge
+from suitelocal.ui.components import (
+    DataTable,
+    Drawer,
+    EmptyState,
+    InlineMessage,
+    SearchField,
+    StatusBadge,
+    confirm_action,
+)
 from suitelocal.ui.pos import format_money
 
 
 class InventoryWidget(QWidget):
+    notification = Signal(str, str)
+
     def __init__(
         self,
         products: ProductRepository,
@@ -43,8 +53,7 @@ class InventoryWidget(QWidget):
         new.clicked.connect(self.clear_form)
         deactivate = QPushButton("Desactivar seleccionado")
         deactivate.clicked.connect(self.deactivate_selected)
-        self.message = QLabel()
-        self.message.setObjectName("inlineMessage")
+        self.message = InlineMessage()
         self.search = SearchField("Buscar por código o nombre...")
         self.search.textChanged.connect(self.refresh)
 
@@ -120,9 +129,10 @@ class InventoryWidget(QWidget):
             else:
                 product = self.inventory.update_product(self.session, self.editing_id, *values)
         except ValueError as error:
-            self.message.setText(str(error))
+            self.message.show_error(str(error))
             return
-        self.message.setText(f"{product.name} está disponible en el inventario.")
+        self.message.clear_message()
+        self.notification.emit(f"{product.name} está disponible en el inventario.", "success")
         self.code.clear()
         self.name.clear()
         self.price.clear()
@@ -177,7 +187,7 @@ class InventoryWidget(QWidget):
         self.name.setText(product.name)
         self.price.setText(f"{product.price_cents / 100:.2f}")
         self.stock.setText(str(product.stock))
-        self.message.setText(f"Editando {product.name}.")
+        self.message.clear_message()
 
     def clear_form(self) -> None:
         self.editing_id = None
@@ -186,7 +196,7 @@ class InventoryWidget(QWidget):
         self.price.clear()
         self.stock.clear()
         self.table.clearSelection()
-        self.message.clear()
+        self.message.clear_message()
         self.drawer.hide()
 
     def open_new_product(self) -> None:
@@ -197,20 +207,19 @@ class InventoryWidget(QWidget):
     def deactivate_selected(self) -> None:
         row = self.table.currentRow()
         if row < 0 or row >= len(self.visible_products):
-            self.message.setText("Selecciona un producto.")
+            self.notification.emit("Selecciona un producto de la tabla.", "info")
             return
         product = self.visible_products[row]
-        answer = QMessageBox.question(
+        if not confirm_action(
             self,
             "Desactivar producto",
-            f"¿Desactivar {product.name}?",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+            f"¿Desactivar {product.name}? Dejará de aparecer en Caja.",
+        ):
             return
         self.inventory.deactivate_product(self.session, product.id)
         self.clear_form()
         self.refresh()
-        self.message.setText(f"Producto {product.name} desactivado.")
+        self.notification.emit(f"Producto {product.name} desactivado.", "success")
 
     @staticmethod
     def _parse_money(value: str) -> int:

@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -48,3 +49,24 @@ class Drawer(QFrame):
         header.addStretch()
         header.addWidget(close)
         layout.addLayout(header)
+
+
+def build_confirmation(parent: QWidget | None, title: str, text: str) -> QMessageBox:
+    """Build a Spanish yes/no confirmation where "No" is the safe default."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(title)
+    box.setText(text)
+    yes = box.addButton("Sí", QMessageBox.ButtonRole.AcceptRole)
+    yes.setObjectName("dangerAction")
+    no = box.addButton("No", QMessageBox.ButtonRole.RejectRole)
+    no.setObjectName("secondaryAction")
+    box.setDefaultButton(no)
+    box.setEscapeButton(no)
+    return box
+
+
+def confirm_action(parent: QWidget | None, title: str, text: str) -> bool:
+    box = build_confirmation(parent, title, text)
+    box.exec()
+    return box.buttonRole(box.clickedButton()) == QMessageBox.ButtonRole.AcceptRole
