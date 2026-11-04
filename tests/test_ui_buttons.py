@@ -122,3 +122,10 @@ def test_edit_drawer_shows_exact_price(qapp, database, owner, cents, expected):
     inventory.table.selectRow(0)
 
     assert inventory.price.text() == expected
+
+
+def test_icon_only_close_buttons_are_transparent():
+    stylesheet = build_stylesheet()
+
+    for name in ("drawerClose", "toastClose"):
+        assert f"#{name} {{{{ background: transparent;".replace("{{", "{") in stylesheet

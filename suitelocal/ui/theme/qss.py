@@ -262,6 +262,8 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     #toastText {{ color: {tokens.text_900}; }}
     #toastClose {{ background: transparent; border-radius: 14px; min-height: 0; padding: 0; }}
     #toastClose:hover {{ background: {tokens.background}; }}
+    #drawerClose {{ background: transparent; border-radius: 20px; min-height: 0; padding: 0; }}
+    #drawerClose:hover {{ background: {tokens.background}; }}
     #dangerAction {{ background: {tokens.danger}; color: {tokens.surface}; }}
     #appDialog, #drawer {{ background: {tokens.surface}; border-radius: {tokens.radius_panel}px; }}
     #ghostButton {{ background: transparent; color: {tokens.text_500}; padding: 0; }}
