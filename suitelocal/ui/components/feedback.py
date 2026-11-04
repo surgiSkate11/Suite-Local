@@ -1,5 +1,22 @@
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QPropertyAnimation,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
+from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from suitelocal.ui.theme.effects import apply_elevation
 from suitelocal.ui.theme.icons import icon
@@ -70,8 +87,11 @@ class InlineMessage(QLabel):
         self.show()
 
 
-class Toast(QFrame):
+class Toast(QWidget):
+    """Toast notification; the card carries the shadow and the wrapper fades."""
+
     closed = Signal()
+    FADE_MS = 160
 
     def __init__(
         self,
@@ -81,10 +101,24 @@ class Toast(QFrame):
     ) -> None:
         super().__init__(parent)
         self.message = message
-        self.setObjectName("toast")
+        self.setObjectName("toastWrapper")
         self.setProperty("state", state)
         self.setAccessibleName(message)
-        layout = QHBoxLayout(self)
+        self.card = QFrame(self)
+        self.card.setObjectName("toast")
+        self.card.setProperty("state", state)
+        apply_elevation(self.card, "e2")
+        wrapper = QVBoxLayout(self)
+        wrapper.setContentsMargins(0, 0, 0, 0)
+        wrapper.addWidget(self.card)
+        self._opacity = QGraphicsOpacityEffect(self)
+        self._opacity.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity)
+        self._fade = QPropertyAnimation(self._opacity, b"opacity", self)
+        self._fade.setDuration(self.FADE_MS)
+        self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._fade.finished.connect(self._on_fade_finished)
+        layout = QHBoxLayout(self.card)
         layout.setContentsMargins(16, 12, 8, 12)
         layout.setSpacing(8)
         label = QLabel(message)
@@ -96,9 +130,28 @@ class Toast(QFrame):
         close.setFixedSize(QSize(28, 28))
         close.setAccessibleName("Cerrar aviso")
         close.setToolTip("Cerrar aviso")
-        close.clicked.connect(self.dismiss)
+        close.clicked.connect(self.fade_out)
         layout.addWidget(label, 1)
         layout.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
+
+    def fade_in(self) -> None:
+        self._run_fade(1.0)
+
+    def fade_out(self) -> None:
+        """Fade the toast out, then remove it."""
+        if self.isHidden():
+            return
+        self._run_fade(0.0)
+
+    def _on_fade_finished(self) -> None:
+        if self._fade.endValue() == 0.0:
+            self.dismiss()
+
+    def _run_fade(self, target: float) -> None:
+        self._fade.stop()
+        self._fade.setStartValue(self._opacity.opacity())
+        self._fade.setEndValue(target)
+        self._fade.start()
 
     def dismiss(self) -> None:
         if self.isHidden():
@@ -132,17 +185,17 @@ class ToastHost(QWidget):
     ) -> Toast:
         """Show a toast that closes itself unless it reports a persistence error."""
         toast = Toast(message, state, self)
-        apply_elevation(toast, "e2")
         toast.closed.connect(lambda: self._forget(toast))
         self._toasts.append(toast)
         self._layout.addWidget(toast)
         while len(self._toasts) > self.MAX_VISIBLE:
             self._toasts[0].dismiss()
         if not persistent:
-            QTimer.singleShot(self.duration_ms, toast, toast.dismiss)
+            QTimer.singleShot(self.duration_ms, toast, toast.fade_out)
         self.show()
         self.raise_()
         self.reposition()
+        toast.fade_in()
         return toast
 
     def _forget(self, toast: Toast) -> None:

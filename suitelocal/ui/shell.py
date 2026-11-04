@@ -1,4 +1,4 @@
-from PySide6.QtCore import QDate, Qt, Signal
+from PySide6.QtCore import QDate, QEasingCurve, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -192,6 +192,7 @@ class AppShell(QMainWindow):
         self.top_date = date
         self.top_account = account
         self._sidebar_collapsed = False
+        self.sidebar_animation: QVariantAnimation | None = None
         self._set_sidebar_collapsed(self.width() < 1200)
         self.pos_widget.sale_registered.connect(self.dashboard.refresh)
         self.dashboard.quick_action.clicked.connect(lambda: self.pages.setCurrentIndex(1))
@@ -259,6 +260,31 @@ class AppShell(QMainWindow):
         super().resizeEvent(event)
         self._set_sidebar_collapsed(self.width() < 1200)
 
+    def _animate_sidebar(self, target: int) -> None:
+        """Resize the sidebar, animating only while the window is on screen."""
+        if self.sidebar_animation is not None:
+            self.sidebar_animation.stop()
+        if not self.isVisible():
+            self._set_sidebar_width(target)
+            return
+        animation = QVariantAnimation(self)
+        animation.setDuration(180)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.setStartValue(self.sidebar.width())
+        animation.setEndValue(target)
+        animation.valueChanged.connect(self._on_sidebar_width_changed)
+        animation.finished.connect(lambda: self._set_sidebar_width(target))
+        self.sidebar_animation = animation
+        animation.start()
+
+    def _on_sidebar_width_changed(self, value: object) -> None:
+        if isinstance(value, int):
+            self._set_sidebar_width(value)
+
+    def _set_sidebar_width(self, width: int) -> None:
+        self.sidebar.setMinimumWidth(width)
+        self.sidebar.setMaximumWidth(width)
+
     def _set_sidebar_collapsed(self, collapsed: bool) -> None:
         if getattr(self, "_sidebar_collapsed", None) == collapsed:
             return
@@ -266,8 +292,7 @@ class AppShell(QMainWindow):
         self.navigation.setProperty("collapsed", collapsed)
         self.top_date.setVisible(not collapsed)
         self.top_account.setVisible(not collapsed)
-        self.sidebar.setMinimumWidth(72 if collapsed else 248)
-        self.sidebar.setMaximumWidth(72 if collapsed else 248)
+        self._animate_sidebar(72 if collapsed else 248)
         brand_text = "<b>SuiteLocal</b><br><small>Gestión</small>"
         self.brand.setText("SL" if collapsed else brand_text)
         for row in range(self.navigation.count()):

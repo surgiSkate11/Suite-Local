@@ -70,7 +70,7 @@ def test_toasts_close_themselves_unless_persistent(qapp):
     host.show_toast("Stock insuficiente", "danger")
     danger = host.show_toast("No se pudo guardar", "danger", persistent=True)
     assert danger.property("state") == "danger"
-    QTest.qWait(80)
+    QTest.qWait(400)
 
     remaining = [toast.message for toast in host.findChildren(Toast) if not toast.isHidden()]
     assert remaining == ["No se pudo guardar"]
