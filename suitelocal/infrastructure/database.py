@@ -41,6 +41,21 @@ CREATE TABLE IF NOT EXISTS users (
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
 );
 
+CREATE TABLE IF NOT EXISTS cash_sessions (
+    id INTEGER PRIMARY KEY,
+    business_id INTEGER NOT NULL REFERENCES businesses(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    opening_cents INTEGER NOT NULL CHECK (opening_cents >= 0),
+    closed_at TEXT,
+    counted_cents INTEGER CHECK (counted_cents IS NULL OR counted_cents >= 0),
+    expected_cents INTEGER,
+    notes TEXT NOT NULL DEFAULT ''
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_sessions_one_open
+    ON cash_sessions(business_id) WHERE closed_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS sales (
     id INTEGER PRIMARY KEY,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -110,6 +125,7 @@ class Database:
                 "subtotal_cents INTEGER NOT NULL DEFAULT 0",
                 "tax_cents INTEGER NOT NULL DEFAULT 0",
                 "tax_rate_basis_points INTEGER NOT NULL DEFAULT 0",
+                "cash_session_id INTEGER REFERENCES cash_sessions(id)",
             ):
                 name = column.split()[0]
                 if name not in sale_columns:

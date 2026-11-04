@@ -21,6 +21,26 @@ class Product:
 
 
 @dataclass(frozen=True, slots=True)
+class CashSession:
+    id: int
+    business_id: int
+    user_id: int
+    opened_at: str
+    opening_cents: int
+    closed_at: str | None = None
+    counted_cents: int | None = None
+    expected_cents: int | None = None
+    notes: str = ""
+
+    @property
+    def difference_cents(self) -> int | None:
+        """Counted minus expected: negative is a shortage, positive an overage."""
+        if self.counted_cents is None or self.expected_cents is None:
+            return None
+        return self.counted_cents - self.expected_cents
+
+
+@dataclass(frozen=True, slots=True)
 class SaleItem:
     product_id: int
     product_name: str

@@ -32,3 +32,4 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - L3: find-skills: búsquedas "pyside6", "desktop ui design" y "point of sale" solo devolvieron skills con 1–71 instalaciones y autores desconocidos; no se instaló ninguna (umbral de calidad: 1K+).
 - L4: T1 revisión nativa aprobada (review-717b8b3e494b72c3) con 6 avisos no bloqueantes; pendientes: test de concurrencia real en ventas y verificación del update de producto.
 - L5: T3 propuestas en `design/caja-multinegocio/`: 01-grid-tactil, 02-escaner-primero, 03-salon-y-mostrador. Pendiente que el usuario elija.
+- L6: Usuario: "continua con la q te parezca mejor?". Decisión: base 01-grid-tactil + de 02 el campo de escáner siempre activo, la calculadora de vuelto y la barra de estado; 03 se muestra solo con el perfil cafetería. Alternativas: 02 y 03.

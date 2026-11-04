@@ -97,13 +97,17 @@ class SaleRepository:
                 if row["stock"] < item.quantity:
                     raise ValueError(f"Stock insuficiente para {item.product_name}.")
 
+            # The installation has a single business, so the open session is unambiguous.
+            open_session = connection.execute(
+                "SELECT id FROM cash_sessions WHERE closed_at IS NULL ORDER BY id DESC LIMIT 1"
+            ).fetchone()
             cursor = connection.execute(
                 """
                 INSERT INTO sales (
                     total_cents, payment_cents, change_cents,
-                    subtotal_cents, tax_cents, tax_rate_basis_points
+                    subtotal_cents, tax_cents, tax_rate_basis_points, cash_session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sale.total_cents,
@@ -112,6 +116,7 @@ class SaleRepository:
                     sale.subtotal_cents,
                     sale.tax_cents,
                     sale.tax_rate_basis_points,
+                    None if open_session is None else open_session["id"],
                 ),
             )
             sale_id = cursor.lastrowid
