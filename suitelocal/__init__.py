@@ -1,0 +1,1 @@
+"""SuiteLocal application package."""
