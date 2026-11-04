@@ -33,3 +33,5 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - L4: T1 revisión nativa aprobada (review-717b8b3e494b72c3) con 6 avisos no bloqueantes; pendientes: test de concurrencia real en ventas y verificación del update de producto.
 - L5: T3 propuestas en `design/caja-multinegocio/`: 01-grid-tactil, 02-escaner-primero, 03-salon-y-mostrador. Pendiente que el usuario elija.
 - L6: Usuario: "continua con la q te parezca mejor?". Decisión: base 01-grid-tactil + de 02 el campo de escáner siempre activo, la calculadora de vuelto y la barra de estado; 03 se muestra solo con el perfil cafetería. Alternativas: 02 y 03.
+- L7: Usuario: "por cierto los diseños q me proporcionaste me parecieron muy básicos y no es lo q se espera de un elegante software profesional". Segunda ronda en `design/caja-premium/`: 01-noir-ejecutivo, 02-porcelana-cobro. T9 espera nueva elección.
+- L8: Revisión nativa de 3a79f68 (review-dc272c1bfe55ce1e) detenida con manual_intervention_required tras timeout de captura; pendiente decisión del usuario.

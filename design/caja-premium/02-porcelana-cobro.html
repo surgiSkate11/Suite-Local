@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caja · Porcelana (momento de cobro)</title>
+<style>
+  :root {
+    --canvas: #F6F4F0; --paper: #FFFFFF; --mist: #FBFAF8; --line: #ECE8E1; --line-2: #DED8CE;
+    --ink: #14171F; --ink-2: #3D4250; --ink-3: #6E7381;
+    --navy: #1C2340; --navy-2: #2B3460;
+    --champagne: #B08A4E; --champagne-soft: #F6EEDF;
+    --mint: #1F7A55; --mint-soft: #E5F3EC; --rose: #B53A4C;
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; background: var(--canvas); color: var(--ink); position: relative; font-feature-settings: "tnum" 1; }
+  :focus-visible { outline: 2px solid var(--navy-2); outline-offset: 2px; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .serif { font-family: "Georgia", "Cambria", serif; font-weight: 400; letter-spacing: -.3px; }
+
+  /* Underlying screen (dimmed) */
+  .app { position: absolute; inset: 0; display: grid; grid-template-columns: 88px 1fr 420px; }
+  .rail { background: var(--navy); display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 22px 0; }
+  .rail .m { width: 42px; height: 42px; border-radius: 13px; background: linear-gradient(135deg, #D9BC86, #B08A4E); margin-bottom: 18px; }
+  .rail i { width: 46px; height: 46px; border-radius: 12px; background: rgba(255,255,255,.06); display: block; }
+  .rail i.on { background: rgba(255,255,255,.16); }
+  .cat-area { padding: 28px 32px; display: grid; gap: 18px; align-content: start; }
+  .ph-title { height: 30px; width: 280px; background: #E6E1D8; border-radius: 8px; }
+  .ph-search { height: 54px; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; }
+  .ph-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .ph-grid div { height: 190px; background: var(--paper); border: 1px solid var(--line); border-radius: 20px; }
+  .ph-ticket { background: var(--paper); border-left: 1px solid var(--line); }
+  .scrim { position: absolute; inset: 0; background: rgba(20,23,31,.42); }
+
+  /* Payment dialog */
+  .dialog { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 980px; height: 660px; background: var(--paper); border-radius: 28px;
+    box-shadow: 0 50px 120px rgba(20,23,31,.35), 0 0 0 1px rgba(20,23,31,.04); display: grid; grid-template-columns: 1fr 420px; overflow: hidden; }
+  .left { padding: 34px 38px; display: flex; flex-direction: column; gap: 22px; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .eyebrow { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--ink-3); }
+  h2 { font-size: 30px; margin-top: 6px; }
+  .close { width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--line); display: grid; place-items: center; color: var(--ink-2); }
+
+  .due { display: flex; align-items: baseline; gap: 14px; padding: 22px 24px; border-radius: 20px; background: linear-gradient(135deg, var(--navy), var(--navy-2)); color: #fff; }
+  .due small { font-size: 13px; color: #C9CEE6; }
+  .due b { font-size: 48px; font-weight: 300; letter-spacing: -1.5px; margin-left: auto; }
+
+  .split { display: grid; gap: 10px; }
+  .split h3 { font-size: 13px; color: var(--ink-3); font-weight: 600; }
+  .pay-row { display: grid; grid-template-columns: 44px 1fr auto auto; gap: 14px; align-items: center; padding: 14px 16px; border-radius: 16px; border: 1px solid var(--line); background: var(--mist); }
+  .pay-row.active { border-color: var(--navy-2); background: #fff; box-shadow: 0 0 0 4px rgba(43,52,96,.08); }
+  .ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; }
+  .ico svg { width: 22px; height: 22px; }
+  .pay-row b { display: block; font-size: 15px; }
+  .pay-row small { font-size: 12px; color: var(--ink-3); }
+  .amt { font-size: 20px; font-weight: 600; }
+  .state { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; }
+  .ok { background: var(--mint-soft); color: var(--mint); }
+  .pend { background: var(--champagne-soft); color: #7A5A26; }
+  .addpay { height: 48px; border-radius: 14px; border: 1px dashed var(--line-2); color: var(--ink-2); font-size: 14px; font-weight: 600; }
+
+  .right { background: var(--mist); border-left: 1px solid var(--line); padding: 34px 30px; display: flex; flex-direction: column; gap: 16px; }
+  .right label { font-size: 13px; color: var(--ink-3); font-weight: 600; }
+  .display { height: 76px; border-radius: 18px; background: #fff; border: 2px solid var(--navy-2); display: flex; align-items: center; justify-content: flex-end; padding: 0 20px; font-size: 38px; font-weight: 300; letter-spacing: -1px; box-shadow: 0 0 0 5px rgba(43,52,96,.08); }
+  .bills { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .bill { height: 44px; border-radius: 12px; background: #fff; border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .bill.on { background: var(--champagne-soft); border-color: #E2CFA9; color: #6B4E1E; }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .pad button { height: 52px; border-radius: 14px; background: #fff; border: 1px solid var(--line); font-size: 20px; color: var(--ink); }
+  .pad button:hover { background: #F3F1EC; }
+  .change { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px; border-radius: 16px; background: var(--mint-soft); border: 1px solid #C6E5D5; }
+  .change span { font-size: 13px; color: var(--mint); font-weight: 700; letter-spacing: .3px; text-transform: uppercase; }
+  .change b { font-size: 30px; font-weight: 600; color: #145A3E; letter-spacing: -.6px; }
+  .confirm { margin-top: auto; height: 64px; border-radius: 18px; background: linear-gradient(180deg, #2B3460, #1C2340); color: #fff; font-size: 17px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 12px;
+    box-shadow: 0 14px 30px rgba(28,35,64,.35), inset 0 1px 0 rgba(255,255,255,.15); }
+  .confirm small { font-size: 12px; color: #C9CEE6; font-weight: 500; }
+  .print { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); }
+  .switch { width: 38px; height: 22px; border-radius: 999px; background: var(--navy-2); position: relative; }
+  .switch::after { content: ""; position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+</style>
+</head>
+<body>
+  <div class="app" aria-hidden="true">
+    <div class="rail"><span class="m"></span><i class="on"></i><i></i><i></i><i></i></div>
+    <div class="cat-area"><div class="ph-title"></div><div class="ph-search"></div><div class="ph-grid"><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div></div></div>
+    <div class="ph-ticket"></div>
+  </div>
+  <div class="scrim" aria-hidden="true"></div>
+
+  <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="pay-title">
+    <div class="left">
+      <div class="top">
+        <div><div class="eyebrow">Venta #1.285 · Café La Esquina</div><h2 id="pay-title" class="serif">Cobrar la venta</h2></div>
+        <button class="close" aria-label="Cerrar sin cobrar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div class="due"><small>Total a cobrar<br>incluye IVA y propina 10 %</small><b>$ 54.120</b></div>
+      <div class="split">
+        <h3>Pago dividido · 2 formas</h3>
+        <div class="pay-row"><span class="ico" style="background:#E9ECF7;color:#2B3460"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 7h13l-3-3M17 17H4l3 3"/></svg></span><span><b>Transferencia</b><small>Nequi · ref. 48219 confirmada</small></span><span class="amt">$ 30.000</span><span class="state ok">Recibido</span></div>
+        <div class="pay-row active"><span class="ico" style="background:var(--champagne-soft);color:#7A5A26"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg></span><span><b>Efectivo</b><small>Restante por cobrar</small></span><span class="amt">$ 24.120</span><span class="state pend">En curso</span></div>
+        <button class="addpay">+ Agregar otra forma de pago</button>
+      </div>
+    </div>
+
+    <div class="right">
+      <label for="received">Efectivo recibido</label>
+      <output id="received" class="display">$ 50.000</output>
+      <div class="bills" role="group" aria-label="Billetes rápidos"><button class="bill">Exacto</button><button class="bill">$ 30.000</button><button class="bill on">$ 50.000</button><button class="bill">$ 100.000</button></div>
+      <div class="pad" role="group" aria-label="Teclado numérico">
+        <button>1</button><button>2</button><button>3</button><button>4</button><button>5</button><button>6</button><button>7</button><button>8</button><button>9</button><button>00</button><button>0</button><button aria-label="Borrar">⌫</button>
+      </div>
+      <div class="change"><span>Cambio</span><b>$ 25.880</b></div>
+      <div class="print"><span class="switch" role="switch" aria-checked="true" aria-label="Imprimir ticket"></span>Imprimir ticket al confirmar</div>
+      <button class="confirm">Confirmar cobro <small>Enter</small></button>
+    </div>
+  </section>
+</body>
+</html>

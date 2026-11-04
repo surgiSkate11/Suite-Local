@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caja · Noir ejecutivo</title>
+<style>
+  :root {
+    --bg: #0B0D12; --bg-2: #10131A; --panel: #151922; --panel-2: #1B2030; --raise: #222838;
+    --line: rgba(255,255,255,.07); --line-2: rgba(255,255,255,.12);
+    --text: #F2F4F8; --text-2: #B6BDCC; --text-3: #7E879B;
+    --accent: #7C8CFF; --accent-2: #9AA6FF; --accent-ink: #0B0D12;
+    --gold: #E8C27A; --mint: #5FD3A1; --rose: #F0798A; --amber: #F2B65C;
+    --r-sm: 8px; --r: 12px; --r-lg: 18px; --r-xl: 24px;
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; color: var(--text); background:
+    radial-gradient(900px 500px at 78% -10%, rgba(124,140,255,.16), transparent 60%),
+    radial-gradient(700px 400px at -5% 110%, rgba(95,211,161,.07), transparent 60%), var(--bg);
+    display: grid; grid-template-columns: 240px 1fr 448px; font-feature-settings: "tnum" 1; }
+  :focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .num { font-variant-numeric: tabular-nums; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+  /* Sidebar */
+  .side { padding: 22px 16px; display: flex; flex-direction: column; gap: 6px; border-right: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,255,255,.02), transparent 40%); }
+  .brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 22px; }
+  .mark { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #8E9BFF 0%, #5A67E8 55%, #3B44B8 100%);
+    box-shadow: 0 8px 24px rgba(92,104,232,.45), inset 0 1px 0 rgba(255,255,255,.35); }
+  .brand b { display: block; font-size: 15px; letter-spacing: .2px; }
+  .brand small { color: var(--text-3); font-size: 12px; }
+  .section { font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--text-3); padding: 16px 10px 8px; }
+  .nav { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; color: var(--text-2); font-size: 14px; text-decoration: none; }
+  .nav svg { width: 18px; height: 18px; opacity: .9; }
+  .nav:hover { background: rgba(255,255,255,.04); color: var(--text); }
+  .nav[aria-current="page"] { background: linear-gradient(90deg, rgba(124,140,255,.18), rgba(124,140,255,.04)); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+  .nav .count { margin-left: auto; font-size: 11px; color: var(--text-3); background: var(--panel-2); padding: 2px 8px; border-radius: 999px; }
+  .side .spacer { flex: 1; }
+  .shift { border: 1px solid var(--line); background: var(--panel); border-radius: var(--r-lg); padding: 14px; display: grid; gap: 10px; }
+  .shift-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); }
+  .shift-row b { color: var(--text); font-weight: 600; }
+  .live { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mint); font-weight: 600; }
+  .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 4px rgba(95,211,161,.15); }
+  .user { display: flex; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 700; background: linear-gradient(135deg, #F3D9A4, #C99A4E); color: #2A1E0A; }
+  .user b { font-size: 13px; display: block; } .user small { font-size: 12px; color: var(--text-3); }
+
+  /* Catalog */
+  main { padding: 24px 28px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .head { display: flex; align-items: flex-end; justify-content: space-between; }
+  .eyebrow { font-size: 12px; color: var(--text-3); letter-spacing: .4px; }
+  h1 { font-size: 26px; font-weight: 650; letter-spacing: -.4px; margin-top: 4px; }
+  .kpis { display: flex; gap: 10px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 14px; min-width: 130px; }
+  .kpi small { font-size: 11px; color: var(--text-3); display: block; }
+  .kpi b { font-size: 17px; font-weight: 650; }
+  .kpi .up { font-size: 11px; color: var(--mint); margin-left: 6px; font-weight: 600; }
+
+  .search { display: flex; align-items: center; gap: 12px; height: 54px; padding: 0 16px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line-2);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 10px 30px rgba(0,0,0,.25); }
+  .search:focus-within { border-color: rgba(124,140,255,.6); box-shadow: 0 0 0 4px rgba(124,140,255,.14); }
+  .search input { flex: 1; background: none; border: 0; color: var(--text); font: inherit; font-size: 16px; }
+  .search input::placeholder { color: var(--text-3); }
+  .search input:focus { outline: none; }
+  .scan-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--mint); background: rgba(95,211,161,.1); border: 1px solid rgba(95,211,161,.25); padding: 4px 10px; border-radius: 999px; }
+  kbd { font-family: inherit; font-size: 11px; color: var(--text-2); background: var(--raise); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 6px; padding: 2px 7px; }
+
+  .cats { display: flex; gap: 8px; }
+  .cat { height: 36px; padding: 0 14px; border-radius: 10px; font-size: 13px; color: var(--text-2); background: transparent; border: 1px solid var(--line); display: inline-flex; align-items: center; gap: 8px; }
+  .cat i { width: 8px; height: 8px; border-radius: 3px; }
+  .cat[aria-pressed="true"] { background: var(--text); color: var(--accent-ink); border-color: var(--text); font-weight: 600; }
+
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .card { position: relative; text-align: left; border-radius: var(--r-lg); padding: 12px; background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 10px; transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
+  .card:hover { transform: translateY(-2px); border-color: rgba(124,140,255,.35); box-shadow: 0 16px 34px rgba(0,0,0,.35); }
+  .art { height: 92px; border-radius: 12px; display: grid; place-items: center; position: relative; overflow: hidden; }
+  .art svg { width: 46px; height: 46px; filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); }
+  .card .name { font-size: 14px; font-weight: 600; line-height: 1.3; }
+  .card .meta { font-size: 12px; color: var(--text-3); }
+  .card .foot { display: flex; justify-content: space-between; align-items: center; margin-top: auto; }
+  .price { font-size: 17px; font-weight: 700; letter-spacing: -.2px; }
+  .add { width: 30px; height: 30px; border-radius: 9px; background: var(--raise); border: 1px solid var(--line-2); display: grid; place-items: center; color: var(--accent-2); }
+  .badge { position: absolute; top: 20px; left: 20px; font-size: 10.5px; font-weight: 700; letter-spacing: .3px; padding: 3px 8px; border-radius: 999px; }
+  .badge.low { color: #2A1A05; background: var(--amber); }
+  .badge.top { color: #0B1A12; background: var(--mint); }
+  .in-cart { border-color: rgba(124,140,255,.55); box-shadow: inset 0 0 0 1px rgba(124,140,255,.35); }
+  .in-cart .add { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 800; font-size: 13px; }
+
+  /* Ticket */
+  aside { margin: 16px 16px 16px 0; border-radius: var(--r-xl); background: linear-gradient(180deg, #181C27, #12151D); border: 1px solid var(--line-2);
+    box-shadow: 0 30px 80px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.05); display: flex; flex-direction: column; overflow: hidden; }
+  .t-head { padding: 20px 22px 14px; display: flex; justify-content: space-between; align-items: center; }
+  .t-head h2 { font-size: 17px; font-weight: 650; }
+  .t-head span { font-size: 12px; color: var(--text-3); }
+  .client { margin: 0 22px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.03); border: 1px dashed var(--line-2); font-size: 13px; color: var(--text-2); }
+  .client b { color: var(--text); }
+  .client button { margin-left: auto; color: var(--accent-2); font-size: 12px; font-weight: 600; }
+  .lines { list-style: none; padding: 8px 22px; flex: 1; overflow: hidden; }
+  .line { display: grid; grid-template-columns: 40px 1fr auto; gap: 2px 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .thumb { grid-row: span 2; width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; }
+  .thumb svg { width: 22px; height: 22px; }
+  .line .n { font-size: 14px; font-weight: 600; }
+  .line .t { font-weight: 700; text-align: right; }
+  .line .u { font-size: 12px; color: var(--text-3); }
+  .qty { justify-self: end; display: inline-flex; align-items: center; gap: 2px; background: var(--raise); border-radius: 8px; padding: 2px; }
+  .qty button { width: 24px; height: 24px; border-radius: 6px; color: var(--text-2); }
+  .qty button:hover { background: rgba(255,255,255,.06); color: var(--text); }
+  .qty output { min-width: 22px; text-align: center; font-size: 13px; font-weight: 700; }
+  .discount { color: var(--gold); font-size: 12px; font-weight: 600; }
+
+  .summary { margin: 0 14px; padding: 16px; border-radius: 16px; background: rgba(255,255,255,.03); border: 1px solid var(--line); display: grid; gap: 7px; font-size: 13px; color: var(--text-2); }
+  .summary div { display: flex; justify-content: space-between; }
+  .summary .gold { color: var(--gold); }
+  .total { display: flex; justify-content: space-between; align-items: baseline; padding-top: 10px; margin-top: 4px; border-top: 1px solid var(--line); }
+  .total span { font-size: 13px; color: var(--text-2); }
+  .total b { font-size: 34px; font-weight: 700; letter-spacing: -1px; color: var(--text); }
+  .methods { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 14px 14px 10px; }
+  .method { height: 58px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--panel); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; color: var(--text-2); }
+  .method svg { width: 18px; height: 18px; }
+  .method[aria-pressed="true"] { border-color: rgba(124,140,255,.7); background: rgba(124,140,255,.12); color: var(--text); box-shadow: inset 0 0 0 1px rgba(124,140,255,.4); }
+  .pay { margin: 0 14px 14px; height: 62px; border-radius: 16px; display: flex; justify-content: space-between; align-items: center; padding: 0 22px; font-size: 17px; font-weight: 700; color: #0B0D12;
+    background: linear-gradient(180deg, #A9B3FF 0%, #7C8CFF 100%); box-shadow: 0 14px 30px rgba(124,140,255,.35), inset 0 1px 0 rgba(255,255,255,.6); }
+  .pay kbd { background: rgba(11,13,18,.12); border-color: rgba(11,13,18,.2); color: #0B0D12; }
+  .secondary { display: flex; gap: 8px; padding: 0 14px 16px; }
+  .secondary button { flex: 1; height: 38px; border-radius: 10px; font-size: 12px; color: var(--text-2); border: 1px solid var(--line); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <nav class="side" aria-label="Navegación principal">
+    <div class="brand"><div class="mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M5 15c2 3 5 4 8 3s5-4 4-7-4-4-7-3-4 3-3 5 3 3 5 2"/></svg></div><div><b>SuiteLocal</b><small>Minimercado La 14</small></div></div>
+    <div class="section">Operación</div>
+    <a class="nav" href="#" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 11h18M8 3h8"/></svg>Caja</a>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7l8-4 8 4-8 4-8-4zM4 7v10l8 4 8-4V7"/></svg>Inventario<span class="count">412</span></a>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 4h10l3 4H4l3-4zM4 8v11a1 1 0 001 1h14a1 1 0 001-1V8M9 13h6"/></svg>Cierre de caja</a>
+    <div class="section">Análisis</div>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V9M10 19V5M16 19v-6M21 19H3"/></svg>Reportes</a>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.5 3.3-5.5 6.5-5.5s5.9 2 6.5 5.5M16 4.5a3.5 3.5 0 010 7M18 14.8c2 .7 3.2 2.5 3.5 5.2"/></svg>Equipo</a>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>Ajustes</a>
+    <div class="spacer"></div>
+    <div class="shift">
+      <span class="live">Caja abierta · 7:02 a. m.</span>
+      <div class="shift-row"><span>Base</span><b class="num">$ 150.000</b></div>
+      <div class="shift-row"><span>Efectivo esperado</span><b class="num">$ 812.400</b></div>
+      <div class="user"><div class="avatar">LG</div><div><b>Laura Gómez</b><small>Cajera · Turno mañana</small></div></div>
+    </div>
+  </nav>
+
+  <main>
+    <div class="head">
+      <div><div class="eyebrow">Miércoles 4 de noviembre · Caja 1</div><h1>Nueva venta</h1></div>
+      <div class="kpis">
+        <div class="kpi"><small>Ventas hoy</small><b class="num">37</b><span class="up">+12%</span></div>
+        <div class="kpi"><small>Facturado</small><b class="num">$ 1,48 M</b><span class="up">+8%</span></div>
+        <div class="kpi"><small>Ticket promedio</small><b class="num">$ 40.100</b></div>
+      </div>
+    </div>
+
+    <label class="search">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7E879B" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <span class="sr">Buscar producto o escanear código</span>
+      <input placeholder="Buscá por nombre o escaneá el código de barras">
+      <span class="scan-pill">● Lector listo</span><kbd>F2</kbd>
+    </label>
+
+    <div class="cats" role="group" aria-label="Categorías">
+      <button class="cat" aria-pressed="true">Todo</button>
+      <button class="cat" aria-pressed="false"><i style="background:#7C8CFF"></i>Bebidas</button>
+      <button class="cat" aria-pressed="false"><i style="background:#E8C27A"></i>Panadería</button>
+      <button class="cat" aria-pressed="false"><i style="background:#5FD3A1"></i>Despensa</button>
+      <button class="cat" aria-pressed="false"><i style="background:#9FD0FF"></i>Lácteos</button>
+      <button class="cat" aria-pressed="false"><i style="background:#F0798A"></i>Aseo</button>
+    </div>
+
+    <section class="grid" aria-label="Productos">
+      <button class="card in-cart"><span class="art" style="background:linear-gradient(135deg,#3A2E1A,#6B5427)"><svg viewBox="0 0 48 48"><path d="M10 18h28l-3 20a4 4 0 01-4 3H17a4 4 0 01-4-3z" fill="#F3D9A4"/><path d="M14 18c0-6 4-10 10-10s10 4 10 10" stroke="#F3D9A4" stroke-width="3" fill="none"/></svg></span><span class="name">Arroz Diana 500 g</span><span class="meta">Despensa · 62 en stock</span><span class="foot"><span class="price num">$ 3.200</span><span class="add">2</span></span></button>
+      <button class="card"><span class="badge top">Más vendido</span><span class="art" style="background:linear-gradient(135deg,#1B2E4A,#2E5A8C)"><svg viewBox="0 0 48 48"><rect x="16" y="6" width="16" height="36" rx="5" fill="#CFE6FF"/><rect x="16" y="18" width="16" height="10" fill="#7CB6FF"/></svg></span><span class="name">Leche Alquería entera 1 L</span><span class="meta">Lácteos · 24 en stock</span><span class="foot"><span class="price num">$ 4.600</span><span class="add">+</span></span></button>
+      <button class="card"><span class="badge low">Quedan 3</span><span class="art" style="background:linear-gradient(135deg,#3B2A14,#7A5A2A)"><svg viewBox="0 0 48 48"><path d="M8 26c0-9 7-14 16-14s16 5 16 14v8H8z" fill="#E8C27A"/><path d="M14 22v6M22 20v8M30 20v8M36 22v6" stroke="#9A7434" stroke-width="2"/></svg></span><span class="name">Pan tajado Bimbo 600 g</span><span class="meta">Panadería</span><span class="foot"><span class="price num">$ 7.900</span><span class="add">+</span></span></button>
+      <button class="card"><span class="art" style="background:linear-gradient(135deg,#3A1E24,#7A3240)"><svg viewBox="0 0 48 48"><path d="M19 6h10v6l3 4v24a3 3 0 01-3 3H19a3 3 0 01-3-3V16l3-4z" fill="#FFB3BE"/><rect x="16" y="22" width="16" height="10" fill="#F0798A"/></svg></span><span class="name">Gaseosa Postobón Manzana 400 ml</span><span class="meta">Bebidas · 48 en stock</span><span class="foot"><span class="price num">$ 2.800</span><span class="add">+</span></span></button>
+      <button class="card"><span class="art" style="background:linear-gradient(135deg,#2B2420,#5B4A3E)"><svg viewBox="0 0 48 48"><ellipse cx="17" cy="26" rx="7" ry="9" fill="#F6EBDD"/><ellipse cx="31" cy="26" rx="7" ry="9" fill="#F6EBDD"/><ellipse cx="24" cy="20" rx="7" ry="9" fill="#FFF7EC"/></svg></span><span class="name">Huevos AA × 12</span><span class="meta">Despensa · 15 en stock</span><span class="foot"><span class="price num">$ 9.500</span><span class="add">+</span></span></button>
+      <button class="card"><span class="art" style="background:linear-gradient(135deg,#2A1A12,#6A3A22)"><svg viewBox="0 0 48 48"><path d="M12 14h24v22a6 6 0 01-6 6H18a6 6 0 01-6-6z" fill="#C98A5A"/><rect x="12" y="20" width="24" height="10" fill="#8A4F2A"/></svg></span><span class="name">Café Sello Rojo 250 g</span><span class="meta">Despensa · 20 en stock</span><span class="foot"><span class="price num">$ 11.200</span><span class="add">+</span></span></button>
+      <button class="card"><span class="badge low">Quedan 2</span><span class="art" style="background:linear-gradient(135deg,#2E2A12,#6E6224)"><svg viewBox="0 0 48 48"><path d="M20 6h8v5l4 5v24a3 3 0 01-3 3H19a3 3 0 01-3-3V16l4-5z" fill="#F2DE7A"/></svg></span><span class="name">Aceite Premier 900 ml</span><span class="meta">Despensa</span><span class="foot"><span class="price num">$ 13.900</span><span class="add">+</span></span></button>
+      <button class="card"><span class="art" style="background:linear-gradient(135deg,#12283A,#1F5070)"><svg viewBox="0 0 48 48"><path d="M20 6h8v5l3 5v24a3 3 0 01-3 3h-8a3 3 0 01-3-3V16l3-5z" fill="#BDE6FF"/></svg></span><span class="name">Agua Cristal 600 ml</span><span class="meta">Bebidas · 80 en stock</span><span class="foot"><span class="price num">$ 1.900</span><span class="add">+</span></span></button>
+    </section>
+  </main>
+
+  <aside aria-label="Venta actual">
+    <div class="t-head"><h2>Venta #1.285</h2><span>3 productos · 4 unidades</span></div>
+    <div class="client"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg><span>Cliente: <b>Consumidor final</b></span><button>Asignar</button></div>
+    <ul class="lines">
+      <li class="line"><span class="thumb" style="background:linear-gradient(135deg,#3A2E1A,#6B5427)"><svg viewBox="0 0 48 48"><path d="M10 18h28l-3 20a4 4 0 01-4 3H17a4 4 0 01-4-3z" fill="#F3D9A4"/></svg></span><span class="n">Arroz Diana 500 g</span><span class="t num">$ 6.400</span><span class="u num">$ 3.200 c/u</span><span class="qty"><button aria-label="Quitar uno">−</button><output>2</output><button aria-label="Agregar uno">+</button></span></li>
+      <li class="line"><span class="thumb" style="background:linear-gradient(135deg,#1B2E4A,#2E5A8C)"><svg viewBox="0 0 48 48"><rect x="16" y="6" width="16" height="36" rx="5" fill="#CFE6FF"/></svg></span><span class="n">Leche Alquería entera 1 L</span><span class="t num">$ 4.600</span><span class="u num">$ 4.600 c/u</span><span class="qty"><button aria-label="Quitar uno">−</button><output>1</output><button aria-label="Agregar uno">+</button></span></li>
+      <li class="line"><span class="thumb" style="background:linear-gradient(135deg,#2B2420,#5B4A3E)"><svg viewBox="0 0 48 48"><ellipse cx="24" cy="24" rx="9" ry="12" fill="#FFF7EC"/></svg></span><span class="n">Huevos AA × 12</span><span class="t num">$ 9.500</span><span class="u"><span class="discount">Promo −$ 500</span></span><span class="qty"><button aria-label="Quitar uno">−</button><output>1</output><button aria-label="Agregar uno">+</button></span></li>
+    </ul>
+    <div class="summary">
+      <div><span>Subtotal</span><span class="num">$ 17.059</span></div>
+      <div class="gold"><span>Descuentos</span><span class="num">−$ 500</span></div>
+      <div><span>IVA 19 %</span><span class="num">$ 3.241</span></div>
+      <div class="total"><span>Total a cobrar</span><b class="num">$ 20.000</b></div>
+    </div>
+    <div class="methods" role="group" aria-label="Forma de pago">
+      <button class="method" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>Efectivo</button>
+      <button class="method" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 7h13l-3-3M17 17H4l3 3"/></svg>Transferencia</button>
+      <button class="method" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/></svg>Tarjeta</button>
+    </div>
+    <button class="pay"><span>Cobrar</span><span class="num">$ 20.000 &nbsp;<kbd>F4</kbd></span></button>
+    <div class="secondary"><button>Suspender <kbd>F8</kbd></button><button>Descuento <kbd>F6</kbd></button><button>Dividir pago</button></div>
+  </aside>
+</body>
+</html>

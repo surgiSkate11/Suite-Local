@@ -1,0 +1,9 @@
+{
+  "title": "Caja premium",
+  "brief": "Second round of the SuiteLocal POS with professional, elegant finish (user feedback: first round looked too basic). Built only with effects Qt/QSS can render: gradients, radii, shadows, SVG icons.",
+  "feature": "odd/tasks/rediseno-multinegocio.md",
+  "artboards": [
+    { "file": "01-noir-ejecutivo.html", "title": "Noir ejecutivo (venta)", "tradeoff": "Dark, premium and low eye strain for long shifts, with live KPIs and product art; dark themes need care under bright store lighting", "width": 1440, "height": 900 },
+    { "file": "02-porcelana-cobro.html", "title": "Porcelana (momento de cobro)", "tradeoff": "Light, warm and editorial, with split payment, numeric pad and change in one dialog; less dramatic than the dark theme", "width": 1440, "height": 900 }
+  ]
+}
