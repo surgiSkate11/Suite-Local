@@ -68,3 +68,14 @@ def test_ui_has_no_hard_coded_hex_colors_outside_tokens():
     ]
 
     assert offenders == []
+
+
+def test_checked_checkbox_draws_a_white_check_mark():
+    stylesheet = build_stylesheet()
+    block = stylesheet.split("QCheckBox::indicator:checked {", 1)[1].split("}", 1)[0]
+    match = re.search(r"image: url\(([^)]+)\)", block)
+
+    assert match is not None
+    svg = Path(match.group(1)).read_text(encoding="utf-8")
+    assert f'stroke="{TOKENS.surface}"' in svg
+    assert "m5 12 4 4L19 6" in svg

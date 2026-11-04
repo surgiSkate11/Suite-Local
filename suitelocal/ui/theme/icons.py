@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import tempfile
+from pathlib import Path
+
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
@@ -37,15 +41,31 @@ ICONS: dict[str, str] = {
 }
 
 
-def icon(name: str, color: str = TOKENS.brand_500, size: int = 20) -> QIcon:
+def svg_markup(name: str, color: str, size: int, stroke_width: float = 1.75) -> str:
     path = ICONS.get(name)
     if path is None:
         raise ValueError(f"Icono no registrado: {name}")
-    svg = (
+    return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
-        f'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.75" '
+        f'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="{stroke_width}" '
         f'stroke-linecap="round" stroke-linejoin="round">{path}</svg>'
     )
+
+
+def icon_file(name: str, color: str, size: int, stroke_width: float = 1.75) -> Path:
+    """Write an icon as an SVG file so Qt style sheets can reference it by path."""
+    svg = svg_markup(name, color, size, stroke_width)
+    digest = hashlib.sha256(svg.encode("utf-8")).hexdigest()[:12]
+    directory = Path(tempfile.gettempdir()) / "suitelocal-icons"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{name}-{digest}.svg"
+    if not target.exists():
+        target.write_text(svg, encoding="utf-8")
+    return target
+
+
+def icon(name: str, color: str = TOKENS.brand_500, size: int = 20) -> QIcon:
+    svg = svg_markup(name, color, size)
     renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)

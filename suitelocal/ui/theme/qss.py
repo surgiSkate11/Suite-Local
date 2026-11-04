@@ -1,7 +1,9 @@
+from suitelocal.ui.theme.icons import icon_file
 from suitelocal.ui.theme.tokens import TOKENS, DesignTokens
 
 
 def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
+    check_mark = icon_file("check", tokens.surface, 18, stroke_width=2.5).as_posix()
     return f"""
     QWidget {{
         color: {tokens.text_900};
@@ -160,6 +162,7 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     QCheckBox::indicator:checked {{
         background: {tokens.brand_500};
         border-color: {tokens.brand_500};
+        image: url({check_mark});
     }}
     QComboBox {{
         padding-right: 32px;
