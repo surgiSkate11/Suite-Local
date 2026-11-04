@@ -18,9 +18,9 @@ Worktree `C:\Users\daybu\Downloads\SuiteLocal-ui`, branch `feat/ui-polish`. Do n
 
 ## Tasks
 
-- [ ] T1 S3 — fix Caja shortcut/relayout bug, Ctrl+Return, logout→login loop; tests/test_ui_pos.py, tests/test_ui_shell.py — inline — commit: 
-- [ ] T2 S4 — contrast tokens, inline error state, hard-coded colors → tokens; DESIGN.md — inline — commit: 
-- [ ] T3 S5 — ToastHost, replace routine QMessageBox, Spanish confirmations — inline — commit: 
+- [x] T1 S3 — fix Caja shortcut/relayout bug, Ctrl+Return, logout→login loop; tests/test_ui_pos.py, tests/test_ui_shell.py — inline — commit: 5ed9301
+- [x] T2 S4 — contrast tokens, hard-coded colors → tokens; DESIGN.md; tests/test_ui_theme.py — inline — commit: (this commit)
+- [ ] T3 S5 — inline error state, ToastHost, replace routine QMessageBox, Spanish confirmations — inline — commit: 
 - [ ] T4 S6, S7 — Esc/Enter/focus/arrows/accessibleName; drawer title and close-after-save — inline — commit: 
 - [ ] T5 S8 — button variants, SVG icons instead of glyphs — inline — commit: 
 - [ ] T6 S9 — sidebar and toast animations — inline — commit: 
@@ -31,3 +31,4 @@ Worktree `C:\Users\daybu\Downloads\SuiteLocal-ui`, branch `feat/ui-polish`. Do n
 - L1 (user, verbatim): "continua, quiero un puylido y perfeccionamiento de la ui, ux y demas"
 - L2 User chose a separate worktree (`SuiteLocal-ui`, branch `feat/ui-polish`) so the other session (security fixes on `fix/hallazgos-revision`) is not affected.
 - L3 Read-only audit (gentle-ai-explore) produced the gap list behind S3–S10; out of scope here: features needing new repository methods (recent sales list, inventory filter/pagination).
+- L4 GGA on T1 noted dead `paid` sum in `pos.py::_refresh_payment_status` and duplicated placeholder/header setup; fold into T5 cleanup.

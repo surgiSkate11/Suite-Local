@@ -24,6 +24,7 @@ from suitelocal.ui.dashboard import DashboardWidget
 from suitelocal.ui.inventory import InventoryWidget
 from suitelocal.ui.pos import PosWidget
 from suitelocal.ui.theme.icons import icon
+from suitelocal.ui.theme.tokens import TOKENS
 
 
 class AppShell(QMainWindow):
@@ -95,7 +96,7 @@ class AppShell(QMainWindow):
                 item = QListWidgetItem(label, navigation)
                 item.setData(Qt.ItemDataRole.UserRole, page_index)
                 item.setData(Qt.ItemDataRole.UserRole + 1, label)
-                item.setIcon(icon(icon_names[index], "#FFFFFF", 18))
+                item.setIcon(icon(icon_names[index], TOKENS.surface, 18))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 page_index += 1
 
@@ -119,7 +120,7 @@ class AppShell(QMainWindow):
         user.setObjectName("currentUser")
         logout = QPushButton("Cerrar sesión")
         logout.setObjectName("logoutButton")
-        logout.setIcon(icon("logout", "#FFFFFF", 16))
+        logout.setIcon(icon("logout", TOKENS.surface, 16))
         logout.clicked.connect(self._logout)
         sidebar_layout = QVBoxLayout()
         sidebar_layout.setContentsMargins(16, 18, 16, 18)
@@ -139,7 +140,9 @@ class AppShell(QMainWindow):
         search.setObjectName("topSearch")
         search.setMinimumWidth(0)
         search.setPlaceholderText(f"Buscar en {business.name}...")
-        search.addAction(icon("search", "#6B7899", 18), QLineEdit.ActionPosition.LeadingPosition)
+        search.addAction(
+            icon("search", TOKENS.text_500, 18), QLineEdit.ActionPosition.LeadingPosition
+        )
         search_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         search_shortcut.activated.connect(search.setFocus)
         clear_search_shortcut = QShortcut(QKeySequence("Escape"), search)

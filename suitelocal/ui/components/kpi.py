@@ -2,6 +2,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from suitelocal.ui.theme.icons import icon
+from suitelocal.ui.theme.tokens import TOKENS
 
 
 class KpiCard(QWidget):
@@ -35,7 +36,7 @@ class KpiCard(QWidget):
         icon_label = QLabel()
         icon_label.setObjectName("kpiIcon")
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setPixmap(icon(icon_name, "#3B6BF0", 20).pixmap(QSize(20, 20)))
+        icon_label.setPixmap(icon(icon_name, TOKENS.brand_500, 20).pixmap(QSize(20, 20)))
         icon_label.setFixedSize(40, 40)
         header = QHBoxLayout()
         header.addWidget(label)
