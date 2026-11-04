@@ -1,7 +1,7 @@
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QKeySequence, QResizeEvent, QShortcut
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
+from PySide6.QtGui import QKeyEvent, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QTableWidgetItem,
     QVBoxLayout,
@@ -33,6 +32,7 @@ def format_money(cents: int, currency_symbol: str = "$") -> str:
 
 class PosWidget(QWidget):
     sale_registered = Signal()
+    notification = Signal(str, str)
 
     def __init__(
         self,
@@ -53,6 +53,8 @@ class PosWidget(QWidget):
         self.search_input.setPlaceholderText("Busca o escanea el código del producto...")
         self.search_input.textChanged.connect(self.refresh_products)
         self.search_input.returnPressed.connect(self.add_selected_product)
+        self.search_input.setAccessibleName("Buscar producto")
+        self.search_input.installEventFilter(self)
         self.scanner_status = QLabel("Busca por nombre o escanea un código para agregar productos.")
         self.scanner_status.setObjectName("scannerStatus")
         self.scanner_status.setWordWrap(True)
@@ -190,10 +192,35 @@ class PosWidget(QWidget):
         layout.setSpacing(16)
         layout.addLayout(heading)
         layout.addLayout(content)
-        shortcut = QShortcut(QKeySequence("Ctrl+Enter"), self)
-        shortcut.activated.connect(confirm_button.click)
+        for sequence in ("Ctrl+Return", "Ctrl+Enter"):
+            confirm_shortcut = QShortcut(QKeySequence(sequence), self)
+            confirm_shortcut.activated.connect(confirm_button.click)
+        remove_shortcut = QShortcut(QKeySequence("Delete"), self)
+        remove_shortcut.activated.connect(self.remove_selected_line)
+        quantity_shortcut = QShortcut(QKeySequence("F2"), self)
+        quantity_shortcut.activated.connect(self.edit_selected_quantity)
         self._compact_layout = False
         self._relayout(900)
+        self.refresh_products()
+        self.refresh_cart()
+        self._update_payment_fields()
+        self.search_input.setFocus()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.search_input and isinstance(event, QKeyEvent):
+            step = {Qt.Key.Key_Down: 1, Qt.Key.Key_Up: -1}.get(Qt.Key(event.key()))
+            if step is not None and event.type() == QEvent.Type.KeyPress:
+                self._move_product_selection(step)
+                return True
+        return super().eventFilter(watched, event)
+
+    def _move_product_selection(self, step: int) -> None:
+        count = self.product_list.count()
+        if count == 0:
+            return
+        row = min(max(self.product_list.currentRow() + step, 0), count - 1)
+        self.product_list.setCurrentRow(row)
+        self.product_list.scrollToItem(self.product_list.currentItem())
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -214,14 +241,6 @@ class PosWidget(QWidget):
             self.content_grid.addWidget(self.products_box, 0, 0)
             self.content_grid.addWidget(self.cart_box, 0, 1)
             self.content_grid.setColumnMinimumWidth(1, 400)
-        remove_shortcut = QShortcut(QKeySequence("Delete"), self)
-        remove_shortcut.activated.connect(self.remove_selected_line)
-        quantity_shortcut = QShortcut(QKeySequence("F2"), self)
-        quantity_shortcut.activated.connect(self.edit_selected_quantity)
-        self.refresh_products()
-        self.refresh_cart()
-        self._update_payment_fields()
-        self.search_input.setFocus()
 
     def refresh_products(self) -> None:
         self.product_list.clear()
@@ -268,7 +287,7 @@ class PosWidget(QWidget):
         try:
             self.cart.add(product)
         except ValueError as error:
-            QMessageBox.warning(self, "No se puede agregar", str(error))
+            self.notification.emit(f"No se puede agregar. {error}", "danger")
             self.scanner_status.setText(str(error))
             self.scanner_status.setProperty("state", "error")
             self._refresh_scanner_status()
@@ -317,7 +336,7 @@ class PosWidget(QWidget):
         try:
             self.cart.set_quantity(product_id, quantity)
         except ValueError as error:
-            QMessageBox.warning(self, "No se puede cambiar la cantidad", str(error))
+            self.notification.emit(f"No se puede cambiar la cantidad. {error}", "danger")
             return
         self.refresh_cart()
 
@@ -370,25 +389,18 @@ class PosWidget(QWidget):
             sale = self.cart.to_sale(payments)
             sale_id = self.sales.register(sale)
         except (ValueError, SaleError) as error:
-            QMessageBox.warning(self, "No se puede confirmar", str(error))
+            self.notification.emit(f"No se puede confirmar. {error}", "danger")
             return
-        paid = sale.payment_cents
-        summary = (
-            f"Venta N.º {sale_id} registrada correctamente.\n\n"
-            f"Subtotal: {format_money(sale.subtotal_cents, self.currency_symbol)}\n"
-            f"IVA ({sale.tax_rate_basis_points / 100:g}%): "
-            f"{format_money(sale.tax_cents, self.currency_symbol)}\n"
-            f"Total: {format_money(sale.total_cents, self.currency_symbol)}\n"
-            f"Pago recibido: {format_money(paid, self.currency_symbol)}\n"
+        change = (
+            format_money(sale.change_cents, self.currency_symbol)
+            if sale.change_cents
+            else "No aplica"
         )
-        if sale.change_cents:
-            summary += f"Vuelto: {format_money(sale.change_cents, self.currency_symbol)}"
-        else:
-            summary += "Vuelto: No aplica"
-        QMessageBox.information(
-            self,
-            "Venta completada",
-            summary,
+        self.notification.emit(
+            f"Venta N.º {sale_id} registrada · "
+            f"Total {format_money(sale.total_cents, self.currency_symbol)} · "
+            f"Vuelto: {change}",
+            "success",
         )
         self.cart.clear()
         self.payment_table.setRowCount(0)
@@ -397,6 +409,7 @@ class PosWidget(QWidget):
         self.refresh_cart()
         self._refresh_payment_status()
         self.refresh_products()
+        self.search_input.setFocus()
         self.sale_registered.emit()
 
     def add_payment(self) -> None:
@@ -409,7 +422,7 @@ class PosWidget(QWidget):
             if self._has_payment_method(method):
                 raise ValueError("Esa forma de pago ya fue agregada.")
         except ValueError as error:
-            QMessageBox.warning(self, "No se puede agregar el pago", str(error))
+            self.notification.emit(f"No se puede agregar el pago. {error}", "danger")
             return
         row = self.payment_table.rowCount()
         self.payment_table.insertRow(row)

@@ -139,3 +139,16 @@
 ## Próximo paso
 
 Fase 5 — Pulido: atajos, foco, toasts, transiciones, contraste y capturas visuales.
+
+## Fase 5 — Pulido de UI (rama `feat/ui-polish`)
+
+- Corregidos los atajos de Caja que se duplicaban al cruzar el breakpoint responsive; `Ctrl+Enter` acepta también el Enter principal.
+- "Cerrar sesión" vuelve al login en vez de cerrar la aplicación.
+- Tokens con contraste WCAG AA (`text-500`, `success`, nuevo `border-input`); un test verifica los pares de color y que `ui/` no tenga colores fijos.
+- Toasts abajo a la derecha (4 s, con cierre manual), errores de formulario en línea en rojo y confirmaciones "Sí"/"No" con "No" por defecto; sin `QMessageBox` para el feedback rutinario.
+- Teclado: `Esc` cierra paneles, `Enter` guarda formularios, flechas en la búsqueda de Caja, `Ctrl+K` según la pantalla, `Ctrl+1..5` para navegar y foco inicial en cada panel.
+- Variantes de botón (primario, secundario, peligro, fantasma) con un solo primario por vista; iconos SVG en lugar de glifos de texto.
+- Animaciones cortas: colapso del sidebar (180 ms) y aparición/salida de toasts (160 ms).
+- Capturas reales a 1100 y 1440 px revisadas; detectaron el botón de cierre del panel sin estilo (corregido).
+- Validación: 90 pruebas, Ruff y Pyright sin errores.
+- Pendientes detectados en las capturas: sidebar colapsado recorta la marca y la tarjeta de usuario; la lista de Caja muestra solo el nombre del producto; el toast tapa el botón de confirmar venta durante 4 s; la casilla marcada no muestra el check.

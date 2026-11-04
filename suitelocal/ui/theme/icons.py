@@ -9,6 +9,7 @@ from suitelocal.ui.theme.tokens import TOKENS
 ICONS: dict[str, str] = {
     "search": '<path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z"/>',
     "check": '<path d="m5 12 4 4L19 6"/>',
+    "close": '<path d="M6 6l12 12M18 6 6 18"/>',
     "box": '<path d="m3 7 9-4 9 4v10l-9 4-9-4V7Zm9-4v18M3 7l9 4 9-4"/>',
     "dashboard": (
         '<rect x="3" y="3" width="7" height="7" rx="1"/>'

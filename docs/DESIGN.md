@@ -44,22 +44,23 @@ Todos los valores viven en un único módulo (`ui/theme/tokens.py`). Ninguna pan
 | `bg` | `#F5F7FB` | Fondo de trabajo |
 | `surface` | `#FFFFFF` | Tarjetas, tablas, paneles |
 | `border` | `#E5E9F2` | Bordes de tarjetas y separadores |
-| `border-strong` | `#D3DAE8` | Bordes de inputs |
+| `border-strong` | `#D3DAE8` | Bordes decorativos, separadores fuertes |
+| `border-input` | `#8A94AD` | Bordes de inputs y casillas (contraste 3:1 sobre blanco) |
 | `text-900` | `#0F1B3D` | Títulos y cifras |
 | `text-700` | `#36456B` | Texto de cuerpo |
-| `text-500` | `#6B7899` | Texto secundario, placeholders |
+| `text-500` | `#5B6785` | Texto secundario, placeholders (AA sobre blanco, fondo y `brand-100`) |
 | `text-400` | `#94A0BD` | Texto deshabilitado, iconos inactivos |
 
 **Semánticos (cada uno con fondo, texto y borde)**
 
 | Estado | Texto/icono | Fondo | Borde |
 |---|---|---|---|
-| Éxito | `#0E8A45` | `#E7F7EE` | `#BFE8D0` |
+| Éxito | `#0B7A3D` | `#E7F7EE` | `#BFE8D0` |
 | Advertencia | `#9A6200` | `#FFF4D6` | `#F6DC9A` |
 | Peligro | `#C92A45` | `#FDEBEE` | `#F6C4CC` |
 | Información | `#2B54D6` | `#E6EDFE` | `#C5D3FB` |
 
-Acentos pastel para iconos de tarjetas KPI (fondo del icono → icono): azul `#E6EDFE → #3B6BF0`, verde `#E7F7EE → #0E8A45`, ámbar `#FFF4D6 → #B7791F`, violeta `#EFE9FE → #6D44D9`.
+Acentos pastel para iconos de tarjetas KPI (fondo del icono → icono): azul `#E6EDFE → #3B6BF0`, verde `#E7F7EE → #0B7A3D`, ámbar `#FFF4D6 → #B7791F`, violeta `#EFE9FE → #6D44D9`.
 
 ### 2.2 Tipografía
 

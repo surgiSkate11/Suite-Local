@@ -1,10 +1,13 @@
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 from PySide6.QtWidgets import QApplication
 
 from suitelocal.application.auth import AuthService
+from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
@@ -40,20 +43,48 @@ def main(argv: list[str] | None = None) -> int:
 
     from suitelocal.ui.login import LoginDialog
 
-    login = LoginDialog(auth)
-    if login.exec() != LoginDialog.DialogCode.Accepted or login.session is None:
-        return 0
+    def login() -> Session | None:
+        dialog = LoginDialog(auth)
+        if dialog.exec() != LoginDialog.DialogCode.Accepted:
+            return None
+        return dialog.session
 
-    window = AppShell(
-        ProductRepository(database),
-        SaleRepository(database),
-        login.session,
-        BusinessSettingsRepository(database),
-        auth,
-        database,
-    )
-    window.show()
-    return application.exec()
+    def open_shell(session: Session, on_logout: Callable[[], None]) -> AppShell:
+        window = AppShell(
+            ProductRepository(database),
+            SaleRepository(database),
+            session,
+            BusinessSettingsRepository(database),
+            auth,
+            database,
+        )
+        window.logout_requested.connect(on_logout)
+        return window
+
+    return run_session_loop(login, open_shell, application.exec)
+
+
+class SessionWindow(Protocol):
+    def show(self) -> None: ...
+
+
+def run_session_loop(
+    login: Callable[[], Session | None],
+    open_shell: Callable[[Session, Callable[[], None]], SessionWindow],
+    run_event_loop: Callable[[], int],
+) -> int:
+    """Show login, run the shell, and return to login while the user logs out."""
+    logged_out: list[bool] = []
+    while True:
+        session = login()
+        if session is None:
+            return 0
+        logged_out.clear()
+        window = open_shell(session, lambda: logged_out.append(True))
+        window.show()
+        exit_code = run_event_loop()
+        if not logged_out:
+            return exit_code
 
 
 if __name__ == "__main__":

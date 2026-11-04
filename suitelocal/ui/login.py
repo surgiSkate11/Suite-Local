@@ -1,11 +1,10 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -13,6 +12,9 @@ from PySide6.QtWidgets import (
 
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session
+from suitelocal.ui.components import InlineMessage
+from suitelocal.ui.theme.icons import icon
+from suitelocal.ui.theme.tokens import TOKENS
 
 
 def add_field(form: QFormLayout, label: str, field: QLineEdit) -> None:
@@ -40,9 +42,15 @@ def build_brand_panel() -> QWidget:
     layout.addWidget(title)
     layout.addWidget(message)
     for benefit in ("Rápido para vender", "Funciona sin internet", "Tus datos quedan contigo"):
-        label = QLabel(f"✓  {benefit}")
+        mark = QLabel()
+        mark.setPixmap(icon("check", TOKENS.surface, 16).pixmap(QSize(16, 16)))
+        label = QLabel(benefit)
         label.setObjectName("authBenefit")
-        layout.addWidget(label)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(mark)
+        row.addWidget(label, 1)
+        layout.addLayout(row)
     layout.addStretch()
     return panel
 
@@ -88,6 +96,7 @@ class SetupDialog(QDialog):
         self.password_confirmation = QLineEdit()
         self.password_confirmation.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_confirmation.setPlaceholderText("Repite la contraseña")
+        self.message = InlineMessage()
         save = QPushButton("Crear instalación")
         save.setObjectName("authButton")
         save.clicked.connect(self.create_owner)
@@ -99,6 +108,7 @@ class SetupDialog(QDialog):
         add_field(form, "Confirmar contraseña", self.password_confirmation)
         layout.addSpacing(20)
         layout.addLayout(form)
+        layout.addWidget(self.message)
         layout.addWidget(save)
         layout.addStretch()
 
@@ -111,7 +121,7 @@ class SetupDialog(QDialog):
                 self.password_confirmation.text(),
             )
         except ValueError as error:
-            QMessageBox.warning(self, "No se puede configurar", str(error))
+            self.message.show_error(str(error))
             return
         self.accept()
 

@@ -1,12 +1,12 @@
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidgetItem,
     QVBoxLayout,
@@ -16,11 +16,23 @@ from PySide6.QtWidgets import (
 from suitelocal.application.inventory import InventoryService
 from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.repositories import ProductRepository
-from suitelocal.ui.components import DataTable, Drawer, EmptyState, SearchField, StatusBadge
+from suitelocal.ui.components import (
+    DangerButton,
+    DataTable,
+    Drawer,
+    EmptyState,
+    InlineMessage,
+    SearchField,
+    StatusBadge,
+    confirm_action,
+    set_variant,
+)
 from suitelocal.ui.pos import format_money
 
 
 class InventoryWidget(QWidget):
+    notification = Signal(str, str)
+
     def __init__(
         self,
         products: ProductRepository,
@@ -37,14 +49,15 @@ class InventoryWidget(QWidget):
         self.name = QLineEdit()
         self.price = QLineEdit()
         self.stock = QLineEdit()
-        save = QPushButton("Guardar producto")
+        for field in (self.code, self.name, self.price, self.stock):
+            field.returnPressed.connect(self.save_product)
+        save = set_variant(QPushButton("Guardar producto"), "primary")
         save.clicked.connect(self.save_product)
-        new = QPushButton("Nuevo")
+        new = set_variant(QPushButton("Nuevo"), "secondary")
         new.clicked.connect(self.clear_form)
-        deactivate = QPushButton("Desactivar seleccionado")
+        deactivate = DangerButton("Desactivar seleccionado")
         deactivate.clicked.connect(self.deactivate_selected)
-        self.message = QLabel()
-        self.message.setObjectName("inlineMessage")
+        self.message = InlineMessage()
         self.search = SearchField("Buscar por código o nombre...")
         self.search.textChanged.connect(self.refresh)
 
@@ -57,7 +70,6 @@ class InventoryWidget(QWidget):
         self.drawer.content_layout.addLayout(form)
         self.drawer.content_layout.addWidget(save)
         self.drawer.content_layout.addWidget(new)
-        deactivate.setObjectName("secondaryAction")
         self.drawer.content_layout.addWidget(deactivate)
         self.drawer.content_layout.addWidget(self.message)
         self.drawer.hide()
@@ -73,7 +85,7 @@ class InventoryWidget(QWidget):
         if self.empty_state.action is not None:
             self.empty_state.action.clicked.connect(self.open_new_product)
         new_product = QPushButton("Nuevo producto")
-        new_product.setObjectName("primaryAction")
+        set_variant(new_product, "primary")
         new_product.clicked.connect(self.open_new_product)
         toolbar = QHBoxLayout()
         toolbar.addWidget(self.search)
@@ -120,15 +132,11 @@ class InventoryWidget(QWidget):
             else:
                 product = self.inventory.update_product(self.session, self.editing_id, *values)
         except ValueError as error:
-            self.message.setText(str(error))
+            self.message.show_error(str(error))
             return
-        self.message.setText(f"{product.name} está disponible en el inventario.")
-        self.code.clear()
-        self.name.clear()
-        self.price.clear()
-        self.stock.clear()
-        self.editing_id = None
+        self.clear_form()
         self.refresh()
+        self.notification.emit(f"{product.name} está disponible en el inventario.", "success")
 
     def refresh(self) -> None:
         products = self.inventory.products.find_active(self.search.text())
@@ -171,13 +179,14 @@ class InventoryWidget(QWidget):
             return
         product = self.visible_products[row]
         self.editing_id = product.id
-        self.drawer.setWindowTitle("Editar producto")
-        self.drawer.show()
+        self.drawer.set_title("Editar producto")
         self.code.setText(product.code)
         self.name.setText(product.name)
-        self.price.setText(f"{product.price_cents / 100:.2f}")
+        units, cents = divmod(product.price_cents, 100)
+        self.price.setText(f"{units}.{cents:02d}")
         self.stock.setText(str(product.stock))
-        self.message.setText(f"Editando {product.name}.")
+        self.message.clear_message()
+        self.drawer.open_with_focus(self.name)
 
     def clear_form(self) -> None:
         self.editing_id = None
@@ -186,31 +195,30 @@ class InventoryWidget(QWidget):
         self.price.clear()
         self.stock.clear()
         self.table.clearSelection()
-        self.message.clear()
+        self.message.clear_message()
         self.drawer.hide()
 
     def open_new_product(self) -> None:
         self.clear_form()
-        self.drawer.setWindowTitle("Nuevo producto")
-        self.drawer.show()
+        self.drawer.set_title("Nuevo producto")
+        self.drawer.open_with_focus(self.code)
 
     def deactivate_selected(self) -> None:
         row = self.table.currentRow()
         if row < 0 or row >= len(self.visible_products):
-            self.message.setText("Selecciona un producto.")
+            self.notification.emit("Selecciona un producto de la tabla.", "info")
             return
         product = self.visible_products[row]
-        answer = QMessageBox.question(
+        if not confirm_action(
             self,
             "Desactivar producto",
-            f"¿Desactivar {product.name}?",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+            f"¿Desactivar {product.name}? Dejará de aparecer en Caja.",
+        ):
             return
         self.inventory.deactivate_product(self.session, product.id)
         self.clear_form()
         self.refresh()
-        self.message.setText(f"Producto {product.name} desactivado.")
+        self.notification.emit(f"Producto {product.name} desactivado.", "success")
 
     @staticmethod
     def _parse_money(value: str) -> int:

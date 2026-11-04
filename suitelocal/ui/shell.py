@@ -1,4 +1,4 @@
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, QEasingCurve, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -20,13 +20,17 @@ from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
+from suitelocal.ui.components import ToastHost
 from suitelocal.ui.dashboard import DashboardWidget
 from suitelocal.ui.inventory import InventoryWidget
 from suitelocal.ui.pos import PosWidget
 from suitelocal.ui.theme.icons import icon
+from suitelocal.ui.theme.tokens import TOKENS
 
 
 class AppShell(QMainWindow):
+    logout_requested = Signal()
+
     def __init__(
         self,
         products: ProductRepository,
@@ -61,12 +65,18 @@ class AppShell(QMainWindow):
         self._add_page(self.pos_widget)
         labels = ["Panel principal", "Caja"]
         if session.is_owner:
-            self._add_page(InventoryWidget(products, session))
+            inventory = InventoryWidget(products, session)
+            inventory.notification.connect(self._show_toast)
+            self._add_page(inventory)
             from suitelocal.ui.settings import SettingsWidget
             from suitelocal.ui.users import UsersWidget
 
-            self._add_page(SettingsWidget(settings, session.user.business_id, database))
-            self._add_page(UsersWidget(auth, session))
+            settings_page = SettingsWidget(settings, session.user.business_id, database)
+            settings_page.notification.connect(self._show_toast)
+            self._add_page(settings_page)
+            users = UsersWidget(auth, session)
+            users.notification.connect(self._show_toast)
+            self._add_page(users)
             labels.extend(["Inventario", "Configuración", "Usuarios"])
 
         navigation = QListWidget()
@@ -93,7 +103,7 @@ class AppShell(QMainWindow):
                 item = QListWidgetItem(label, navigation)
                 item.setData(Qt.ItemDataRole.UserRole, page_index)
                 item.setData(Qt.ItemDataRole.UserRole + 1, label)
-                item.setIcon(icon(icon_names[index], "#FFFFFF", 18))
+                item.setIcon(icon(icon_names[index], TOKENS.surface, 18))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 page_index += 1
 
@@ -104,6 +114,9 @@ class AppShell(QMainWindow):
                 self.pages.setCurrentIndex(target)
 
         navigation.currentRowChanged.connect(select_page)
+        for number in range(1, page_index + 1):
+            page_shortcut = QShortcut(QKeySequence(f"Ctrl+{number}"), self)
+            page_shortcut.activated.connect(lambda index=number - 1: self.show_page(index))
         navigation.setCurrentRow(1)
         self.pages.currentChanged.connect(self._focus_page)
         self._focus_page(self.pages.currentIndex())
@@ -117,8 +130,8 @@ class AppShell(QMainWindow):
         user.setObjectName("currentUser")
         logout = QPushButton("Cerrar sesión")
         logout.setObjectName("logoutButton")
-        logout.setIcon(icon("logout", "#FFFFFF", 16))
-        logout.clicked.connect(self.close)
+        logout.setIcon(icon("logout", TOKENS.surface, 16))
+        logout.clicked.connect(self._logout)
         sidebar_layout = QVBoxLayout()
         sidebar_layout.setContentsMargins(16, 18, 16, 18)
         sidebar_layout.setSpacing(10)
@@ -137,10 +150,14 @@ class AppShell(QMainWindow):
         search.setObjectName("topSearch")
         search.setMinimumWidth(0)
         search.setPlaceholderText(f"Buscar en {business.name}...")
-        search.addAction(icon("search", "#6B7899", 18), QLineEdit.ActionPosition.LeadingPosition)
+        search.addAction(
+            icon("search", TOKENS.text_500, 18), QLineEdit.ActionPosition.LeadingPosition
+        )
+        search.setAccessibleName("Búsqueda global")
         search_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
-        search_shortcut.activated.connect(search.setFocus)
+        search_shortcut.activated.connect(self._focus_search)
         clear_search_shortcut = QShortcut(QKeySequence("Escape"), search)
+        clear_search_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         clear_search_shortcut.activated.connect(search.clear)
         date = QLabel(self._format_date(QDate.currentDate()))
         date.setObjectName("topDate")
@@ -170,12 +187,36 @@ class AppShell(QMainWindow):
         container.setObjectName("centralContainer")
         container.setLayout(layout)
         self.setCentralWidget(container)
+        self.toasts = ToastHost(container)
+        self.pos_widget.notification.connect(self._show_toast)
         self.top_date = date
         self.top_account = account
         self._sidebar_collapsed = False
+        self.sidebar_animation: QVariantAnimation | None = None
         self._set_sidebar_collapsed(self.width() < 1200)
         self.pos_widget.sale_registered.connect(self.dashboard.refresh)
         self.dashboard.quick_action.clicked.connect(lambda: self.pages.setCurrentIndex(1))
+
+    def show_page(self, index: int) -> None:
+        """Select the navigation entry that opens page ``index``."""
+        for row in range(self.navigation.count()):
+            if self.navigation.item(row).data(Qt.ItemDataRole.UserRole) == index:
+                self.navigation.setCurrentRow(row)
+                return
+
+    def _focus_search(self) -> None:
+        if self.pages.currentIndex() == 1:
+            self.pos_widget.search_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            self.pos_widget.search_input.selectAll()
+        else:
+            self.global_search.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
+    def _show_toast(self, message: str, state: str) -> None:
+        self.toasts.show_toast(message, state)
+
+    def _logout(self) -> None:
+        self.logout_requested.emit()
+        self.close()
 
     def _add_page(self, page: QWidget) -> None:
         page.setObjectName("pageContent")
@@ -219,6 +260,31 @@ class AppShell(QMainWindow):
         super().resizeEvent(event)
         self._set_sidebar_collapsed(self.width() < 1200)
 
+    def _animate_sidebar(self, target: int) -> None:
+        """Resize the sidebar, animating only while the window is on screen."""
+        if self.sidebar_animation is not None:
+            self.sidebar_animation.stop()
+        if not self.isVisible():
+            self._set_sidebar_width(target)
+            return
+        animation = QVariantAnimation(self)
+        animation.setDuration(180)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.setStartValue(self.sidebar.width())
+        animation.setEndValue(target)
+        animation.valueChanged.connect(self._on_sidebar_width_changed)
+        animation.finished.connect(lambda: self._set_sidebar_width(target))
+        self.sidebar_animation = animation
+        animation.start()
+
+    def _on_sidebar_width_changed(self, value: object) -> None:
+        if isinstance(value, int):
+            self._set_sidebar_width(value)
+
+    def _set_sidebar_width(self, width: int) -> None:
+        self.sidebar.setMinimumWidth(width)
+        self.sidebar.setMaximumWidth(width)
+
     def _set_sidebar_collapsed(self, collapsed: bool) -> None:
         if getattr(self, "_sidebar_collapsed", None) == collapsed:
             return
@@ -226,8 +292,7 @@ class AppShell(QMainWindow):
         self.navigation.setProperty("collapsed", collapsed)
         self.top_date.setVisible(not collapsed)
         self.top_account.setVisible(not collapsed)
-        self.sidebar.setMinimumWidth(72 if collapsed else 248)
-        self.sidebar.setMaximumWidth(72 if collapsed else 248)
+        self._animate_sidebar(72 if collapsed else 248)
         brand_text = "<b>SuiteLocal</b><br><small>Gestión</small>"
         self.brand.setText("SL" if collapsed else brand_text)
         for row in range(self.navigation.count()):

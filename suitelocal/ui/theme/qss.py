@@ -55,7 +55,7 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     QLineEdit, QComboBox, QSpinBox {{
         background: {tokens.surface};
         color: {tokens.text_900};
-        border: 1px solid {tokens.border_strong};
+        border: 1px solid {tokens.border_input};
         border-radius: {tokens.radius_control}px;
         min-height: {tokens.control_height}px;
         padding: 0 12px;
@@ -98,6 +98,16 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         border: 1px solid {tokens.border_strong};
     }}
     #secondaryAction:hover {{ background: {tokens.brand_50}; }}
+    QPushButton[variant="secondary"] {{
+        background: {tokens.surface};
+        color: {tokens.text_700};
+        border: 1px solid {tokens.border_input};
+    }}
+    QPushButton[variant="secondary"]:hover {{ background: {tokens.brand_50}; }}
+    QPushButton[variant="danger"] {{ background: {tokens.danger}; color: {tokens.surface}; }}
+    QPushButton[variant="danger"]:hover {{ background: {tokens.text_900}; }}
+    QPushButton[variant="ghost"] {{ background: transparent; color: {tokens.text_700}; }}
+    QPushButton[variant="ghost"]:hover {{ background: {tokens.background}; }}
     #surfaceCard, #contentCard {{
         background: {tokens.surface};
         border: 1px solid {tokens.border};
@@ -142,7 +152,7 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     QCheckBox::indicator {{
         width: 18px;
         height: 18px;
-        border: 1px solid {tokens.border_strong};
+        border: 1px solid {tokens.border_input};
         border-radius: 5px;
         background: {tokens.surface};
     }}
@@ -175,6 +185,11 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         border: 1px solid {tokens.success_border};
         border-radius: {tokens.radius_control}px;
         padding: 8px 10px;
+    }}
+    #inlineMessage[state="error"] {{
+        color: {tokens.danger};
+        background: {tokens.danger_background};
+        border: 1px solid {tokens.danger_border};
     }}
     #textField[state="error"] {{
         border: 1px solid {tokens.danger};
@@ -243,6 +258,13 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     }}
     #toast[state="success"] {{ border-left: 4px solid {tokens.success}; }}
     #toast[state="danger"] {{ border-left: 4px solid {tokens.danger}; }}
+    #toast[state="info"] {{ border-left: 4px solid {tokens.info}; }}
+    #toastText {{ color: {tokens.text_900}; }}
+    #toastClose {{ background: transparent; border-radius: 14px; min-height: 0; padding: 0; }}
+    #toastClose:hover {{ background: {tokens.background}; }}
+    #drawerClose {{ background: transparent; border-radius: 20px; min-height: 0; padding: 0; }}
+    #drawerClose:hover {{ background: {tokens.background}; }}
+    #dangerAction {{ background: {tokens.danger}; color: {tokens.surface}; }}
     #appDialog, #drawer {{ background: {tokens.surface}; border-radius: {tokens.radius_panel}px; }}
     #ghostButton {{ background: transparent; color: {tokens.text_500}; padding: 0; }}
     #sidebar {{
@@ -281,7 +303,7 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     #authTitle {{ color: {tokens.text_900}; font-size: 24px; font-weight: 700; }}
     #authSubtitle, #authVersion {{ color: {tokens.text_500}; }}
     #authLabel {{ color: {tokens.text_700}; font-size: 12px; font-weight: 600; }}
-    #authField {{ background: {tokens.surface}; color: {tokens.text_900}; border: 1px solid {tokens.border_strong}; border-radius: 10px; padding: 0 12px; }}
+    #authField {{ background: {tokens.surface}; color: {tokens.text_900}; border: 1px solid {tokens.border_input}; border-radius: 10px; padding: 0 12px; }}
     #authField:focus {{ border: 1px solid {tokens.brand_500}; }}
     #authError {{ color: {tokens.danger}; background: {tokens.danger_background}; border: 1px solid {tokens.danger_border}; border-radius: 10px; padding: 10px; }}
     #authButton {{ min-height: 44px; font-size: 14px; }}
@@ -296,7 +318,7 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     #metricCard[accent="blue"] {{ border-top: 3px solid {tokens.brand_500}; }}
     #metricCard[accent="green"] {{ border-top: 3px solid {tokens.success}; }}
     #metricCard[accent="orange"] {{ border-top: 3px solid {tokens.warning}; }}
-    #metricCard[accent="purple"] {{ border-top: 3px solid #6D44D9; }}
+    #metricCard[accent="purple"] {{ border-top: 3px solid {tokens.accent_purple}; }}
     #metricIcon {{ background: {tokens.brand_100}; color: {tokens.brand_500}; border-radius: 8px; padding: 5px 7px; font-size: 10px; font-weight: 700; }}
     #metricLabel {{ color: {tokens.text_500}; font-size: 10px; font-weight: 600; letter-spacing: .5px; }}
     #metricValue {{ color: {tokens.text_900}; font-size: 26px; font-weight: 700; }}

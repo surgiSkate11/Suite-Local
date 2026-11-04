@@ -1,11 +1,10 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidgetItem,
     QVBoxLayout,
@@ -14,10 +13,21 @@ from PySide6.QtWidgets import (
 
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session
-from suitelocal.ui.components import DataTable, Drawer, EmptyState, StatusBadge
+from suitelocal.ui.components import (
+    DangerButton,
+    DataTable,
+    Drawer,
+    EmptyState,
+    InlineMessage,
+    StatusBadge,
+    confirm_action,
+    set_variant,
+)
 
 
 class UsersWidget(QWidget):
+    notification = Signal(str, str)
+
     def __init__(
         self,
         auth: AuthService,
@@ -32,13 +42,13 @@ class UsersWidget(QWidget):
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_confirmation = QLineEdit()
         self.password_confirmation.setEchoMode(QLineEdit.EchoMode.Password)
-        create = QPushButton("Crear cajero")
+        create = set_variant(QPushButton("Crear cajero"), "primary")
         create.clicked.connect(self.create_cashier)
-        deactivate = QPushButton("Desactivar seleccionado")
-        deactivate.setObjectName("secondaryAction")
+        for field in (self.username, self.password, self.password_confirmation):
+            field.returnPressed.connect(self.create_cashier)
+        deactivate = DangerButton("Desactivar seleccionado")
         deactivate.clicked.connect(self.deactivate_selected)
-        self.message = QLabel()
-        self.message.setObjectName("inlineMessage")
+        self.message = InlineMessage()
         form = QFormLayout()
         form.addRow("Usuario:", self.username)
         form.addRow("Contraseña:", self.password)
@@ -58,7 +68,7 @@ class UsersWidget(QWidget):
         if self.empty_state.action is not None:
             self.empty_state.action.clicked.connect(self.open_new_user)
         new_user = QPushButton("Nuevo cajero")
-        new_user.setObjectName("primaryAction")
+        set_variant(new_user, "primary")
         new_user.clicked.connect(self.open_new_user)
         title = QLabel("Usuarios y accesos")
         title.setObjectName("pageTitle")
@@ -112,7 +122,7 @@ class UsersWidget(QWidget):
         self.result_count.setText(f"{len(users)} usuario{'s' if len(users) != 1 else ''}")
 
     def open_new_user(self) -> None:
-        self.drawer.show()
+        self.drawer.open_with_focus(self.username)
 
     def create_cashier(self) -> None:
         username = self.username.text().strip()
@@ -124,12 +134,13 @@ class UsersWidget(QWidget):
                 self.password_confirmation.text(),
             )
         except ValueError as error:
-            self.message.setText(str(error))
+            self.message.show_error(str(error))
             return
+        self.message.clear_message()
         self.username.clear()
         self.password.clear()
         self.password_confirmation.clear()
-        self.message.setText(f"{username} ya puede iniciar sesión como cajero.")
+        self.notification.emit(f"{username} ya puede iniciar sesión como cajero.", "success")
         self.drawer.hide()
         self.refresh()
 
@@ -137,23 +148,22 @@ class UsersWidget(QWidget):
         row = self.table.currentRow()
         item = self.table.item(row, 0) if row >= 0 else None
         if item is None:
-            self.message.setText("Selecciona un cajero.")
+            self.notification.emit("Selecciona un cajero de la tabla.", "info")
             return
-        answer = QMessageBox.question(
+        if not confirm_action(
             self,
             "Desactivar cajero",
-            f"¿Desactivar a {item.text()}?",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+            f"¿Desactivar a {item.text()}? Ya no podrá iniciar sesión.",
+        ):
             return
         try:
             user_id = item.data(Qt.ItemDataRole.UserRole)
             if not isinstance(user_id, int):
-                self.message.setText("No se pudo identificar el usuario.")
+                self.notification.emit("No se pudo identificar el usuario.", "danger")
                 return
             self.auth.deactivate_user(self.session, user_id)
         except ValueError as error:
-            self.message.setText(str(error))
+            self.notification.emit(str(error), "danger")
             return
-        self.message.setText("Cajero desactivado.")
+        self.notification.emit(f"{item.text()} fue desactivado.", "success")
         self.refresh()

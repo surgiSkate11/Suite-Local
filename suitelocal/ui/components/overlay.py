@@ -1,12 +1,18 @@
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
+
+from suitelocal.ui.theme.icons import icon
+from suitelocal.ui.theme.tokens import TOKENS
 
 
 class AppDialog(QDialog):
@@ -38,13 +44,49 @@ class Drawer(QFrame):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(16)
         header = QHBoxLayout()
-        heading = QLabel(title)
-        heading.setObjectName("drawerTitle")
-        close = QPushButton("×")
-        close.setObjectName("ghostButton")
-        close.setFixedSize(32, 32)
+        self.heading = QLabel(title)
+        self.heading.setObjectName("drawerTitle")
+        close = QPushButton()
+        close.setObjectName("drawerClose")
+        close.setIcon(icon("close", TOKENS.text_500, 18))
+        close.setFixedSize(40, 40)
+        close.setAccessibleName("Cerrar panel")
+        close.setToolTip("Cerrar panel (Esc)")
         close.clicked.connect(self.hide)
-        header.addWidget(heading)
+        escape = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        escape.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        escape.activated.connect(self.hide)
+        header.addWidget(self.heading)
         header.addStretch()
         header.addWidget(close)
         layout.addLayout(header)
+
+    def set_title(self, title: str) -> None:
+        self.heading.setText(title)
+        self.setAccessibleName(title)
+
+    def open_with_focus(self, field: QWidget) -> None:
+        """Show the drawer and move the keyboard focus to its first useful field."""
+        self.show()
+        field.setFocus(Qt.FocusReason.PopupFocusReason)
+
+
+def build_confirmation(parent: QWidget | None, title: str, text: str) -> QMessageBox:
+    """Build a Spanish yes/no confirmation where "No" is the safe default."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(title)
+    box.setText(text)
+    yes = box.addButton("Sí", QMessageBox.ButtonRole.AcceptRole)
+    yes.setObjectName("dangerAction")
+    no = box.addButton("No", QMessageBox.ButtonRole.RejectRole)
+    no.setObjectName("secondaryAction")
+    box.setDefaultButton(no)
+    box.setEscapeButton(no)
+    return box
+
+
+def confirm_action(parent: QWidget | None, title: str, text: str) -> bool:
+    box = build_confirmation(parent, title, text)
+    box.exec()
+    return box.buttonRole(box.clickedButton()) == QMessageBox.ButtonRole.AcceptRole

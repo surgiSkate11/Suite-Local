@@ -17,11 +17,12 @@ class DesignTokens:
     surface: str = "#FFFFFF"
     border: str = "#E5E9F2"
     border_strong: str = "#D3DAE8"
+    border_input: str = "#8A94AD"
     text_900: str = "#0F1B3D"
     text_700: str = "#36456B"
-    text_500: str = "#6B7899"
+    text_500: str = "#5B6785"
     text_400: str = "#94A0BD"
-    success: str = "#0E8A45"
+    success: str = "#0B7A3D"
     success_background: str = "#E7F7EE"
     success_border: str = "#BFE8D0"
     warning: str = "#9A6200"
@@ -33,6 +34,7 @@ class DesignTokens:
     info: str = "#2B54D6"
     info_background: str = "#E6EDFE"
     info_border: str = "#C5D3FB"
+    accent_purple: str = "#6D44D9"
     space_1: int = 4
     space_2: int = 8
     space_3: int = 12
