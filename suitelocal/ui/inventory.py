@@ -47,6 +47,8 @@ class InventoryWidget(QWidget):
         self.name = QLineEdit()
         self.price = QLineEdit()
         self.stock = QLineEdit()
+        for field in (self.code, self.name, self.price, self.stock):
+            field.returnPressed.connect(self.save_product)
         save = QPushButton("Guardar producto")
         save.clicked.connect(self.save_product)
         new = QPushButton("Nuevo")
@@ -131,14 +133,9 @@ class InventoryWidget(QWidget):
         except ValueError as error:
             self.message.show_error(str(error))
             return
-        self.message.clear_message()
-        self.notification.emit(f"{product.name} está disponible en el inventario.", "success")
-        self.code.clear()
-        self.name.clear()
-        self.price.clear()
-        self.stock.clear()
-        self.editing_id = None
+        self.clear_form()
         self.refresh()
+        self.notification.emit(f"{product.name} está disponible en el inventario.", "success")
 
     def refresh(self) -> None:
         products = self.inventory.products.find_active(self.search.text())
@@ -181,13 +178,13 @@ class InventoryWidget(QWidget):
             return
         product = self.visible_products[row]
         self.editing_id = product.id
-        self.drawer.setWindowTitle("Editar producto")
-        self.drawer.show()
+        self.drawer.set_title("Editar producto")
         self.code.setText(product.code)
         self.name.setText(product.name)
         self.price.setText(f"{product.price_cents / 100:.2f}")
         self.stock.setText(str(product.stock))
         self.message.clear_message()
+        self.drawer.open_with_focus(self.name)
 
     def clear_form(self) -> None:
         self.editing_id = None
@@ -201,8 +198,8 @@ class InventoryWidget(QWidget):
 
     def open_new_product(self) -> None:
         self.clear_form()
-        self.drawer.setWindowTitle("Nuevo producto")
-        self.drawer.show()
+        self.drawer.set_title("Nuevo producto")
+        self.drawer.open_with_focus(self.code)
 
     def deactivate_selected(self) -> None:
         row = self.table.currentRow()

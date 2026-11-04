@@ -114,6 +114,9 @@ class AppShell(QMainWindow):
                 self.pages.setCurrentIndex(target)
 
         navigation.currentRowChanged.connect(select_page)
+        for number in range(1, page_index + 1):
+            page_shortcut = QShortcut(QKeySequence(f"Ctrl+{number}"), self)
+            page_shortcut.activated.connect(lambda index=number - 1: self.show_page(index))
         navigation.setCurrentRow(1)
         self.pages.currentChanged.connect(self._focus_page)
         self._focus_page(self.pages.currentIndex())
@@ -150,9 +153,11 @@ class AppShell(QMainWindow):
         search.addAction(
             icon("search", TOKENS.text_500, 18), QLineEdit.ActionPosition.LeadingPosition
         )
+        search.setAccessibleName("Búsqueda global")
         search_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
-        search_shortcut.activated.connect(search.setFocus)
+        search_shortcut.activated.connect(self._focus_search)
         clear_search_shortcut = QShortcut(QKeySequence("Escape"), search)
+        clear_search_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         clear_search_shortcut.activated.connect(search.clear)
         date = QLabel(self._format_date(QDate.currentDate()))
         date.setObjectName("topDate")
@@ -190,6 +195,20 @@ class AppShell(QMainWindow):
         self._set_sidebar_collapsed(self.width() < 1200)
         self.pos_widget.sale_registered.connect(self.dashboard.refresh)
         self.dashboard.quick_action.clicked.connect(lambda: self.pages.setCurrentIndex(1))
+
+    def show_page(self, index: int) -> None:
+        """Select the navigation entry that opens page ``index``."""
+        for row in range(self.navigation.count()):
+            if self.navigation.item(row).data(Qt.ItemDataRole.UserRole) == index:
+                self.navigation.setCurrentRow(row)
+                return
+
+    def _focus_search(self) -> None:
+        if self.pages.currentIndex() == 1:
+            self.pos_widget.search_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            self.pos_widget.search_input.selectAll()
+        else:
+            self.global_search.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def _show_toast(self, message: str, state: str) -> None:
         self.toasts.show_toast(message, state)

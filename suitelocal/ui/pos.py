@@ -1,7 +1,7 @@
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QKeySequence, QResizeEvent, QShortcut
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
+from PySide6.QtGui import QKeyEvent, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -53,6 +53,8 @@ class PosWidget(QWidget):
         self.search_input.setPlaceholderText("Busca o escanea el código del producto...")
         self.search_input.textChanged.connect(self.refresh_products)
         self.search_input.returnPressed.connect(self.add_selected_product)
+        self.search_input.setAccessibleName("Buscar producto")
+        self.search_input.installEventFilter(self)
         self.scanner_status = QLabel("Busca por nombre o escanea un código para agregar productos.")
         self.scanner_status.setObjectName("scannerStatus")
         self.scanner_status.setWordWrap(True)
@@ -203,6 +205,22 @@ class PosWidget(QWidget):
         self.refresh_cart()
         self._update_payment_fields()
         self.search_input.setFocus()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self.search_input and isinstance(event, QKeyEvent):
+            step = {Qt.Key.Key_Down: 1, Qt.Key.Key_Up: -1}.get(Qt.Key(event.key()))
+            if step is not None and event.type() == QEvent.Type.KeyPress:
+                self._move_product_selection(step)
+                return True
+        return super().eventFilter(watched, event)
+
+    def _move_product_selection(self, step: int) -> None:
+        count = self.product_list.count()
+        if count == 0:
+            return
+        row = min(max(self.product_list.currentRow() + step, 0), count - 1)
+        self.product_list.setCurrentRow(row)
+        self.product_list.scrollToItem(self.product_list.currentItem())
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

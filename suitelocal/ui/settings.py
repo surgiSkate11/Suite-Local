@@ -53,6 +53,8 @@ class SettingsWidget(QWidget):
         self.card.setMinimumWidth(0)
         save = QPushButton("Guardar configuración")
         save.clicked.connect(self.save)
+        for field in (self.name, self.currency, self.tax_rate):
+            field.returnPressed.connect(self.save)
         self.message = InlineMessage()
         form = QFormLayout()
         form.addRow("Nombre del negocio:", self.name)

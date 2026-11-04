@@ -20,8 +20,8 @@ Worktree `C:\Users\daybu\Downloads\SuiteLocal-ui`, branch `feat/ui-polish`. Do n
 
 - [x] T1 S3 — fix Caja shortcut/relayout bug, Ctrl+Return, logout→login loop; tests/test_ui_pos.py, tests/test_ui_shell.py — inline — commit: 5ed9301
 - [x] T2 S4 — contrast tokens, hard-coded colors → tokens; DESIGN.md; tests/test_ui_theme.py — inline — commit: 79bb945
-- [x] T3 S5 — InlineMessage error state, ToastHost (bottom-right, 4 s, persistent opt-in), page `notification` signals, Spanish confirmations; tests/test_ui_feedback.py — inline — commit: (this commit)
-- [ ] T4 S6, S7 — Esc/Enter/focus/arrows/accessibleName; drawer title and close-after-save — inline — commit: 
+- [x] T3 S5 — InlineMessage error state, ToastHost (bottom-right, 4 s, persistent opt-in), page `notification` signals, Spanish confirmations; tests/test_ui_feedback.py — inline — commit: 51693c5
+- [x] T4 S6, S7 — Esc/Enter/focus/arrows/accessibleName, Ctrl+1..5, Ctrl+K per page; drawer title and close-after-save; tests/test_ui_keyboard.py — inline — commit: (this commit)
 - [ ] T5 S8 — button variants, SVG icons instead of glyphs — inline — commit: 
 - [ ] T6 S9 — sidebar and toast animations — inline — commit: 
 - [ ] T7 S10 — captures, PROGRESS.md — inline — commit: 
@@ -33,3 +33,5 @@ Worktree `C:\Users\daybu\Downloads\SuiteLocal-ui`, branch `feat/ui-polish`. Do n
 - L3 Read-only audit (gentle-ai-explore) produced the gap list behind S3–S10; out of scope here: features needing new repository methods (recent sales list, inventory filter/pagination).
 - L4 GGA on T1 noted dead `paid` sum in `pos.py::_refresh_payment_status` and duplicated placeholder/header setup; fold into T5 cleanup.
 - L5 Offscreen captures render without fonts (tofu); T7 captures must use the real Windows platform.
+- L6 GGA on T3: `inventory.load_selected` formats price via float (`price_cents / 100`); fold into T5 cleanup with L4.
+- L7 Context backstop reached after T4; T5/T6 delegated to a worker.

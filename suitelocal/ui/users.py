@@ -42,6 +42,8 @@ class UsersWidget(QWidget):
         self.password_confirmation.setEchoMode(QLineEdit.EchoMode.Password)
         create = QPushButton("Crear cajero")
         create.clicked.connect(self.create_cashier)
+        for field in (self.username, self.password, self.password_confirmation):
+            field.returnPressed.connect(self.create_cashier)
         deactivate = QPushButton("Desactivar seleccionado")
         deactivate.setObjectName("secondaryAction")
         deactivate.clicked.connect(self.deactivate_selected)
@@ -119,7 +121,7 @@ class UsersWidget(QWidget):
         self.result_count.setText(f"{len(users)} usuario{'s' if len(users) != 1 else ''}")
 
     def open_new_user(self) -> None:
-        self.drawer.show()
+        self.drawer.open_with_focus(self.username)
 
     def create_cashier(self) -> None:
         username = self.username.text().strip()
