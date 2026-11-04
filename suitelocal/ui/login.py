@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session
 from suitelocal.ui.components import InlineMessage
+from suitelocal.ui.theme.icons import icon
+from suitelocal.ui.theme.tokens import TOKENS
 
 
 def add_field(form: QFormLayout, label: str, field: QLineEdit) -> None:
@@ -40,9 +42,15 @@ def build_brand_panel() -> QWidget:
     layout.addWidget(title)
     layout.addWidget(message)
     for benefit in ("Rápido para vender", "Funciona sin internet", "Tus datos quedan contigo"):
-        label = QLabel(f"✓  {benefit}")
+        mark = QLabel()
+        mark.setPixmap(icon("check", TOKENS.surface, 16).pixmap(QSize(16, 16)))
+        label = QLabel(benefit)
         label.setObjectName("authBenefit")
-        layout.addWidget(label)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(mark)
+        row.addWidget(label, 1)
+        layout.addLayout(row)
     layout.addStretch()
     return panel
 

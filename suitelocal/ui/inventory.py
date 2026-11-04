@@ -17,6 +17,7 @@ from suitelocal.application.inventory import InventoryService
 from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.repositories import ProductRepository
 from suitelocal.ui.components import (
+    DangerButton,
     DataTable,
     Drawer,
     EmptyState,
@@ -24,6 +25,7 @@ from suitelocal.ui.components import (
     SearchField,
     StatusBadge,
     confirm_action,
+    set_variant,
 )
 from suitelocal.ui.pos import format_money
 
@@ -49,11 +51,11 @@ class InventoryWidget(QWidget):
         self.stock = QLineEdit()
         for field in (self.code, self.name, self.price, self.stock):
             field.returnPressed.connect(self.save_product)
-        save = QPushButton("Guardar producto")
+        save = set_variant(QPushButton("Guardar producto"), "primary")
         save.clicked.connect(self.save_product)
-        new = QPushButton("Nuevo")
+        new = set_variant(QPushButton("Nuevo"), "secondary")
         new.clicked.connect(self.clear_form)
-        deactivate = QPushButton("Desactivar seleccionado")
+        deactivate = DangerButton("Desactivar seleccionado")
         deactivate.clicked.connect(self.deactivate_selected)
         self.message = InlineMessage()
         self.search = SearchField("Buscar por código o nombre...")
@@ -68,7 +70,6 @@ class InventoryWidget(QWidget):
         self.drawer.content_layout.addLayout(form)
         self.drawer.content_layout.addWidget(save)
         self.drawer.content_layout.addWidget(new)
-        deactivate.setObjectName("secondaryAction")
         self.drawer.content_layout.addWidget(deactivate)
         self.drawer.content_layout.addWidget(self.message)
         self.drawer.hide()
@@ -84,7 +85,7 @@ class InventoryWidget(QWidget):
         if self.empty_state.action is not None:
             self.empty_state.action.clicked.connect(self.open_new_product)
         new_product = QPushButton("Nuevo producto")
-        new_product.setObjectName("primaryAction")
+        set_variant(new_product, "primary")
         new_product.clicked.connect(self.open_new_product)
         toolbar = QHBoxLayout()
         toolbar.addWidget(self.search)
@@ -181,7 +182,8 @@ class InventoryWidget(QWidget):
         self.drawer.set_title("Editar producto")
         self.code.setText(product.code)
         self.name.setText(product.name)
-        self.price.setText(f"{product.price_cents / 100:.2f}")
+        units, cents = divmod(product.price_cents, 100)
+        self.price.setText(f"{units}.{cents:02d}")
         self.stock.setText(str(product.stock))
         self.message.clear_message()
         self.drawer.open_with_focus(self.name)

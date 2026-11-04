@@ -1,7 +1,12 @@
 """Componentes visuales reutilizables de SuiteLocal."""
 
 from suitelocal.ui.components.badge import StatusBadge
-from suitelocal.ui.components.button import PrimaryButton, SecondaryButton
+from suitelocal.ui.components.button import (
+    DangerButton,
+    PrimaryButton,
+    SecondaryButton,
+    set_variant,
+)
 from suitelocal.ui.components.card import Card
 from suitelocal.ui.components.feedback import (
     EmptyState,
@@ -24,6 +29,7 @@ from suitelocal.ui.components.table import DataTable
 __all__ = [
     "AppDialog",
     "Card",
+    "DangerButton",
     "DataTable",
     "Drawer",
     "EmptyState",
@@ -40,5 +46,6 @@ __all__ = [
     "Toast",
     "ToastHost",
     "build_confirmation",
+    "set_variant",
     "confirm_action",
 ]

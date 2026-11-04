@@ -14,12 +14,14 @@ from PySide6.QtWidgets import (
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session
 from suitelocal.ui.components import (
+    DangerButton,
     DataTable,
     Drawer,
     EmptyState,
     InlineMessage,
     StatusBadge,
     confirm_action,
+    set_variant,
 )
 
 
@@ -40,12 +42,11 @@ class UsersWidget(QWidget):
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_confirmation = QLineEdit()
         self.password_confirmation.setEchoMode(QLineEdit.EchoMode.Password)
-        create = QPushButton("Crear cajero")
+        create = set_variant(QPushButton("Crear cajero"), "primary")
         create.clicked.connect(self.create_cashier)
         for field in (self.username, self.password, self.password_confirmation):
             field.returnPressed.connect(self.create_cashier)
-        deactivate = QPushButton("Desactivar seleccionado")
-        deactivate.setObjectName("secondaryAction")
+        deactivate = DangerButton("Desactivar seleccionado")
         deactivate.clicked.connect(self.deactivate_selected)
         self.message = InlineMessage()
         form = QFormLayout()
@@ -67,7 +68,7 @@ class UsersWidget(QWidget):
         if self.empty_state.action is not None:
             self.empty_state.action.clicked.connect(self.open_new_user)
         new_user = QPushButton("Nuevo cajero")
-        new_user.setObjectName("primaryAction")
+        set_variant(new_user, "primary")
         new_user.clicked.connect(self.open_new_user)
         title = QLabel("Usuarios y accesos")
         title.setObjectName("pageTitle")

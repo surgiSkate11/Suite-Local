@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from suitelocal.infrastructure.backups import BackupError, create_backup, restore_backup
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
-from suitelocal.ui.components import InlineMessage, confirm_action
+from suitelocal.ui.components import DangerButton, InlineMessage, confirm_action, set_variant
 
 
 class SettingsWidget(QWidget):
@@ -51,7 +51,7 @@ class SettingsWidget(QWidget):
         self.card.setEnabled(False)
         self.card.setToolTip("Se habilitará al configurar un proveedor de datáfono.")
         self.card.setMinimumWidth(0)
-        save = QPushButton("Guardar configuración")
+        save = set_variant(QPushButton("Guardar configuración"), "primary")
         save.clicked.connect(self.save)
         for field in (self.name, self.currency, self.tax_rate):
             field.returnPressed.connect(self.save)
@@ -113,9 +113,9 @@ class SettingsWidget(QWidget):
         backup_hint.setWordWrap(True)
         backup_layout.addWidget(backup_hint)
         backup_actions = QHBoxLayout()
-        backup_button = QPushButton("Crear respaldo")
+        backup_button = set_variant(QPushButton("Crear respaldo"), "secondary")
         backup_button.clicked.connect(self.create_backup)
-        restore_button = QPushButton("Restaurar respaldo")
+        restore_button = DangerButton("Restaurar respaldo")
         restore_button.clicked.connect(self.restore_backup)
         backup_actions.addWidget(backup_button)
         backup_actions.addWidget(restore_button)

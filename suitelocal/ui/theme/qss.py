@@ -98,6 +98,16 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         border: 1px solid {tokens.border_strong};
     }}
     #secondaryAction:hover {{ background: {tokens.brand_50}; }}
+    QPushButton[variant="secondary"] {{
+        background: {tokens.surface};
+        color: {tokens.text_700};
+        border: 1px solid {tokens.border_input};
+    }}
+    QPushButton[variant="secondary"]:hover {{ background: {tokens.brand_50}; }}
+    QPushButton[variant="danger"] {{ background: {tokens.danger}; color: {tokens.surface}; }}
+    QPushButton[variant="danger"]:hover {{ background: {tokens.text_900}; }}
+    QPushButton[variant="ghost"] {{ background: transparent; color: {tokens.text_700}; }}
+    QPushButton[variant="ghost"]:hover {{ background: {tokens.background}; }}
     #surfaceCard, #contentCard {{
         background: {tokens.surface};
         border: 1px solid {tokens.border};
