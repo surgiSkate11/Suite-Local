@@ -139,7 +139,7 @@ class Database:
             connection.execute("BEGIN IMMEDIATE")
             _migrate_settings(connection)
             _migrate_products(connection)
-            _add_missing_columns(
+            add_missing_columns(
                 connection,
                 "sales",
                 (
@@ -151,14 +151,20 @@ class Database:
             )
             # Left NULL on old sales: they were priced with the tax added on top, so a
             # per-line IVA cannot be derived from them and they are never rewritten.
-            _add_missing_columns(
+            add_missing_columns(
                 connection,
                 "sale_items",
                 ("tax_rate_basis_points INTEGER", "tax_cents INTEGER"),
             )
+        # Imported here because tables_repository itself imports this module. It runs after the
+        # block above: the script it executes commits, so it could not sit inside that transaction.
+        from suitelocal.infrastructure.tables_repository import ensure_tables_schema
+
+        with self.connect() as connection:
+            ensure_tables_schema(connection)
 
 
-def _add_missing_columns(
+def add_missing_columns(
     connection: sqlite3.Connection, table: str, definitions: tuple[str, ...]
 ) -> set[str]:
     """ALTER-if-missing: add each column definition absent from the table; return added names."""
@@ -173,12 +179,12 @@ def _add_missing_columns(
 
 
 def _migrate_settings(connection: sqlite3.Connection) -> None:
-    _add_missing_columns(
+    add_missing_columns(
         connection,
         "business_settings",
         ("tax_rate_basis_points INTEGER NOT NULL DEFAULT 0", "ruc TEXT NOT NULL DEFAULT ''"),
     )
-    added = _add_missing_columns(
+    added = add_missing_columns(
         connection,
         "business_settings",
         (
@@ -198,7 +204,7 @@ def _migrate_settings(connection: sqlite3.Connection) -> None:
 
 
 def _migrate_products(connection: sqlite3.Connection) -> None:
-    added = _add_missing_columns(
+    added = add_missing_columns(
         connection,
         "products",
         (

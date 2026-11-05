@@ -1,10 +1,11 @@
 import sqlite3
+from contextlib import closing
 
 import pytest
 
 from suitelocal.application.auth import AuthService
 from suitelocal.infrastructure.backups import BackupError, create_backup, restore_backup
-from suitelocal.infrastructure.database import Database
+from suitelocal.infrastructure.database import SCHEMA, Database
 
 
 def setup_database(tmp_path):
@@ -66,3 +67,24 @@ def test_backup_rejects_missing_or_same_path(tmp_path):
         create_backup(missing_database, tmp_path / "backup.sqlite")
     with pytest.raises(BackupError, match="ubicación diferente"):
         create_backup(database, database.path)
+
+
+def test_restore_accepts_a_backup_made_before_the_tables_feature(tmp_path):
+    old_backup = tmp_path / "old.sqlite"
+    with closing(sqlite3.connect(old_backup)) as connection:
+        connection.executescript(SCHEMA)
+        connection.execute("INSERT INTO businesses (name) VALUES ('Tienda vieja')")
+        connection.commit()
+    database = setup_database(tmp_path)
+
+    restore_backup(database, old_backup)
+
+    with database.connect() as connection:
+        assert connection.execute("SELECT name FROM businesses").fetchone()[0] == "Tienda vieja"
+        assert not {"tables", "table_orders", "order_lines"} & {
+            row[0] for row in connection.execute("SELECT name FROM sqlite_master")
+        }
+    # The next start-up creates what the old backup lacks.
+    database.initialize()
+    with database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM tables").fetchone()[0] == 0

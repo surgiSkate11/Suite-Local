@@ -1,12 +1,23 @@
+import sqlite3
 from collections.abc import Sequence
 
 from suitelocal.domain.auth import Session
-from suitelocal.domain.models import Payment, Sale
+from suitelocal.domain.models import Payment, Sale, SaleItem
 from suitelocal.domain.policies import require_owner
-from suitelocal.domain.tables import ComandaLine, OpenOrder, Table, TableStatus
+from suitelocal.domain.tables import ComandaLine, OpenOrder, Table, TableError, TableStatus
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import SaleRepository
 from suitelocal.infrastructure.tables_repository import TablesRepository
+
+_ORDER_CHANGED = "La cuenta cambió mientras se cobraba. Revisá la cuenta y volvé a cobrar."
+
+
+def _billable_lines(items: Sequence[SaleItem]) -> list[tuple[int, int, int, int]]:
+    """What a charge bills per product: quantity, unit price and IVA rate (names do not count)."""
+    return sorted(
+        (item.product_id, item.quantity, item.unit_price_cents, item.tax_rate_basis_points)
+        for item in items
+    )
 
 
 class TablesService:
@@ -75,9 +86,14 @@ class TablesService:
             sum(payment.amount_cents for payment in payments),
             tuple(payments),
         )
-        return self.sales.register(
-            sale,
-            on_registered=lambda connection, sale_id: self.tables.close_in(
-                connection, business_id, order_id, sale_id
-            ),
-        )
+        charged = _billable_lines(order.sale_items())
+
+        def close_order(connection: sqlite3.Connection, sale_id: int) -> None:
+            self.tables.close_in(connection, business_id, order_id, sale_id)
+            # The order was read before this transaction began; if anyone changed what is being
+            # billed since, the sale would not match the account, so the whole sale rolls back.
+            current = self.tables.read_order_in(connection, order_id)
+            if _billable_lines(current.sale_items()) != charged:
+                raise TableError(_ORDER_CHANGED)
+
+        return self.sales.register(sale, on_registered=close_order)

@@ -16,7 +16,7 @@ from suitelocal.domain.tables import (
     TableError,
     TableStatus,
 )
-from suitelocal.infrastructure.database import Database
+from suitelocal.infrastructure.database import SCHEMA, Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.tables_repository import (
     TABLES_SCHEMA,
@@ -584,3 +584,209 @@ def test_there_is_no_tip_concept(env):
         }
     assert not [c for c in columns if "tip" in c.split("_") or "propina" in c]
     assert not [n for n in dir(service) if "tip" in n.split("_") or "propina" in n]
+
+
+OLD_TABLES_SHAPE = """
+CREATE TABLE tables (
+    id INTEGER PRIMARY KEY,
+    business_id INTEGER NOT NULL REFERENCES businesses(id),
+    name TEXT NOT NULL,
+    zone TEXT,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    UNIQUE (business_id, name)
+);
+CREATE TABLE table_orders (
+    id INTEGER PRIMARY KEY,
+    table_id INTEGER NOT NULL REFERENCES tables(id),
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed', 'cancelled')),
+    opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at TEXT,
+    sale_id INTEGER REFERENCES sales(id)
+);
+CREATE TABLE order_lines (
+    id INTEGER PRIMARY KEY,
+    order_id INTEGER NOT NULL REFERENCES table_orders(id),
+    product_id INTEGER NOT NULL REFERENCES products(id),
+    product_name TEXT NOT NULL,
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
+    sent_quantity INTEGER NOT NULL DEFAULT 0
+        CHECK (sent_quantity >= 0 AND sent_quantity <= quantity),
+    UNIQUE (order_id, product_id)
+);
+"""
+
+
+def _table_names(database):
+    with database.connect() as connection:
+        rows = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        return {row["name"] for row in rows}
+
+
+def _line_rates(database):
+    with database.connect() as connection:
+        rows = connection.execute(
+            "SELECT product_id, tax_rate_basis_points FROM order_lines ORDER BY product_id"
+        ).fetchall()
+    return {row["product_id"]: row["tax_rate_basis_points"] for row in rows}
+
+
+def test_initialize_creates_the_tables_schema_and_is_idempotent(tmp_path):
+    database = Database(tmp_path / "fresh.db")
+    database.initialize()
+    database.initialize()
+
+    assert {"tables", "table_orders", "order_lines"} <= _table_names(database)
+
+
+def test_initialize_migrates_old_order_lines_and_backfills_the_product_rate(tmp_path):
+    path = tmp_path / "old.db"
+    raw = sqlite3.connect(path)
+    raw.executescript(SCHEMA + OLD_TABLES_SHAPE)
+    # A line whose product was removed can exist in an old file: switch the check off to seed it.
+    raw.execute("PRAGMA foreign_keys = OFF")
+    raw.execute("INSERT INTO businesses (id, name) VALUES (1, 'Café')")
+    raw.execute(
+        "INSERT INTO products (id, code, name, price_cents, stock, tax_rate_basis_points) "
+        "VALUES (1, 'A', 'Agua', 100, 5, 0), (2, 'B', 'Cemento', 900, 5, 500), "
+        "(3, 'C', 'Café', 150, 5, 1500)"
+    )
+    raw.execute("INSERT INTO tables (id, business_id, name) VALUES (1, 1, 'Mesa 1')")
+    raw.execute("INSERT INTO table_orders (id, table_id) VALUES (1, 1)")
+    raw.execute(
+        "INSERT INTO order_lines (order_id, product_id, product_name, quantity, "
+        "unit_price_cents) VALUES (1, 1, 'Agua', 1, 100), (1, 2, 'Cemento', 2, 900), "
+        "(1, 3, 'Café', 1, 150), (1, 99, 'Fantasma', 1, 50)"
+    )
+    raw.commit()
+    raw.close()
+    database = Database(path)
+
+    database.initialize()
+
+    # Each line takes its product's current rate; a line whose product is gone gets 15 %.
+    assert _line_rates(database) == {1: 0, 2: 500, 3: 1500, 99: 1500}
+
+    # A second run is a no-op: rates edited afterwards are never rewritten.
+    with database.connect() as connection:
+        connection.execute("UPDATE order_lines SET tax_rate_basis_points = 0 WHERE product_id = 3")
+    database.initialize()
+    with database.connect() as connection:
+        ensure_tables_schema(connection)
+    assert _line_rates(database) == {1: 0, 2: 500, 3: 0, 99: 1500}
+
+
+def _stale_read_adding(service, owner, product):
+    """Make ``charge`` read the order, then let someone else change it before registering."""
+    original = service.tables.get_order
+
+    def get_order_then_change(business_id, order_id):
+        snapshot = original(business_id, order_id)
+        service.add_product(owner, order_id, product.id, 1)
+        return snapshot
+
+    service.tables.get_order = get_order_then_change
+
+
+def _assert_nothing_charged(database, products, coffee, cake, order_id):
+    assert _count(database, "sales") == 0
+    assert _count(database, "sale_items") == 0
+    assert _count(database, "sale_payments") == 0
+    assert _stock(products, coffee) == 10
+    assert _stock(products, cake) == 4
+    assert _order_status(database, order_id) == ("open", None)
+
+
+STALE_MESSAGE = "La cuenta cambió mientras se cobraba. Revisá la cuenta y volvé a cobrar."
+
+
+def test_charge_rolls_back_when_a_line_is_added_after_the_order_was_read(env):
+    database, service, owner, _, products, coffee, cake = env
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(owner, table.id)
+    service.add_product(owner, order.id, coffee.id, 2)
+    _stale_read_adding(service, owner, cake)
+
+    with pytest.raises(ValueError, match=re.escape(STALE_MESSAGE)):
+        service.charge(owner, order.id, [Payment("cash", 1000)])
+
+    _assert_nothing_charged(database, products, coffee, cake, order.id)
+    assert [line.product_id for line in service.get_order(owner, table.id).lines] == [
+        coffee.id,
+        cake.id,
+    ]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "UPDATE order_lines SET quantity = quantity + 1 WHERE product_id = {coffee}",
+        "DELETE FROM order_lines WHERE product_id = {coffee}",
+        "UPDATE order_lines SET unit_price_cents = unit_price_cents + 10 "
+        "WHERE product_id = {coffee}",
+        "UPDATE order_lines SET tax_rate_basis_points = 0 WHERE product_id = {coffee}",
+    ],
+    ids=["quantity", "removed", "price", "rate"],
+)
+def test_charge_rolls_back_when_a_line_changes_after_the_order_was_read(env, change):
+    database, service, owner, _, products, coffee, cake = env
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(owner, table.id)
+    service.add_product(owner, order.id, coffee.id, 2)
+    service.add_product(owner, order.id, cake.id, 1)
+    original = service.tables.get_order
+
+    def get_order_then_change(business_id, order_id):
+        snapshot = original(business_id, order_id)
+        with database.connect() as connection:
+            connection.execute(change.format(coffee=coffee.id))
+        return snapshot
+
+    service.tables.get_order = get_order_then_change
+
+    with pytest.raises(ValueError, match=re.escape(STALE_MESSAGE)):
+        service.charge(owner, order.id, [Payment("cash", 5000)])
+
+    _assert_nothing_charged(database, products, coffee, cake, order.id)
+
+
+def test_sending_to_the_kitchen_between_read_and_registration_does_not_block_the_charge(env):
+    database, service, owner, _, products, coffee, _ = env
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(owner, table.id)
+    service.add_product(owner, order.id, coffee.id, 2)
+    original = service.tables.get_order
+
+    def get_order_then_send(business_id, order_id):
+        snapshot = original(business_id, order_id)
+        service.send_to_kitchen(owner, order_id)
+        return snapshot
+
+    service.tables.get_order = get_order_then_send
+
+    sale_id = service.charge(owner, order.id, [Payment("cash", 1000)])
+
+    assert _order_status(database, order.id) == ("closed", sale_id)
+    assert _stock(products, coffee) == 8
+
+
+def test_close_in_with_another_business_does_not_close_and_rolls_the_sale_back(env):
+    database, service, owner, _, products, coffee, cake = env
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(owner, table.id)
+    service.add_product(owner, order.id, coffee.id, 2)
+    with database.connect() as connection:
+        other_business = connection.execute(
+            "INSERT INTO businesses (name) VALUES ('Otro negocio')"
+        ).lastrowid
+    sale = Sale((SaleItem(coffee.id, coffee.name, 2, 150),), 1000, (Payment("cash", 1000),))
+
+    with pytest.raises(TableError, match="La cuenta de esta mesa ya fue cobrada o anulada."):
+        SaleRepository(database).register(
+            sale,
+            on_registered=lambda connection, sale_id: TablesRepository.close_in(
+                connection, other_business, order.id, sale_id
+            ),
+        )
+
+    _assert_nothing_charged(database, products, coffee, cake, order.id)

@@ -10,7 +10,7 @@ from suitelocal.domain.tables import (
     normalize_zone,
     require_positive_quantity,
 )
-from suitelocal.infrastructure.database import Database
+from suitelocal.infrastructure.database import Database, add_missing_columns
 
 TABLES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS tables (
@@ -55,8 +55,36 @@ _TABLE_MISSING = "La mesa no existe."
 
 
 def ensure_tables_schema(connection: sqlite3.Connection) -> None:
-    """Create the tables, orders and order lines when missing; safe to call repeatedly."""
+    """Create the tables, orders and order lines when missing; safe to call repeatedly.
+
+    Old ``order_lines`` lacked the per-line IVA rate: it is added and backfilled here. The script
+    commits what the connection had pending, so call it outside any transaction.
+    """
     connection.executescript(TABLES_SCHEMA)
+    # One transaction for the ALTER and its backfill, so a crash never leaves the column with
+    # every old line stuck at the 0 % default.
+    connection.execute("BEGIN IMMEDIATE")
+    added = add_missing_columns(
+        connection,
+        "order_lines",
+        (
+            "tax_rate_basis_points INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (tax_rate_basis_points IN (1500, 500, 0))",
+        ),
+    )
+    if added:
+        # Each existing line takes its product's current rate; a line whose product is gone
+        # falls back to the general 15 %. Runs only when the column is created.
+        connection.execute(
+            """
+            UPDATE order_lines SET tax_rate_basis_points = COALESCE(
+                (SELECT p.tax_rate_basis_points FROM products p
+                 WHERE p.id = order_lines.product_id),
+                1500
+            )
+            """
+        )
+    connection.commit()
 
 
 def _to_table(row: sqlite3.Row) -> Table:
@@ -248,6 +276,11 @@ class TablesRepository:
         )
         if cursor.rowcount != 1:
             raise TableError(_ORDER_ALREADY_FINISHED)
+
+    @staticmethod
+    def read_order_in(connection: sqlite3.Connection, order_id: int) -> OpenOrder:
+        """Read an order through the caller's connection, so it sees the caller's transaction."""
+        return TablesRepository._read_order(connection, order_id)
 
     def get_order(self, business_id: int, order_id: int) -> OpenOrder:
         with self.database.connect() as connection:
