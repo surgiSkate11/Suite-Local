@@ -1,0 +1,35 @@
+{
+  "title": "SuiteLocal Pro",
+  "brief": "Third round of the SuiteLocal POS: professional, polished finish with a light/dark theme switch in every direction (button top right). Same sale screen and data across directions so they compare fairly. Only effects Qt/QSS can render.",
+  "feature": "odd/tasks/rediseno-multinegocio.md",
+  "artboards": [
+    {
+      "file": "01-atelier.html",
+      "title": "Atelier",
+      "tradeoff": "Refined and premium: navy + champagne, serif headings, product art, live KPIs and a floating ticket; the richest look, but the catalog area gets less room",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "file": "02-grafito.html",
+      "title": "Grafito",
+      "tradeoff": "Fastest for scanner and keyboard: graphite + emerald, big total, quick keys, weighed items and a status bar; very efficient but more utilitarian and less visual",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "file": "03-marfil.html",
+      "title": "Marfil",
+      "tradeoff": "Warm and memorable: the sale reads like a real paper receipt, deep teal + copper, Mostrador/Mesas/Domicilios modes and a bottom action dock; ideal for cafés, slightly less dense for big catalogs",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "file": "04-atelier-grafito.html",
+      "title": "Atelier + Grafito",
+      "tradeoff": "Atelier's premium look (navy + champagne rail, serif, product art, floating ticket) with Grafito's speed (big scanner field, quick keys, cash/change calculator, status bar); the densest screen of all, so it needs 1366 px or wider",
+      "width": 1440,
+      "height": 900
+    }
+  ]
+}

@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="es" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuiteLocal · Atelier</title>
+<style>
+  :root[data-theme="light"] {
+    --bg: #F7F6F3; --bg-glow: rgba(30,42,90,.06); --surface: #FFFFFF; --surface-2: #FBFAF7; --sunken: #F1EFEA;
+    --line: #ECE9E2; --line-2: #DDD8CE; --text: #15171E; --text-2: #3A3F4C; --text-3: #5F6575;
+    --accent: #1E2A5A; --accent-hi: #2E3C7A; --on-accent: #FFFFFF; --accent-soft: #E9ECF6; --focus: #3D4FA0;
+    --gold: #7A5A26; --gold-soft: #F6EEDF; --ok: #1B6E4C; --ok-soft: #E4F2EB; --warn: #8A5300; --warn-soft: #FDF0D9;
+    --shadow: 0 1px 2px rgba(21,23,30,.04), 0 12px 32px rgba(21,23,30,.07);
+    --shadow-lg: 0 2px 6px rgba(21,23,30,.05), 0 30px 70px rgba(21,23,30,.12);
+    --rail: #15193A; --rail-text: #B9BFDA; --rail-active: rgba(255,255,255,.1);
+    --art-1: #F3E6CF; --art-2: #DCE6F6; --art-3: #E8E1F2; --art-4: #DCEFE5; --art-5: #F6DFDF; --art-ink: #2A2F3E;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0D0F14; --bg-glow: rgba(130,146,255,.10); --surface: #151821; --surface-2: #191D28; --sunken: #10131A;
+    --line: #232837; --line-2: #2E3446; --text: #F1F3F8; --text-2: #C2C7D4; --text-3: #8F96A8;
+    --accent: #9AA7FF; --accent-hi: #B3BDFF; --on-accent: #0D0F14; --accent-soft: rgba(154,167,255,.12); --focus: #B3BDFF;
+    --gold: #E6C485; --gold-soft: rgba(230,196,133,.12); --ok: #6BD6A6; --ok-soft: rgba(107,214,166,.12); --warn: #F2BB66; --warn-soft: rgba(242,187,102,.12);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+    --shadow-lg: 0 2px 6px rgba(0,0,0,.4), 0 30px 70px rgba(0,0,0,.55);
+    --rail: #0A0C11; --rail-text: #8F96A8; --rail-active: rgba(154,167,255,.14);
+    --art-1: #3A2F1F; --art-2: #1E2A40; --art-3: #2B2340; --art-4: #1C3329; --art-5: #3A2226; --art-ink: #EDE6D8;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body { width: 1440px; height: 900px; overflow: hidden; color: var(--text); font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    background: radial-gradient(1000px 520px at 70% -12%, var(--bg-glow), transparent 65%), var(--bg);
+    display: grid; grid-template-columns: 232px 1fr 432px; font-feature-settings: "tnum" 1; transition: background-color .25s, color .25s; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .serif { font-family: Georgia, Cambria, "Times New Roman", serif; font-weight: 400; letter-spacing: -.4px; }
+
+  /* Rail */
+  .rail { background: var(--rail); color: var(--rail-text); padding: 22px 14px; display: flex; flex-direction: column; gap: 4px; }
+  .brand { display: flex; align-items: center; gap: 12px; padding: 2px 8px 24px; color: #fff; }
+  .mark { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; background: linear-gradient(140deg, #E4C58C, #A9803F); box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 6px 18px rgba(169,128,63,.35); color: #1A1407; font-weight: 800; font-size: 15px; }
+  .brand b { font-size: 15px; display: block; } .brand small { font-size: 12px; color: #8F96A8; }
+  .group { font-size: 10.5px; letter-spacing: 1.5px; text-transform: uppercase; color: #6F7690; padding: 16px 10px 6px; }
+  .nav { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; font-size: 14px; text-decoration: none; color: var(--rail-text); }
+  .nav svg { width: 18px; height: 18px; flex: none; }
+  .nav:hover { color: #fff; background: rgba(255,255,255,.05); }
+  .nav[aria-current="page"] { color: #fff; background: var(--rail-active); box-shadow: inset 2px 0 0 #E4C58C; }
+  .nav .pill { margin-left: auto; font-size: 11px; background: rgba(255,255,255,.08); padding: 1px 8px; border-radius: 999px; }
+  .rail .grow { flex: 1; }
+  .register { border-radius: 16px; padding: 14px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.07); display: grid; gap: 9px; font-size: 12px; }
+  .register .live { color: #7FDDB2; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .register .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #7FDDB2; box-shadow: 0 0 0 4px rgba(127,221,178,.15); }
+  .register .row { display: flex; justify-content: space-between; } .register .row b { color: #fff; font-weight: 600; }
+  .who { display: flex; gap: 10px; align-items: center; border-top: 1px solid rgba(255,255,255,.07); padding-top: 10px; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 12px; background: linear-gradient(140deg, #E4C58C, #A9803F); color: #1A1407; }
+  .who b { color: #fff; display: block; font-size: 13px; }
+
+  /* Main */
+  main { padding: 24px 28px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+  .top { display: flex; align-items: flex-start; gap: 16px; }
+  .eyebrow { font-size: 12px; color: var(--text-3); letter-spacing: .3px; }
+  h1 { font-size: 30px; margin-top: 2px; }
+  .tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .theme { height: 38px; padding: 0 14px; border-radius: 12px; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; background: var(--surface); border: 1px solid var(--line-2); color: var(--text-2); box-shadow: var(--shadow); }
+  .theme svg { width: 16px; height: 16px; }
+  .icon-btn { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line-2); color: var(--text-2); }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; box-shadow: var(--shadow); }
+  .kpi small { font-size: 12px; color: var(--text-3); }
+  .kpi b { display: block; font-size: 22px; font-weight: 650; letter-spacing: -.5px; margin-top: 4px; }
+  .kpi .delta { font-size: 12px; font-weight: 600; color: var(--ok); }
+  .kpi .delta.down { color: var(--warn); }
+  .spark { float: right; margin-top: 6px; }
+
+  .search { display: flex; align-items: center; gap: 12px; height: 54px; padding: 0 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line-2); box-shadow: var(--shadow); }
+  .search:focus-within { border-color: var(--focus); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .search input { flex: 1; border: 0; background: none; color: var(--text); font: inherit; font-size: 16px; }
+  .search input::placeholder { color: var(--text-3); }
+  .search input:focus { outline: none; }
+  .ready { font-size: 12px; font-weight: 600; color: var(--ok); background: var(--ok-soft); padding: 4px 10px; border-radius: 999px; }
+  kbd { font-family: inherit; font-size: 11px; color: var(--text-2); background: var(--sunken); border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px; }
+
+  .seg { display: inline-flex; gap: 4px; padding: 4px; background: var(--sunken); border: 1px solid var(--line); border-radius: 14px; align-self: flex-start; }
+  .seg button { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 13px; color: var(--text-2); }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
+
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .card { text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 10px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow); position: relative; transition: transform .15s, box-shadow .15s, border-color .15s; }
+  .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: var(--line-2); }
+  .art { height: 96px; border-radius: 14px; display: grid; place-items: center; }
+  .art svg { width: 48px; height: 48px; color: var(--art-ink); }
+  .card .info { padding: 0 6px 6px; display: grid; gap: 3px; }
+  .card .name { font-size: 14px; font-weight: 600; line-height: 1.3; }
+  .card .meta { font-size: 12px; color: var(--text-3); }
+  .card .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+  .price { font-size: 17px; font-weight: 700; letter-spacing: -.3px; }
+  .add { width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center; background: var(--sunken); color: var(--accent); font-weight: 700; }
+  .card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+  .card.on .add { background: var(--accent); color: var(--on-accent); }
+  .tag { position: absolute; top: 18px; left: 18px; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+  .tag.low { background: var(--warn-soft); color: var(--warn); }
+  .tag.best { background: var(--gold-soft); color: var(--gold); }
+
+  /* Ticket */
+  aside { margin: 16px 16px 16px 0; border-radius: 26px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-lg); display: flex; flex-direction: column; overflow: hidden; }
+  .t-head { padding: 22px 22px 12px; display: flex; justify-content: space-between; align-items: baseline; }
+  .t-head h2 { font-size: 22px; }
+  .t-head span { font-size: 12px; color: var(--text-3); }
+  .customer { margin: 0 18px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); border: 1px dashed var(--line-2); font-size: 13px; color: var(--text-2); }
+  .customer b { color: var(--text); }
+  .customer button { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--accent); }
+  .lines { list-style: none; padding: 6px 22px; flex: 1; overflow: hidden; }
+  .line { display: grid; grid-template-columns: 42px 1fr auto; gap: 2px 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .thumb { grid-row: span 2; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; }
+  .thumb svg { width: 24px; height: 24px; color: var(--art-ink); }
+  .line .n { font-size: 14px; font-weight: 600; }
+  .line .t { font-weight: 700; text-align: right; }
+  .line .u { font-size: 12px; color: var(--text-3); }
+  .promo { color: var(--gold); font-weight: 600; }
+  .qty { justify-self: end; display: inline-flex; align-items: center; background: var(--sunken); border-radius: 9px; padding: 2px; }
+  .qty button { width: 26px; height: 26px; border-radius: 7px; color: var(--text-2); }
+  .qty output { min-width: 22px; text-align: center; font-size: 13px; font-weight: 700; }
+  .sum { margin: 0 14px; padding: 16px 16px 14px; border-radius: 18px; background: var(--surface-2); border: 1px solid var(--line); display: grid; gap: 7px; font-size: 13px; color: var(--text-2); }
+  .sum div { display: flex; justify-content: space-between; }
+  .sum .disc { color: var(--gold); }
+  .total { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 10px; align-items: baseline; }
+  .total b { font-size: 34px; font-weight: 650; letter-spacing: -1px; color: var(--text); }
+  .methods { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 14px 14px 10px; }
+  .method { height: 56px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--surface); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 12px; color: var(--text-2); }
+  .method svg { width: 18px; height: 18px; }
+  .method[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--text); font-weight: 600; box-shadow: inset 0 0 0 1px var(--accent); }
+  .pay { margin: 0 14px 10px; height: 62px; border-radius: 18px; display: flex; justify-content: space-between; align-items: center; padding: 0 22px; font-size: 17px; font-weight: 700; color: var(--on-accent);
+    background: linear-gradient(180deg, var(--accent-hi), var(--accent)); box-shadow: 0 14px 30px rgba(30,42,90,.28), inset 0 1px 0 rgba(255,255,255,.2); }
+  .pay kbd { background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.25); color: inherit; }
+  [data-theme="dark"] .pay kbd { background: rgba(13,15,20,.12); border-color: rgba(13,15,20,.25); }
+  .more { display: flex; gap: 8px; padding: 0 14px 16px; }
+  .more button { flex: 1; height: 38px; border-radius: 12px; border: 1px solid var(--line); font-size: 12px; color: var(--text-2); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <nav class="rail" aria-label="Navegación principal">
+    <div class="brand"><span class="mark" aria-hidden="true">S</span><div><b>SuiteLocal</b><small>Minimercado La 14</small></div></div>
+    <div class="group">Operación</div>
+    <a class="nav" href="#" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 11h18M8 3h8"/></svg>Caja</a>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7l8-4 8 4-8 4-8-4zM4 7v10l8 4 8-4V7"/></svg>Inventario<span class="pill">412</span></a>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6"/></svg>Ventas y tickets</a>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 8h16v11a1 1 0 01-1 1H5a1 1 0 01-1-1zM7 4h10l3 4H4zM9 13h6"/></svg>Cierre de caja</a>
+    <div class="group">Negocio</div>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-6M21 19H3"/></svg>Reportes</a>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.5 3.3-5.5 6.5-5.5s5.9 2 6.5 5.5M16 4.5a3.5 3.5 0 010 7"/></svg>Equipo</a>
+    <a class="nav" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>Ajustes</a>
+    <div class="grow"></div>
+    <div class="register">
+      <span class="live">Caja abierta · 7:02 a. m.</span>
+      <div class="row"><span>Base</span><b>$ 150.000</b></div>
+      <div class="row"><span>Efectivo esperado</span><b>$ 812.400</b></div>
+      <div class="who"><span class="avatar">LG</span><div><b>Laura Gómez</b><span>Cajera · mañana</span></div></div>
+    </div>
+  </nav>
+
+  <main>
+    <div class="top">
+      <div><div class="eyebrow">Miércoles 4 de noviembre · Caja 1</div><h1 class="serif">Nueva venta</h1></div>
+      <div class="tools">
+        <button class="theme" id="theme" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 13A9 9 0 1111 3a7 7 0 0010 10z"/></svg><span>Modo oscuro</span></button>
+        <button class="icon-btn" aria-label="Notificaciones"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8a6 6 0 1112 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 004 0"/></svg></button>
+      </div>
+    </div>
+
+    <section class="kpis" aria-label="Indicadores de hoy">
+      <div class="kpi"><svg class="spark" width="64" height="24" viewBox="0 0 64 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--ok)" aria-hidden="true"><path d="M1 20l10-6 9 3 11-9 10 4 11-8 11 2"/></svg><small>Ventas hoy</small><b>37</b><span class="delta">+12 % vs. ayer</span></div>
+      <div class="kpi"><small>Facturado</small><b>$ 1.482.300</b><span class="delta">+8 %</span></div>
+      <div class="kpi"><small>Ticket promedio</small><b>$ 40.100</b><span class="delta down">−3 %</span></div>
+      <div class="kpi"><small>Productos por agotarse</small><b>6</b><span class="delta down">Revisar stock</span></div>
+    </section>
+
+    <label class="search">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-3)" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <span class="sr">Buscar producto o escanear código</span>
+      <input placeholder="Buscá por nombre o escaneá el código de barras">
+      <span class="ready">● Lector listo</span><kbd>F2</kbd>
+    </label>
+
+    <div class="seg" role="group" aria-label="Categorías">
+      <button aria-pressed="true">Favoritos</button><button aria-pressed="false">Bebidas</button><button aria-pressed="false">Panadería</button><button aria-pressed="false">Despensa</button><button aria-pressed="false">Lácteos</button><button aria-pressed="false">Aseo</button>
+    </div>
+
+    <section class="grid" aria-label="Productos">
+      <button class="card on"><span class="art" style="background:var(--art-1)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 18h28l-3 20a4 4 0 01-4 3H17a4 4 0 01-4-3zM15 18c0-6 4-10 9-10s9 4 9 10"/></svg></span><span class="info"><span class="name">Arroz Diana 500 g</span><span class="meta">Despensa · 62 en stock</span><span class="foot"><span class="price">$ 3.200</span><span class="add">2</span></span></span></button>
+      <button class="card"><span class="tag best">Más vendido</span><span class="art" style="background:var(--art-2)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6h12v6l3 5v22a3 3 0 01-3 3H18a3 3 0 01-3-3V17l3-5zM15 22h18"/></svg></span><span class="info"><span class="name">Leche Alquería entera 1 L</span><span class="meta">Lácteos · 24 en stock</span><span class="foot"><span class="price">$ 4.600</span><span class="add">+</span></span></span></button>
+      <button class="card"><span class="tag low">Quedan 3</span><span class="art" style="background:var(--art-1)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 26c0-9 7-14 16-14s16 5 16 14v10H8zM16 22v8M24 20v10M32 22v8"/></svg></span><span class="info"><span class="name">Pan tajado Bimbo 600 g</span><span class="meta">Panadería</span><span class="foot"><span class="price">$ 7.900</span><span class="add">+</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-5)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 5h8v6l4 5v23a3 3 0 01-3 3H19a3 3 0 01-3-3V16l4-5zM16 24h16"/></svg></span><span class="info"><span class="name">Gaseosa Postobón Manzana 400 ml</span><span class="meta">Bebidas · 48 en stock</span><span class="foot"><span class="price">$ 2.800</span><span class="add">+</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-3)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><ellipse cx="17" cy="27" rx="7" ry="9"/><ellipse cx="31" cy="27" rx="7" ry="9"/><ellipse cx="24" cy="19" rx="7" ry="9"/></svg></span><span class="info"><span class="name">Huevos AA × 12</span><span class="meta">Despensa · 15 en stock</span><span class="foot"><span class="price">$ 9.500</span><span class="add">+</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-1)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 14h24v22a6 6 0 01-6 6H18a6 6 0 01-6-6zM12 22h24M18 8l2 6M28 8l-2 6"/></svg></span><span class="info"><span class="name">Café Sello Rojo 250 g</span><span class="meta">Despensa · 20 en stock</span><span class="foot"><span class="price">$ 11.200</span><span class="add">+</span></span></span></button>
+      <button class="card"><span class="tag low">Quedan 2</span><span class="art" style="background:var(--art-4)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 5h8v6l4 5v23a3 3 0 01-3 3H19a3 3 0 01-3-3V16l4-5z"/></svg></span><span class="info"><span class="name">Aceite Premier 900 ml</span><span class="meta">Despensa</span><span class="foot"><span class="price">$ 13.900</span><span class="add">+</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-2)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6h8v5l3 5v23a3 3 0 01-3 3h-8a3 3 0 01-3-3V16l3-5zM17 26c3 2 11 2 14 0"/></svg></span><span class="info"><span class="name">Agua Cristal 600 ml</span><span class="meta">Bebidas · 80 en stock</span><span class="foot"><span class="price">$ 1.900</span><span class="add">+</span></span></span></button>
+    </section>
+  </main>
+
+  <aside aria-label="Venta actual">
+    <div class="t-head"><h2 class="serif">Venta #1.285</h2><span>3 productos · 4 unidades</span></div>
+    <div class="customer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg><span>Cliente: <b>Consumidor final</b></span><button>Asignar</button></div>
+    <ul class="lines">
+      <li class="line"><span class="thumb" style="background:var(--art-1)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3"><path d="M10 18h28l-3 20a4 4 0 01-4 3H17a4 4 0 01-4-3z"/></svg></span><span class="n">Arroz Diana 500 g</span><span class="t">$ 6.400</span><span class="u">$ 3.200 c/u</span><span class="qty"><button aria-label="Quitar uno">−</button><output>2</output><button aria-label="Agregar uno">+</button></span></li>
+      <li class="line"><span class="thumb" style="background:var(--art-2)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6h12v6l3 5v22a3 3 0 01-3 3H18a3 3 0 01-3-3V17l3-5z"/></svg></span><span class="n">Leche Alquería entera 1 L</span><span class="t">$ 4.600</span><span class="u">$ 4.600 c/u</span><span class="qty"><button aria-label="Quitar uno">−</button><output>1</output><button aria-label="Agregar uno">+</button></span></li>
+      <li class="line"><span class="thumb" style="background:var(--art-3)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3"><ellipse cx="24" cy="24" rx="9" ry="12"/></svg></span><span class="n">Huevos AA × 12</span><span class="t">$ 9.500</span><span class="u promo">Promo −$ 500</span><span class="qty"><button aria-label="Quitar uno">−</button><output>1</output><button aria-label="Agregar uno">+</button></span></li>
+    </ul>
+    <div class="sum">
+      <div><span>Subtotal</span><span>$ 17.059</span></div>
+      <div class="disc"><span>Descuentos</span><span>−$ 500</span></div>
+      <div><span>IVA 19 %</span><span>$ 3.241</span></div>
+      <div class="total"><span>Total a cobrar</span><b>$ 20.000</b></div>
+    </div>
+    <div class="methods" role="group" aria-label="Forma de pago">
+      <button class="method" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>Efectivo</button>
+      <button class="method" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 7h13l-3-3M17 17H4l3 3"/></svg>Transferencia</button>
+      <button class="method" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/></svg>Tarjeta</button>
+    </div>
+    <button class="pay"><span>Cobrar</span><span>$ 20.000 &nbsp;<kbd>F4</kbd></span></button>
+    <div class="more"><button>Suspender <kbd>F8</kbd></button><button>Descuento <kbd>F6</kbd></button><button>Dividir pago</button></div>
+  </aside>
+
+<script>
+  const root = document.documentElement, btn = document.getElementById("theme");
+  function setTheme(t) { root.dataset.theme = t; btn.setAttribute("aria-pressed", String(t === "dark")); btn.querySelector("span").textContent = t === "dark" ? "Modo claro" : "Modo oscuro"; }
+  btn.addEventListener("click", () => setTheme(root.dataset.theme === "dark" ? "light" : "dark"));
+</script>
+</body>
+</html>

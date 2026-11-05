@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "chosen": "02-porcelana-cobro.html",
+  "handoffs": {
+    "02-porcelana-cobro.html": {
+      "status": "in_progress",
+      "queued": false,
+      "sentAt": "2026-11-04T21:17:17.732Z",
+      "startedAt": "2026-11-04T21:17:35.572Z",
+      "implementedAt": null,
+      "feature": "odd/tasks/rediseno-multinegocio.md",
+      "note": "Mapping Porcelana palette to theme tokens and building the payment dialog in PySide6."
+    }
+  }
+}

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="es" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuiteLocal · Marfil</title>
+<style>
+  :root[data-theme="light"] {
+    --bg: #F4F1EA; --surface: #FFFDF8; --surface-2: #FAF7F0; --sunken: #EDE8DD; --line: #E6E0D3; --line-2: #D6CEBD;
+    --text: #1A1A17; --text-2: #3E3D37; --text-3: #63625A;
+    --accent: #0F4C57; --accent-hi: #16626F; --on-accent: #FFFFFF; --accent-soft: #E1EEEF; --focus: #16626F;
+    --copper: #8A4B22; --copper-soft: #F6E7DA; --ok: #2F6B3A; --ok-soft: #E3F0E3; --warn: #8A5300; --warn-soft: #FBEED6;
+    --paper: #FFFFFF; --paper-edge: #E6E0D3;
+    --shadow: 0 1px 2px rgba(26,26,23,.05), 0 14px 34px rgba(26,26,23,.08);
+    --dock: #1A1A17; --dock-text: #F4F1EA; --dock-muted: #B9B4A6;
+    --art-1: #EFE2C8; --art-2: #D9E7E6; --art-3: #ECD9CC; --art-4: #DDE8D6; --art-ink: #2B2A25;
+  }
+  :root[data-theme="dark"] {
+    --bg: #11110F; --surface: #191915; --surface-2: #1E1E19; --sunken: #141411; --line: #2A2A23; --line-2: #36352D;
+    --text: #F2EFE6; --text-2: #CFCABC; --text-3: #9B978A;
+    --accent: #6FC7CF; --accent-hi: #8ED6DC; --on-accent: #0B1A1C; --accent-soft: rgba(111,199,207,.12); --focus: #8ED6DC;
+    --copper: #E5A57A; --copper-soft: rgba(229,165,122,.12); --ok: #8FD49B; --ok-soft: rgba(143,212,155,.12); --warn: #F2BB66; --warn-soft: rgba(242,187,102,.12);
+    --paper: #1E1E19; --paper-edge: #36352D;
+    --shadow: 0 1px 2px rgba(0,0,0,.45), 0 14px 34px rgba(0,0,0,.4);
+    --dock: #0B0B09; --dock-text: #F2EFE6; --dock-muted: #9B978A;
+    --art-1: #3A3221; --art-2: #1F3335; --art-3: #3A2A21; --art-4: #26331F; --art-ink: #EFE6D2;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; background: var(--bg); color: var(--text); font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    display: grid; grid-template-columns: 420px 1fr; grid-template-rows: 1fr 84px; font-feature-settings: "tnum" 1; transition: background-color .25s, color .25s; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .serif { font-family: Georgia, Cambria, "Times New Roman", serif; font-weight: 400; letter-spacing: -.3px; }
+  kbd { font-family: inherit; font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--sunken); border: 1px solid var(--line-2); color: var(--text-2); }
+
+  /* Receipt column */
+  .receipt { grid-row: 1 / 2; padding: 22px 0 18px 22px; display: flex; flex-direction: column; min-height: 0; }
+  .paper { flex: 1; background: var(--paper); border: 1px solid var(--paper-edge); border-radius: 22px 22px 6px 6px; box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; position: relative; }
+  .paper::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 10px;
+    background: radial-gradient(circle at 8px 10px, var(--bg) 6px, transparent 6.5px) 0 0 / 16px 10px repeat-x; }
+  .r-head { padding: 22px 24px 14px; text-align: center; border-bottom: 1px dashed var(--line-2); }
+  .r-head .logo { width: 44px; height: 44px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font-weight: 800; }
+  .r-head h1 { font-size: 22px; }
+  .r-head p { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+  .items { list-style: none; padding: 8px 24px; flex: 1; overflow: hidden; }
+  .item { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 11px 0; border-bottom: 1px dotted var(--line-2); font-size: 14px; }
+  .item .n { font-weight: 600; }
+  .item .p { font-weight: 700; }
+  .item .d { font-size: 12px; color: var(--text-3); }
+  .item .d.promo { color: var(--copper); font-weight: 600; }
+  .item .q { justify-self: end; display: inline-flex; align-items: center; gap: 2px; background: var(--sunken); border-radius: 8px; padding: 2px; }
+  .item .q button { width: 24px; height: 24px; border-radius: 6px; color: var(--text-2); }
+  .item .q output { min-width: 20px; text-align: center; font-size: 12px; font-weight: 700; }
+  .r-sum { padding: 14px 24px 22px; border-top: 1px dashed var(--line-2); display: grid; gap: 6px; font-size: 13px; color: var(--text-2); }
+  .r-sum div { display: flex; justify-content: space-between; }
+  .r-sum .promo { color: var(--copper); }
+  .r-sum .total { font-size: 15px; color: var(--text); padding-top: 8px; align-items: baseline; }
+  .r-sum .total b { font-size: 36px; font-weight: 400; letter-spacing: -1px; }
+
+  /* Catalog */
+  main { padding: 22px 26px 18px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .top { display: flex; align-items: center; gap: 14px; }
+  .greet small { font-size: 12px; color: var(--text-3); }
+  .greet h2 { font-size: 26px; }
+  .modes { display: inline-flex; gap: 4px; padding: 4px; border-radius: 14px; background: var(--sunken); border: 1px solid var(--line); margin-left: 18px; }
+  .modes button { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 13px; color: var(--text-2); }
+  .modes button[aria-selected="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
+  .theme { margin-left: auto; height: 38px; padding: 0 14px; border-radius: 12px; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; border: 1px solid var(--line-2); background: var(--surface); color: var(--text-2); }
+  .theme svg { width: 16px; height: 16px; }
+  .search { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line-2); box-shadow: var(--shadow); }
+  .search:focus-within { border-color: var(--focus); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .search input { flex: 1; border: 0; background: none; color: var(--text); font: inherit; font-size: 16px; }
+  .search input::placeholder { color: var(--text-3); }
+  .search input:focus { outline: none; }
+  .cats { display: flex; gap: 8px; flex-wrap: wrap; }
+  .cat { height: 36px; padding: 0 14px; border-radius: 999px; font-size: 13px; color: var(--text-2); border: 1px solid var(--line-2); background: var(--surface); }
+  .cat[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+  .card { text-align: left; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; transition: transform .15s, box-shadow .15s; }
+  .card:hover { transform: translateY(-2px); }
+  .art { height: 104px; display: grid; place-items: center; position: relative; }
+  .art svg { width: 50px; height: 50px; color: var(--art-ink); }
+  .flag { position: absolute; top: 10px; right: 10px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
+  .flag.low { background: var(--warn-soft); color: var(--warn); }
+  .flag.new { background: var(--copper-soft); color: var(--copper); }
+  .body { padding: 10px 12px 12px; display: grid; gap: 4px; }
+  .body .n { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+  .body .m { display: flex; justify-content: space-between; align-items: baseline; }
+  .body .p { font-size: 16px; font-weight: 700; }
+  .body .s { font-size: 12px; color: var(--text-3); }
+  .card.on { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+
+  /* Dock */
+  .dock { grid-column: 1 / 3; background: var(--dock); color: var(--dock-text); display: flex; align-items: center; gap: 18px; padding: 0 22px; }
+  .dock .meta { font-size: 12px; color: var(--dock-muted); display: grid; gap: 2px; }
+  .dock .meta b { color: var(--dock-text); font-size: 14px; }
+  .dock .sep { width: 1px; height: 40px; background: rgba(255,255,255,.12); }
+  .dock .act { height: 48px; padding: 0 16px; border-radius: 14px; border: 1px solid rgba(255,255,255,.14); font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; color: var(--dock-text); }
+  .dock .act kbd { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.2); color: var(--dock-text); }
+  .dock .charge { margin-left: auto; height: 58px; min-width: 340px; border-radius: 16px; padding: 0 22px; display: flex; justify-content: space-between; align-items: center; font-size: 17px; font-weight: 700;
+    background: linear-gradient(180deg, #F0D2B4, #D9A877); color: #1F1206; box-shadow: 0 10px 26px rgba(217,168,119,.3), inset 0 1px 0 rgba(255,255,255,.5); }
+  .dock .charge kbd { background: rgba(31,18,6,.1); border-color: rgba(31,18,6,.25); color: #1F1206; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <section class="receipt" aria-label="Venta actual">
+    <div class="paper">
+      <div class="r-head"><div class="logo" aria-hidden="true">LE</div><h1 class="serif">Café La Esquina</h1><p>Venta #1.285 · Mesa para llevar · 9:42 a. m.</p></div>
+      <ul class="items">
+        <li class="item"><span class="n">Café con leche grande</span><span class="p">$ 9.000</span><span class="d">2 × $ 4.500 · uno deslactosado</span><span class="q"><button aria-label="Quitar uno">−</button><output>2</output><button aria-label="Agregar uno">+</button></span></li>
+        <li class="item"><span class="n">Calentado paisa</span><span class="p">$ 16.500</span><span class="d">Huevos revueltos</span><span class="q"><button aria-label="Quitar uno">−</button><output>1</output><button aria-label="Agregar uno">+</button></span></li>
+        <li class="item"><span class="n">Pandebono</span><span class="p">$ 5.400</span><span class="d promo">Promo 2 × $ 2.700</span><span class="q"><button aria-label="Quitar uno">−</button><output>2</output><button aria-label="Agregar uno">+</button></span></li>
+        <li class="item"><span class="n">Jugo de mora en agua</span><span class="p">$ 3.000</span><span class="d">Sin azúcar</span><span class="q"><button aria-label="Quitar uno">−</button><output>1</output><button aria-label="Agregar uno">+</button></span></li>
+      </ul>
+      <div class="r-sum">
+        <div><span>Subtotal</span><span>$ 33.900</span></div>
+        <div class="promo"><span>Promociones</span><span>−$ 1.000</span></div>
+        <div><span>Impoconsumo 8 %</span><span>incluido</span></div>
+        <div><span>Propina voluntaria 10 %</span><span>$ 3.290</span></div>
+        <div class="total"><span class="serif">Total</span><b class="serif">$ 36.190</b></div>
+      </div>
+    </div>
+  </section>
+
+  <main>
+    <div class="top">
+      <div class="greet"><small>Buenos días, Camila · Caja abierta desde 6:45 a. m.</small><h2 class="serif">Mostrador</h2></div>
+      <div class="modes" role="tablist" aria-label="Modo de venta"><button role="tab" aria-selected="true">Mostrador</button><button role="tab" aria-selected="false">Mesas</button><button role="tab" aria-selected="false">Domicilios</button></div>
+      <button class="theme" id="theme" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 13A9 9 0 1111 3a7 7 0 0010 10z"/></svg><span>Modo oscuro</span></button>
+    </div>
+    <label class="search">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-3)" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <span class="sr">Buscar producto</span><input placeholder="Buscá un producto o escaneá su código"><kbd>F2</kbd>
+    </label>
+    <div class="cats" role="group" aria-label="Categorías">
+      <button class="cat" aria-pressed="true">Café</button><button class="cat" aria-pressed="false">Desayunos</button><button class="cat" aria-pressed="false">Panadería</button><button class="cat" aria-pressed="false">Jugos</button><button class="cat" aria-pressed="false">Postres</button><button class="cat" aria-pressed="false">Para llevar</button>
+    </div>
+    <section class="grid" aria-label="Productos">
+      <button class="card on"><span class="art" style="background:var(--art-1)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 18h22v12a8 8 0 01-8 8h-6a8 8 0 01-8-8zM32 21h3a4 4 0 010 8h-3M17 8c0 3 3 3 3 6M23 8c0 3 3 3 3 6"/></svg></span><span class="body"><span class="n">Café con leche grande</span><span class="m"><span class="p">$ 4.500</span><span class="s">en ticket ×2</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-1)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 20h20v10a8 8 0 01-8 8h-4a8 8 0 01-8-8zM32 22h3a3 3 0 010 6h-3"/></svg></span><span class="body"><span class="n">Tinto</span><span class="m"><span class="p">$ 2.000</span><span class="s">Café</span></span></span></button>
+      <button class="card"><span class="flag new">Nuevo</span><span class="art" style="background:var(--art-3)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 18h22v12a8 8 0 01-8 8h-6a8 8 0 01-8-8zM14 14c4-4 10-4 14 0"/></svg></span><span class="body"><span class="n">Capuchino de canela</span><span class="m"><span class="p">$ 6.800</span><span class="s">Café</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-4)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 12h20l-2 26a3 3 0 01-3 3H19a3 3 0 01-3-3zM14 20h20"/></svg></span><span class="body"><span class="n">Café frío vainilla</span><span class="m"><span class="p">$ 7.500</span><span class="s">Café</span></span></span></button>
+      <button class="card"><span class="flag low">Quedan 4</span><span class="art" style="background:var(--art-1)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="24" cy="26" r="12"/><circle cx="20" cy="23" r="1.5"/><circle cx="27" cy="28" r="1.5"/></svg></span><span class="body"><span class="n">Pandebono</span><span class="m"><span class="p">$ 2.700</span><span class="s">Panadería</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-3)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 30h32l-4 8H12zM12 30c0-8 5-14 12-14s12 6 12 14"/></svg></span><span class="body"><span class="n">Calentado paisa</span><span class="m"><span class="p">$ 16.500</span><span class="s">Desayunos</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-2)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 10h18l-2 28a3 3 0 01-3 3h-8a3 3 0 01-3-3zM24 4v10"/></svg></span><span class="body"><span class="n">Jugo de mora en agua</span><span class="m"><span class="p">$ 3.000</span><span class="s">Jugos</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-4)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 26h28a14 14 0 01-28 0zM16 20c0-4 4-6 8-6s8 2 8 6"/></svg></span><span class="body"><span class="n">Bowl de frutas</span><span class="m"><span class="p">$ 9.900</span><span class="s">Desayunos</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-3)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 34l14-22 14 22zM16 28h16"/></svg></span><span class="body"><span class="n">Torta de zanahoria</span><span class="m"><span class="p">$ 7.200</span><span class="s">Postres</span></span></span></button>
+      <button class="card"><span class="art" style="background:var(--art-2)"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6h12v6l3 5v22a3 3 0 01-3 3H18a3 3 0 01-3-3V17l3-5z"/></svg></span><span class="body"><span class="n">Agua con gas</span><span class="m"><span class="p">$ 3.500</span><span class="s">Bebidas</span></span></span></button>
+    </section>
+  </main>
+
+  <div class="dock" role="toolbar" aria-label="Acciones de la venta">
+    <div class="meta"><span>Cliente</span><b>Consumidor final</b></div>
+    <span class="sep" aria-hidden="true"></span>
+    <div class="meta"><span>Ventas hoy</span><b>52 · $ 1.236.400</b></div>
+    <span class="sep" aria-hidden="true"></span>
+    <button class="act">Descuento <kbd>F6</kbd></button>
+    <button class="act">Suspender <kbd>F8</kbd></button>
+    <button class="act">Enviar a cocina</button>
+    <button class="charge"><span>Cobrar venta</span><span>$ 36.190 <kbd>F4</kbd></span></button>
+  </div>
+
+<script>
+  const root = document.documentElement, btn = document.getElementById("theme");
+  function setTheme(t) { root.dataset.theme = t; btn.setAttribute("aria-pressed", String(t === "dark")); btn.querySelector("span").textContent = t === "dark" ? "Modo claro" : "Modo oscuro"; }
+  btn.addEventListener("click", () => setTheme(root.dataset.theme === "dark" ? "light" : "dark"));
+</script>
+</body>
+</html>

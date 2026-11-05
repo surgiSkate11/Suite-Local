@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "chosen": "04-atelier-grafito.html",
+  "handoffs": {
+    "04-atelier-grafito.html": {
+      "status": "in_progress",
+      "queued": false,
+      "sentAt": "2026-11-04T22:18:48.485Z",
+      "startedAt": "2026-11-04T22:19:14.229Z",
+      "implementedAt": null,
+      "feature": "odd/tasks/rediseno-multinegocio.md",
+      "note": "Merging pending UI branch, then building the light/dark theme system and the new POS in PySide6."
+    }
+  }
+}

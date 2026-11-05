@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="es" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuiteLocal · Grafito</title>
+<style>
+  :root[data-theme="light"] {
+    --bg: #F3F4F6; --surface: #FFFFFF; --surface-2: #F8F9FA; --sunken: #ECEEF1; --line: #E3E6EA; --line-2: #D2D6DC;
+    --text: #0F1419; --text-2: #343C46; --text-3: #5A6370;
+    --accent: #0B6E4F; --accent-hi: #0E8560; --on-accent: #FFFFFF; --accent-soft: #E2F2EB; --focus: #0E8560;
+    --hero: #0F1419; --hero-2: #1C232C; --hero-text: #F4F6F8; --hero-muted: #A7B0BC;
+    --warn: #8A5300; --warn-soft: #FCEFD8; --danger: #B42335;
+    --shadow: 0 1px 2px rgba(15,20,25,.05), 0 8px 24px rgba(15,20,25,.06);
+    --row-hl: #EAF5F0;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0A0D10; --surface: #12161B; --surface-2: #161B21; --sunken: #0E1216; --line: #1F262E; --line-2: #2A323C;
+    --text: #EEF1F4; --text-2: #C3CAD3; --text-3: #8E98A5;
+    --accent: #3DD6A0; --accent-hi: #63E3B6; --on-accent: #06140F; --accent-soft: rgba(61,214,160,.12); --focus: #63E3B6;
+    --hero: #161B21; --hero-2: #1C232B; --hero-text: #F4F6F8; --hero-muted: #9AA4B1;
+    --warn: #F2BB66; --warn-soft: rgba(242,187,102,.12); --danger: #F27A8A;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    --row-hl: rgba(61,214,160,.08);
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1440px; height: 900px; overflow: hidden; background: var(--bg); color: var(--text); font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    display: grid; grid-template-rows: 64px 1fr 44px; font-feature-settings: "tnum" 1; transition: background-color .25s, color .25s; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .mono { font-family: "Cascadia Mono", Consolas, monospace; }
+  kbd { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--sunken); border: 1px solid var(--line-2); color: var(--text-2); }
+
+  header { display: flex; align-items: center; gap: 22px; padding: 0 24px; background: var(--surface); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+  .mark { width: 32px; height: 32px; border-radius: 9px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 800; }
+  .tabs { display: flex; gap: 2px; height: 64px; }
+  .tabs a { display: flex; align-items: center; padding: 0 14px; font-size: 14px; color: var(--text-3); text-decoration: none; border-bottom: 2px solid transparent; }
+  .tabs a[aria-current="page"] { color: var(--text); border-color: var(--accent); font-weight: 600; }
+  .right { margin-left: auto; display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--text-3); }
+  .right b { color: var(--text); }
+  .theme { height: 36px; padding: 0 12px; border-radius: 10px; display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line-2); font-size: 13px; font-weight: 600; color: var(--text-2); }
+  .theme svg { width: 16px; height: 16px; }
+
+  .work { display: grid; grid-template-columns: 1fr 470px; min-height: 0; }
+  .left { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+  .scan { display: flex; align-items: center; gap: 14px; height: 66px; padding: 0 18px; border-radius: 14px; background: var(--surface); border: 2px solid var(--accent); box-shadow: 0 0 0 5px var(--accent-soft); }
+  .scan svg { color: var(--accent); flex: none; }
+  .scan input { flex: 1; border: 0; background: none; color: var(--text); font: inherit; font-size: 22px; font-family: "Cascadia Mono", Consolas, monospace; }
+  .scan input:focus { outline: none; }
+  .scan .hint { font-size: 13px; color: var(--text-3); border-left: 1px solid var(--line); padding-left: 14px; }
+  .scan .hint b { color: var(--text); }
+
+  .quick { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .quick button { height: 58px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); text-align: left; padding: 0 12px; display: grid; align-content: center; gap: 2px; box-shadow: var(--shadow); }
+  .quick b { font-size: 13px; } .quick small { font-size: 12px; color: var(--text-3); }
+  .quick .k { float: right; }
+
+  .table { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); flex: 1; display: flex; flex-direction: column; }
+  .table-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--text-3); }
+  .table-head b { color: var(--text); font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-size: 11px; letter-spacing: .8px; text-transform: uppercase; color: var(--text-3); font-weight: 600; padding: 10px 16px; background: var(--surface-2); border-bottom: 1px solid var(--line); }
+  td { padding: 13px 16px; border-bottom: 1px solid var(--line); }
+  .r { text-align: right; }
+  td.code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.5px; color: var(--text-3); }
+  tr.hl td { background: var(--row-hl); }
+  tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .chip { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); margin-left: 8px; }
+  .weight { font-size: 12px; color: var(--text-3); display: block; }
+
+  .pay { padding: 20px 24px 20px 0; display: flex; flex-direction: column; gap: 14px; }
+  .hero { border-radius: 22px; padding: 22px; color: var(--hero-text); background: linear-gradient(160deg, var(--hero-2), var(--hero)); box-shadow: var(--shadow); border: 1px solid var(--line); }
+  .hero small { font-size: 12px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--hero-muted); }
+  .hero .amt { font-size: 60px; font-weight: 300; letter-spacing: -2px; line-height: 1.05; margin-top: 6px; }
+  .hero .split { display: grid; grid-template-columns: 1fr auto; gap: 4px; margin-top: 14px; font-size: 13px; color: var(--hero-muted); }
+  .hero .split span:nth-child(even) { text-align: right; color: var(--hero-text); }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 16px; display: grid; gap: 12px; box-shadow: var(--shadow); }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; background: var(--sunken); border-radius: 12px; }
+  .seg button { height: 38px; border-radius: 9px; font-size: 13px; color: var(--text-2); }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
+  .recv { display: flex; justify-content: space-between; align-items: center; height: 60px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--surface-2); }
+  .recv span { font-size: 13px; color: var(--text-3); }
+  .recv b { font-size: 28px; font-weight: 500; letter-spacing: -.5px; }
+  .bills { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .bills button { height: 40px; border-radius: 10px; border: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--text-2); background: var(--surface); }
+  .bills button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .change { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-radius: 14px; background: var(--accent-soft); }
+  .change span { font-size: 12px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--accent); }
+  .change b { font-size: 28px; font-weight: 600; color: var(--accent); }
+  .cta { height: 66px; border-radius: 18px; background: linear-gradient(180deg, var(--accent-hi), var(--accent)); color: var(--on-accent); font-size: 18px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 12px; box-shadow: 0 14px 30px rgba(11,110,79,.25); }
+  .cta kbd { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.3); color: inherit; }
+  .keys { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: 12px; color: var(--text-3); }
+  .keys div { display: flex; gap: 8px; align-items: center; }
+
+  footer { display: flex; align-items: center; gap: 22px; padding: 0 24px; background: var(--surface); border-top: 1px solid var(--line); font-size: 12px; color: var(--text-3); }
+  .ok::before { content: "●"; color: var(--accent); margin-right: 6px; }
+  footer .push { margin-left: auto; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="mark" aria-hidden="true">S</span>SuiteLocal</div>
+    <nav class="tabs" aria-label="Secciones">
+      <a href="#" aria-current="page">Caja</a><a href="#">Inventario</a><a href="#">Ventas</a><a href="#">Cierre de caja</a><a href="#">Reportes</a><a href="#">Ajustes</a>
+    </nav>
+    <div class="right">
+      <span>Turno <b>mañana</b></span><span>Cajero <b>Andrés Ríos</b></span>
+      <button class="theme" id="theme" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 13A9 9 0 1111 3a7 7 0 0010 10z"/></svg><span>Modo oscuro</span></button>
+    </div>
+  </header>
+
+  <div class="work">
+    <main class="left">
+      <label class="scan">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M16 8v8"/></svg>
+        <span class="sr">Código de barras o nombre del producto</span>
+        <input class="mono" value="7702354" aria-describedby="hint">
+        <span class="hint" id="hint">Cantidad <b>×1</b> · escribí <b>3*</b> para multiplicar</span>
+      </label>
+      <div class="quick" role="group" aria-label="Productos rápidos">
+        <button><b>Pan francés <kbd class="k">1</kbd></b><small>$ 500 c/u</small></button>
+        <button><b>Bolsa de hielo <kbd class="k">2</kbd></b><small>$ 3.000</small></button>
+        <button><b>Huevo suelto <kbd class="k">3</kbd></b><small>$ 800 c/u</small></button>
+        <button><b>Papa (kg) <kbd class="k">4</kbd></b><small>$ 2.400 / kg</small></button>
+        <button><b>Tomate (kg) <kbd class="k">5</kbd></b><small>$ 3.800 / kg</small></button>
+        <button><b>Recarga <kbd class="k">6</kbd></b><small>Monto libre</small></button>
+      </div>
+      <section class="table" aria-label="Venta actual">
+        <div class="table-head"><b>Venta #1.285</b><span>5 líneas · el último escaneado queda resaltado</span></div>
+        <table>
+          <thead><tr><th>Código</th><th>Producto</th><th class="r">Cant.</th><th class="r">Precio</th><th class="r">Subtotal</th></tr></thead>
+          <tbody>
+            <tr><td class="code">7702189000124</td><td>Arroz Diana 500 g</td><td class="r">2</td><td class="r">$ 3.200</td><td class="r">$ 6.400</td></tr>
+            <tr><td class="code">7702001043215</td><td>Leche Alquería entera 1 L</td><td class="r">1</td><td class="r">$ 4.600</td><td class="r">$ 4.600</td></tr>
+            <tr><td class="code">7702024002917</td><td>Aceite Premier 900 ml<span class="chip">Quedan 2</span></td><td class="r">1</td><td class="r">$ 13.900</td><td class="r">$ 13.900</td></tr>
+            <tr><td class="code">2000000004015</td><td>Papa pastusa<span class="weight">Pesado en balanza · 1,250 kg</span></td><td class="r">1,250</td><td class="r">$ 2.400</td><td class="r">$ 3.000</td></tr>
+            <tr class="hl"><td class="code">7702354931207</td><td>Gaseosa Postobón Manzana 400 ml</td><td class="r">3</td><td class="r">$ 2.800</td><td class="r">$ 8.400</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    <aside class="pay" aria-label="Cobro">
+      <div class="hero">
+        <small>Total a cobrar</small>
+        <div class="amt">$ 36.300</div>
+        <div class="split"><span>Subtotal</span><span>$ 30.504</span><span>IVA 19 %</span><span>$ 5.796</span><span>Artículos</span><span>8,25</span></div>
+      </div>
+      <div class="panel">
+        <div class="seg" role="group" aria-label="Forma de pago"><button aria-pressed="true">Efectivo</button><button aria-pressed="false">Transferencia</button><button aria-pressed="false">Tarjeta</button></div>
+        <div class="recv"><span>Recibido</span><b>$ 50.000</b></div>
+        <div class="bills" role="group" aria-label="Billetes rápidos"><button aria-pressed="false">Exacto</button><button aria-pressed="false">$ 40.000</button><button aria-pressed="true">$ 50.000</button><button aria-pressed="false">$ 100.000</button></div>
+        <div class="change"><span>Cambio</span><b>$ 13.700</b></div>
+      </div>
+      <button class="cta">Cobrar e imprimir <kbd>F4</kbd></button>
+      <div class="keys" aria-label="Atajos de teclado">
+        <div><kbd>F6</kbd> Descuento</div><div><kbd>F8</kbd> Suspender venta</div>
+        <div><kbd>F9</kbd> Dividir pago</div><div><kbd>Supr</kbd> Quitar línea</div>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    <span class="ok">Funcionando sin internet</span>
+    <span class="ok">Impresora térmica conectada</span>
+    <span class="ok">Último respaldo: hoy 6:00 a. m.</span>
+    <span class="push">Base de caja: $ 150.000 · Efectivo esperado: $ 812.400</span>
+  </footer>
+
+<script>
+  const root = document.documentElement, btn = document.getElementById("theme");
+  function setTheme(t) { root.dataset.theme = t; btn.setAttribute("aria-pressed", String(t === "dark")); btn.querySelector("span").textContent = t === "dark" ? "Modo claro" : "Modo oscuro"; }
+  btn.addEventListener("click", () => setTheme(root.dataset.theme === "dark" ? "light" : "dark"));
+</script>
+</body>
+</html>
