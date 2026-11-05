@@ -45,7 +45,20 @@ def test_business_settings_validate_and_store_tax_rate(tmp_path):
     assert repository.get(business_id).tax_rate_basis_points == 500
 
 
-@pytest.mark.parametrize("value", ["-1", "100,01", "19,999", "no válido", "19,5", "12"])
+@pytest.mark.parametrize(
+    "value",
+    ["-1", "100,01", "19,999", "no válido", "19,5", "12"]
+    + [
+        "1e999999999",
+        "-1e999999999",
+        "1e-999999999",
+        "NaN",
+        "sNaN",
+        "Infinity",
+        "-Infinity",
+        "inf",
+    ],
+)
 def test_business_settings_reject_invalid_tax_rate(tmp_path, value):
     database = Database(tmp_path / "settings-invalid-tax.db")
     database.initialize()

@@ -1,3 +1,4 @@
+import sqlite3
 from collections.abc import Iterable
 from decimal import Decimal, InvalidOperation
 
@@ -33,10 +34,12 @@ def _parse_tax_rate_percent(value: str | Decimal | int | float) -> int:
         rate = Decimal(str(value).strip().replace(",", "."))
     except InvalidOperation as error:
         raise ValueError("El IVA debe ser un porcentaje válido.") from error
-    # Compare as Decimal so odd inputs such as "1e999999999" never become a huge int.
-    for allowed in TAX_RATES_BASIS_POINTS:
-        if rate.is_finite() and rate * 100 == allowed:
-            return validate_tax_rate(allowed)
+    # Only exact comparisons: arithmetic on "1e999999999" overflows and "1e-999999999" rounds
+    # to zero. Basis points / 100 is the percentage, e.g. 1500 -> 15.
+    if rate.is_finite():
+        for allowed in TAX_RATES_BASIS_POINTS:
+            if rate == Decimal(allowed) / 100:
+                return validate_tax_rate(allowed)
     raise ValueError("El IVA debe ser 15 %, 5 % o 0 %.")
 
 
@@ -46,8 +49,12 @@ class BusinessSettingsRepository:
 
     def get(self, business_id: int) -> BusinessSettings:
         with self.database.connect() as connection:
-            row = connection.execute(
-                """
+            return self._load(connection, business_id)
+
+    @staticmethod
+    def _load(connection: sqlite3.Connection, business_id: int) -> BusinessSettings:
+        row = connection.execute(
+            """
                 SELECT b.name, s.currency_symbol, s.low_stock_threshold,
                 s.enabled_payment_methods, s.tax_rate_basis_points, s.ruc, s.tax_regime,
                 s.business_type, s.enabled_modules, s.decimal_separator, s.address, s.phone,
@@ -56,8 +63,8 @@ class BusinessSettingsRepository:
                 LEFT JOIN business_settings s ON s.business_id = b.id
                 WHERE b.id = ?
                 """,
-                (business_id,),
-            ).fetchone()
+            (business_id,),
+        ).fetchone()
         if row is None:
             raise ValueError("No se encontró la configuración del negocio.")
         configured_methods = row["enabled_payment_methods"] or ",".join(DEFAULT_PAYMENT_METHODS)
@@ -148,7 +155,37 @@ class BusinessSettingsRepository:
 
         Everything is validated against the resulting profile before anything is written.
         """
-        current = self.get(business_id)
+        with self.database.connect() as connection:
+            self.write_profile(
+                connection,
+                business_id,
+                ruc=ruc,
+                tax_regime=tax_regime,
+                business_type=business_type,
+                enabled_modules=enabled_modules,
+                decimal_separator=decimal_separator,
+                address=address,
+                phone=phone,
+                receipt_footer=receipt_footer,
+            )
+        return self.get(business_id)
+
+    def write_profile(
+        self,
+        connection: sqlite3.Connection,
+        business_id: int,
+        *,
+        ruc: str | None = None,
+        tax_regime: str | None = None,
+        business_type: str | None = None,
+        enabled_modules: Iterable[str] | None = None,
+        decimal_separator: str | None = None,
+        address: str | None = None,
+        phone: str | None = None,
+        receipt_footer: str | None = None,
+    ) -> None:
+        """Validate and write profile fields on the caller's connection and transaction."""
+        current = self._load(connection, business_id)
         new_ruc = current.ruc if ruc is None else normalize_ruc(ruc)
         new_regime = current.tax_regime if tax_regime is None else validate_tax_regime(tax_regime)
         validate_ruc_for_regime(new_ruc, new_regime)
@@ -177,27 +214,25 @@ class BusinessSettingsRepository:
             if receipt_footer is None
             else normalize_text(receipt_footer, "El pie del comprobante", RECEIPT_FOOTER_MAX_LENGTH)
         )
-        with self.database.connect() as connection:
-            connection.execute(
-                "INSERT OR IGNORE INTO business_settings (business_id) VALUES (?)", (business_id,)
-            )
-            connection.execute(
-                """
-                UPDATE business_settings
-                SET ruc = ?, tax_regime = ?, business_type = ?, enabled_modules = ?,
-                    decimal_separator = ?, address = ?, phone = ?, receipt_footer = ?
-                WHERE business_id = ?
-                """,
-                (
-                    new_ruc,
-                    new_regime,
-                    new_type,
-                    format_modules(new_modules),
-                    new_separator,
-                    new_address,
-                    new_phone,
-                    new_footer,
-                    business_id,
-                ),
-            )
-        return self.get(business_id)
+        connection.execute(
+            "INSERT OR IGNORE INTO business_settings (business_id) VALUES (?)", (business_id,)
+        )
+        connection.execute(
+            """
+            UPDATE business_settings
+            SET ruc = ?, tax_regime = ?, business_type = ?, enabled_modules = ?,
+                decimal_separator = ?, address = ?, phone = ?, receipt_footer = ?
+            WHERE business_id = ?
+            """,
+            (
+                new_ruc,
+                new_regime,
+                new_type,
+                format_modules(new_modules),
+                new_separator,
+                new_address,
+                new_phone,
+                new_footer,
+                business_id,
+            ),
+        )

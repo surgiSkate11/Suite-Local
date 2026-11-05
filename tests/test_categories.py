@@ -229,3 +229,35 @@ def test_inventory_service_passes_category_cost_and_rate_and_stays_owner_only(en
     with pytest.raises(PermissionError, match="Solo el dueño"):
         inventory.create_product(cashier, "B-1", "Otro", 100, 1, category_id=bebidas.id)
     assert [p.code for p in products.find_active()] == ["A-1"]
+
+
+def test_inventory_rejects_a_category_of_another_business_or_a_missing_one(env):
+    database, owner, _, service, products = env
+    foreign = service.create(other_business_session(database), "Ajena")
+    own = service.create(owner, "Bebidas")
+    inventory = InventoryService(products)
+    product = inventory.create_product(owner, "A-1", "Arroz", 250, 10, category_id=own.id)
+
+    for category_id in (foreign.id, 9999):
+        with pytest.raises(ValueError, match="La categoría seleccionada no existe."):
+            inventory.update_product(
+                owner, product.id, "A-1", "Arroz caro", 999, 1, category_id=category_id
+            )
+        with pytest.raises(ValueError, match="La categoría seleccionada no existe."):
+            inventory.create_product(owner, "B-1", "Aceite", 900, 3, category_id=category_id)
+
+    assert products.find_active() == [product]
+
+
+def test_inventory_accepts_own_and_empty_categories(env):
+    _, owner, _, service, products = env
+    own = service.create(owner, "Bebidas")
+    inventory = InventoryService(products)
+    product = inventory.create_product(owner, "A-1", "Arroz", 250, 10)
+
+    assigned = inventory.update_product(
+        owner, product.id, "A-1", "Arroz", 250, 10, category_id=own.id
+    )
+    cleared = inventory.update_product(owner, product.id, "A-1", "Arroz", 250, 10, category_id=None)
+
+    assert (assigned.category_id, cleared.category_id) == (own.id, None)

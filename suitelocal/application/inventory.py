@@ -21,7 +21,14 @@ class InventoryService:
     ) -> Product:
         require_owner(session)
         return self.products.add(
-            code, name, price_cents, stock, category_id, cost_cents, tax_rate_basis_points
+            code,
+            name,
+            price_cents,
+            stock,
+            category_id,
+            cost_cents,
+            tax_rate_basis_points,
+            business_id=session.user.business_id,
         )
 
     def update_product(
@@ -47,6 +54,7 @@ class InventoryService:
             category_id,
             cost_cents,
             tax_rate_basis_points,
+            business_id=session.user.business_id,
         )
 
     def deactivate_product(self, session: Session, product_id: int) -> None:

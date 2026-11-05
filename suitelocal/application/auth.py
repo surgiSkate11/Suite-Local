@@ -1,9 +1,12 @@
 import sqlite3
 
 from suitelocal.domain.auth import Session, User
+from suitelocal.domain.business import DEFAULT_TAX_REGIME, profile_template
 from suitelocal.domain.policies import require_owner
 from suitelocal.infrastructure.database import Database
+from suitelocal.infrastructure.repositories import CategoryRepository
 from suitelocal.infrastructure.security import hash_password, verify_password
+from suitelocal.infrastructure.settings import BusinessSettingsRepository
 
 # Verified when the username does not exist so a failed login always costs one scrypt run.
 _DUMMY_PASSWORD_HASH = hash_password("suitelocal-dummy-password")
@@ -24,7 +27,16 @@ class AuthService:
         username: str,
         password: str,
         password_confirmation: str,
+        *,
+        business_type: str | None = None,
+        tax_regime: str = DEFAULT_TAX_REGIME,
+        ruc: str = "",
     ) -> User:
+        """Create the business and its owner; this is the only moment a template is applied.
+
+        A given ``business_type`` also adopts its template (modules and categories). The whole
+        setup is one transaction, so an invalid regime or RUC creates nothing.
+        """
         business_name = business_name.strip()
         if not business_name or not username:
             raise ValueError("El negocio y el usuario son obligatorios.")
@@ -52,6 +64,19 @@ class AuthService:
                 """,
                 (business_id,),
             )
+            template = None if business_type is None else profile_template(business_type)
+            BusinessSettingsRepository(self.database).write_profile(
+                connection,
+                business_id,
+                ruc=ruc,
+                tax_regime=tax_regime,
+                business_type=business_type,
+                enabled_modules=None if template is None else template.modules,
+            )
+            if template is not None:
+                CategoryRepository(self.database).add_missing(
+                    business_id, template.categories, connection
+                )
             user = connection.execute(
                 """
                 INSERT INTO users (business_id, username, password_hash, role)

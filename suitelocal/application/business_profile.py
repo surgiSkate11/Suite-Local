@@ -70,10 +70,14 @@ class BusinessProfileService:
         """Explicitly adopt a business type: replace its modules and add the missing categories."""
         require_owner(session)
         template = profile_template(business_type)
-        settings = self.settings.update_profile(
-            session.user.business_id,
-            business_type=business_type,
-            enabled_modules=template.modules,
-        )
-        self.categories.add_missing(session.user.business_id, template.categories)
-        return settings
+        business_id = session.user.business_id
+        # One transaction: a failure while adding categories also undoes the settings change.
+        with self.settings.database.connect() as connection:
+            self.settings.write_profile(
+                connection,
+                business_id,
+                business_type=business_type,
+                enabled_modules=template.modules,
+            )
+            self.categories.add_missing(business_id, template.categories, connection)
+        return self.settings.get(business_id)

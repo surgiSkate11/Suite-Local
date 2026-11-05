@@ -424,3 +424,110 @@ def test_migrated_business_that_already_has_a_ruc_stays_general(tmp_path):
 
     current = BusinessSettingsRepository(database).get(1)
     assert (current.tax_regime, current.ruc) == ("general", "1790012345001")
+
+
+def test_applying_a_template_is_atomic_when_adding_categories_fails(env):
+    database, owner, _, settings, categories, service = env
+    business_id = owner.user.business_id
+    before = settings.get(business_id)
+    with database.connect() as connection:
+        connection.execute(
+            "CREATE TRIGGER fail_category BEFORE INSERT ON categories "
+            "WHEN NEW.name = 'Postres' BEGIN SELECT RAISE(ABORT, 'boom'); END"
+        )
+
+    with pytest.raises(ValueError):
+        service.apply_template(owner, "cafeteria")
+
+    assert settings.get(business_id) == before
+    assert categories.list(business_id, include_inactive=True) == []
+
+
+# -- first-run setup -------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fresh(tmp_path):
+    database = Database(tmp_path / "fresh.db")
+    database.initialize()
+    return database, AuthService(database)
+
+
+def test_setup_stores_the_type_and_regime_and_applies_the_template(fresh):
+    database, auth = fresh
+
+    owner = auth.setup_owner(
+        "Café Sol",
+        "dueno",
+        "clave-segura",
+        "clave-segura",
+        business_type="cafeteria",
+        tax_regime="rimpe_popular",
+    )
+
+    profile = BusinessSettingsRepository(database).get(owner.business_id)
+    assert (profile.business_type, profile.tax_regime, profile.ruc) == (
+        "cafeteria",
+        "rimpe_popular",
+        "",
+    )
+    assert profile.enabled_modules == frozenset({"mesas", "categorias"})
+    names = [c.name for c in CategoryRepository(database).list(owner.business_id)]
+    assert names == ["Bebidas", "Café", "Desayunos", "Postres"]
+
+
+def test_setup_without_a_type_keeps_the_neutral_profile(fresh):
+    database, auth = fresh
+
+    owner = auth.setup_owner("Tienda", "dueno", "clave-segura", "clave-segura")
+
+    profile = BusinessSettingsRepository(database).get(owner.business_id)
+    assert (profile.business_type, profile.tax_regime) == ("otro", "sin_registro")
+    assert profile.enabled_modules == frozenset()
+    assert CategoryRepository(database).list(owner.business_id) == []
+
+
+def test_setup_stores_a_ruc_for_a_regime_that_requires_it(fresh):
+    database, auth = fresh
+
+    owner = auth.setup_owner(
+        "Ferretería Sol",
+        "dueno",
+        "clave-segura",
+        "clave-segura",
+        business_type="ferreteria",
+        tax_regime="general",
+        ruc=" 1790012345001 ",
+    )
+
+    profile = BusinessSettingsRepository(database).get(owner.business_id)
+    assert (profile.ruc, profile.tax_regime) == ("1790012345001", "general")
+
+
+@pytest.mark.parametrize(
+    ("regime", "ruc", "message"),
+    [
+        ("general", "", "El RUC es obligatorio para este régimen tributario."),
+        ("rimpe_emprendedor", "", "El RUC es obligatorio para este régimen tributario."),
+        ("general", "123", "El RUC debe tener exactamente 13 dígitos."),
+        ("nada", "", "El régimen tributario no es válido."),
+    ],
+)
+def test_invalid_setup_creates_nothing(fresh, regime, ruc, message):
+    database, auth = fresh
+
+    with pytest.raises(ValueError, match=message):
+        auth.setup_owner(
+            "Tienda",
+            "dueno",
+            "clave-segura",
+            "clave-segura",
+            business_type="tienda",
+            tax_regime=regime,
+            ruc=ruc,
+        )
+
+    assert not auth.has_users()
+    with database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM businesses").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0

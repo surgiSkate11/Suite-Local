@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from suitelocal.domain.models import KEEP, Keep, Product, Sale, validate_sale
@@ -45,6 +46,19 @@ def _translate_integrity_error(error: sqlite3.IntegrityError) -> ValueError | No
     return None
 
 
+def _require_category_of_business(
+    connection: sqlite3.Connection, category_id: int | None, business_id: int | None
+) -> None:
+    """Reject a category the business does not own; callers without a business skip the check."""
+    if category_id is None or business_id is None:
+        return
+    owned = connection.execute(
+        "SELECT 1 FROM categories WHERE id = ? AND business_id = ?", (category_id, business_id)
+    ).fetchone()
+    if owned is None:
+        raise ValueError("La categoría seleccionada no existe.")
+
+
 def _default_tax_rate(connection: sqlite3.Connection) -> int:
     """Business default for new products; 15 % when unset or not a legal rate."""
     row = connection.execute(
@@ -68,13 +82,18 @@ class ProductRepository:
         category_id: int | None = None,
         cost_cents: int | None = None,
         tax_rate_basis_points: int | None = None,
+        business_id: int | None = None,
     ) -> Product:
-        """Create a product; without a rate it gets the business default for new products."""
+        """Create a product; without a rate it gets the business default for new products.
+
+        With ``business_id`` the category must belong to that business.
+        """
         _validate_product_values(code, name, price_cents, stock, cost_cents)
         if tax_rate_basis_points is not None:
             validate_tax_rate(tax_rate_basis_points)
         try:
             with self.database.connect() as connection:
+                _require_category_of_business(connection, category_id, business_id)
                 if tax_rate_basis_points is None:
                     tax_rate_basis_points = _default_tax_rate(connection)
                 cursor = connection.execute(
@@ -137,8 +156,12 @@ class ProductRepository:
         category_id: int | None | Keep = KEEP,
         cost_cents: int | None | Keep = KEEP,
         tax_rate_basis_points: int | Keep = KEEP,
+        business_id: int | None = None,
     ) -> Product:
-        """Update a product; category, cost and rate are left alone unless given."""
+        """Update a product; category, cost and rate are left alone unless given.
+
+        With ``business_id`` a given category must belong to that business.
+        """
         _validate_product_values(
             code, name, price_cents, stock, None if isinstance(cost_cents, Keep) else cost_cents
         )
@@ -146,6 +169,8 @@ class ProductRepository:
             validate_tax_rate(tax_rate_basis_points)
         try:
             with self.database.connect() as connection:
+                if not isinstance(category_id, Keep):
+                    _require_category_of_business(connection, category_id, business_id)
                 cursor = connection.execute(
                     """
                     UPDATE products
@@ -229,17 +254,33 @@ class CategoryRepository:
         with self.database.connect() as connection:
             return self._insert(connection, business_id, name)
 
-    def add_missing(self, business_id: int, names: tuple[str, ...]) -> None:
-        """Create the categories the business lacks; existing ones (even inactive) stay as is."""
+    def add_missing(
+        self,
+        business_id: int,
+        names: tuple[str, ...],
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        """Create the categories the business lacks; existing ones (even inactive) stay as is.
+
+        With ``connection`` the inserts join the caller's transaction instead of their own.
+        """
         valid_names = [_validate_category_name(name) for name in names]
-        with self.database.connect() as connection:
-            for name in valid_names:
-                exists = connection.execute(
-                    "SELECT 1 FROM categories WHERE business_id = ? AND name = ? COLLATE NOCASE",
-                    (business_id, name),
-                ).fetchone()
-                if exists is None:
-                    self._insert(connection, business_id, name)
+        if connection is not None:
+            self._insert_missing(connection, business_id, valid_names)
+            return
+        with self.database.connect() as own_connection:
+            self._insert_missing(own_connection, business_id, valid_names)
+
+    def _insert_missing(
+        self, connection: sqlite3.Connection, business_id: int, names: Sequence[str]
+    ) -> None:
+        for name in names:
+            exists = connection.execute(
+                "SELECT 1 FROM categories WHERE business_id = ? AND name = ? COLLATE NOCASE",
+                (business_id, name),
+            ).fetchone()
+            if exists is None:
+                self._insert(connection, business_id, name)
 
     def rename(self, business_id: int, category_id: int, name: str) -> Category:
         name = _validate_category_name(name)
