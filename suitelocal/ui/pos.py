@@ -1,33 +1,120 @@
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+import re
+from collections.abc import Callable
+from decimal import Decimal
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
-from PySide6.QtGui import QKeyEvent, QKeySequence, QResizeEvent, QShortcut
+from PySide6.QtCore import QDate, QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QFont, QKeyEvent, QKeySequence, QResizeEvent, QShortcut, QShowEvent
 from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QComboBox,
+    QBoxLayout,
+    QDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
-    QTableWidgetItem,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from suitelocal.application.cart import Cart
-from suitelocal.domain.models import Payment, SaleError
+from suitelocal.domain.models import Payment, Product, SaleError
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
-from suitelocal.ui.components import DataTable, EmptyState, SearchField
+from suitelocal.ui.components import (
+    ElidedLabel,
+    EmptyState,
+    InlineMessage,
+    KeyHint,
+    ProductGrid,
+    SegmentedControl,
+    TicketLine,
+    set_variant,
+)
+from suitelocal.ui.components.product import repolish
+from suitelocal.ui.payment_dialog import (
+    METHOD_LABELS,
+    PaymentDialog,
+    format_money,
+    parse_money,
+    quick_bill_amounts,
+)
+from suitelocal.ui.theme.effects import apply_elevation
+from suitelocal.ui.theme.icons import ICONS, icon
+from suitelocal.ui.theme.manager import current_tokens, theme_manager
+
+__all__ = ["PosWidget", "format_money"]
+
+ICONS.setdefault(
+    "barcode", '<path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M16 8v8"/>'
+)
+
+PaymentDialogFactory = Callable[..., PaymentDialog]
+
+QUICK_KEY_COUNT = 6
+TICKET_COLUMN_WIDTH = 440
+TICKET_COLUMN_NARROW_WIDTH = 392
+COMPACT_BELOW_WIDTH = 900
+# Below this width the ticket narrows and secondary hints hide so the catalog keeps 3 columns.
+NARROW_BELOW_WIDTH = 1240
+FILTER_ALL = "Todos"
+FILTER_LOW_STOCK = "Stock bajo"
+# "3*" before a code multiplies the quantity; at most three digits so a barcode never matches.
+QUANTITY_PREFIX = re.compile(r"^\s*(\d{1,3})\*(.*)$", re.DOTALL)
+WEEKDAYS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+MONTHS = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
+DIGIT_KEYS = {
+    Qt.Key.Key_1: 1,
+    Qt.Key.Key_2: 2,
+    Qt.Key.Key_3: 3,
+    Qt.Key.Key_4: 4,
+    Qt.Key.Key_5: 5,
+    Qt.Key.Key_6: 6,
+}
 
 
-def format_money(cents: int, currency_symbol: str = "$") -> str:
-    amount = (Decimal(cents) / Decimal(100)).quantize(Decimal("0.01"))
-    return f"{currency_symbol}{amount:,.2f}"
+def _label(text: str, object_name: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName(object_name)
+    return label
+
+
+def _kpi_tile(caption: str) -> tuple[QFrame, QLabel]:
+    tile = QFrame()
+    tile.setObjectName("kpiTile")
+    tile.setMinimumWidth(120)
+    layout = QVBoxLayout(tile)
+    layout.setContentsMargins(14, 8, 14, 8)
+    layout.setSpacing(0)
+    value = _label("—", "kpiTileValue")
+    layout.addWidget(_label(caption, "kpiTileLabel"))
+    layout.addWidget(value)
+    return tile, value
+
+
+def _overlay_row(button: QPushButton, *widgets: QWidget) -> None:
+    """Lay labels over a button's right edge; they ignore the mouse so the button gets clicks."""
+    layout = QHBoxLayout(button)
+    layout.setContentsMargins(20, 0, 16, 0)
+    layout.setSpacing(10)
+    layout.addStretch()
+    for widget in widgets:
+        widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(widget)
 
 
 class PosWidget(QWidget):
@@ -42,177 +129,497 @@ class PosWidget(QWidget):
         currency_symbol: str = "$",
         tax_rate_basis_points: int = 0,
         parent: QWidget | None = None,
+        business_name: str = "",
+        low_stock_threshold: int = 3,
     ) -> None:
         super().__init__(parent)
         self.products = products
         self.sales = sales
         self.currency_symbol = currency_symbol
+        self.enabled_payment_methods = enabled_payment_methods or ("cash",)
+        self.low_stock_threshold = low_stock_threshold
+        self.sale_label = business_name or "Venta actual"
+        self.payment_dialog_factory: PaymentDialogFactory = PaymentDialog
+        self.last_print_ticket = False
+        # Ticket printing arrives with T7; until then the primary action only charges.
+        self.can_print_ticket = False
         self.cart = Cart(tax_rate_basis_points)
         self.tax_rate_basis_points = tax_rate_basis_points
-        self.search_input = SearchField("Escribe o escanea un código...")
-        self.search_input.setPlaceholderText("Busca o escanea el código del producto...")
-        self.search_input.textChanged.connect(self.refresh_products)
-        self.search_input.returnPressed.connect(self.add_selected_product)
-        self.search_input.setAccessibleName("Buscar producto")
-        self.search_input.installEventFilter(self)
-        self.scanner_status = QLabel("Busca por nombre o escanea un código para agregar productos.")
-        self.scanner_status.setObjectName("scannerStatus")
+        self.quick_key_delay_ms = 400
+        self.ticket_lines: list[TicketLine] = []
+        self._selected_id: int | None = None
+        self._armed_quantity = 1
+        self._typed_quantity: int | None = None
+        self._quick_products: list[Product | None] = [None] * QUICK_KEY_COUNT
+        self._bill_amounts: list[int] = []
+        self._method = self.enabled_payment_methods[0]
+        self._compact = False
+        self._empty_input = True
+        self._quick_digit = 0
+        self._quick_timer = QTimer(self)
+        self._quick_timer.setSingleShot(True)
+        self._quick_timer.timeout.connect(self._fire_quick_key)
+
+        self.center = self._build_center()
+        self.ticket_container = self._build_ticket()
+        self._root = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._root.setContentsMargins(0, 0, 0, 0)
+        self._root.setSpacing(0)
+        self._root.addWidget(self.center, 1)
+        self._root.addWidget(self.ticket_container, 0)
+        self._install_shortcuts()
+        theme_manager().theme_changed.connect(self._apply_theme)
+        self._apply_theme()
+        self._relayout(TICKET_COLUMN_WIDTH + 768)
+        self.refresh_products()
+        self.refresh_quick_keys()
+        self.refresh_cart()
+        self.refresh_kpis()
+        self.search_input.setFocus()
+
+    # -- construction -------------------------------------------------------------------
+
+    def _build_center(self) -> QWidget:
+        center = QWidget()
+        layout = QVBoxLayout(center)
+        layout.setContentsMargins(26, 22, 26, 16)
+        layout.setSpacing(14)
+        layout.addWidget(self._build_header())
+        layout.addWidget(self._build_scanner())
+        self.scanner_status = _label("", "scannerStatus")
         self.scanner_status.setWordWrap(True)
         self.scanner_status.setMinimumWidth(0)
-        self.search_input.textChanged.connect(self._on_scan_text_changed)
-
-        self.product_list = QListWidget()
-        self.product_list.setObjectName("productResults")
-        self.product_list.itemDoubleClicked.connect(self.add_selected_product)
+        layout.addWidget(self.scanner_status)
+        layout.addLayout(self._build_quick_keys())
+        self.filter_control = SegmentedControl([FILTER_ALL, FILTER_LOW_STOCK])
+        self.filter_control.selected.connect(self._on_filter_selected)
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(self.filter_control)
+        filter_row.addStretch()
+        layout.addLayout(filter_row)
+        self.product_list = ProductGrid()
+        self.product_list.setMinimumHeight(170)
+        self.product_list.product_chosen.connect(self._on_product_chosen)
         self.product_empty = EmptyState(
-            "Tu catálogo está listo",
-            "Escribe un nombre o código para encontrar el producto que quieres vender.",
+            "No hay productos para mostrar",
+            "Escribe un nombre o código distinto, o cambia el filtro del catálogo.",
         )
         self.product_empty.hide()
-        add_button = QPushButton("Agregar al carrito")
-        add_button.setMinimumWidth(0)
-        add_button.clicked.connect(self.add_selected_product)
+        layout.addWidget(self.product_list, 1)
+        layout.addWidget(self.product_empty)
+        return center
 
-        self.cart_table = DataTable(4, ["Producto", "Cantidad", "Precio", "Total"])
-        self.cart_table.setObjectName("cartTable")
-        self.cart_table.setHorizontalHeaderLabels(["Producto", "Cantidad", "Precio", "Total"])
-        self.cart_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.cart_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        remove_button = QPushButton("Quitar seleccionado")
-        remove_button.setObjectName("secondaryAction")
-        remove_button.setMinimumWidth(0)
-        remove_button.clicked.connect(self.remove_selected_line)
+    def _build_header(self) -> QWidget:
+        header = QWidget()
+        header.setObjectName("posHeader")
+        row = QHBoxLayout(header)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(16)
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        self.eyebrow_label = _label(self._date_text(), "posEyebrow")
+        self.eyebrow_label.setProperty("role", "eyebrow")
+        self.title_label = QLabel("Nueva venta")
+        self.title_label.setProperty("role", "display")
+        titles.addWidget(self.eyebrow_label)
+        titles.addWidget(self.title_label)
+        row.addLayout(titles)
+        row.addStretch()
+        sales_tile, self.kpi_sales = _kpi_tile("Ventas hoy")
+        revenue_tile, self.kpi_revenue = _kpi_tile("Facturado")
+        average_tile, self.kpi_average = _kpi_tile("Ticket promedio")
+        self.kpi_average_tile = average_tile
+        for tile in (sales_tile, revenue_tile, average_tile):
+            row.addWidget(tile)
+        return header
 
-        self.total_label = QLabel("$0.00")
-        self.total_label.setObjectName("totalLabel")
-        self.payment_status = QLabel()
-        self.payment_status.setObjectName("paymentStatus")
-        self.payment_status.setWordWrap(True)
-        self.payment_status.setMinimumWidth(0)
-        self.payment_method = QComboBox()
-        self.payment_method.addItem("Efectivo", "cash")
-        if "transfer" in enabled_payment_methods:
-            self.payment_method.addItem("Transferencia", "transfer")
-        if "card" in enabled_payment_methods:
-            self.payment_method.addItem("Tarjeta (datáfono)", "card")
-        self.payment_amount = QLineEdit()
-        self.payment_amount.setPlaceholderText("Monto, ej. 10.00")
-        self.payment_amount.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.payment_reference = QLineEdit()
-        self.payment_reference.setPlaceholderText("Referencia de transferencia")
-        add_payment = QPushButton("Agregar pago")
-        add_payment.setObjectName("secondaryAction")
-        add_payment.setMinimumWidth(0)
-        add_payment.clicked.connect(self.add_payment)
-        self.payment_table = DataTable(3, ["Forma", "Monto", "Referencia"])
-        self.payment_table.setObjectName("paymentTable")
-        self.payment_table.setMaximumHeight(100)
-        remove_payment = QPushButton("Quitar pago")
-        remove_payment.setObjectName("secondaryAction")
-        remove_payment.setMinimumWidth(0)
-        remove_payment.clicked.connect(self.remove_payment)
-        confirm_button = QPushButton("Confirmar venta")
-        confirm_button.setObjectName("primaryAction")
-        confirm_button.setMinimumWidth(0)
-        confirm_button.clicked.connect(self.confirm_sale)
-        self.confirm_button = confirm_button
+    @staticmethod
+    def _date_text() -> str:
+        today = QDate.currentDate()
+        weekday = WEEKDAYS[today.dayOfWeek() - 1].capitalize()
+        return f"{weekday} {today.day()} de {MONTHS[today.month() - 1]}"
 
-        products_box = QFrame()
-        products_box.setObjectName("surfaceCard")
-        products_layout = QVBoxLayout(products_box)
-        products_title = QLabel("Productos")
-        products_title.setObjectName("sectionTitle")
-        products_layout.addWidget(products_title)
-        products_layout.addWidget(self.search_input)
-        products_layout.addWidget(self.scanner_status)
-        products_layout.addWidget(self.product_list)
-        products_layout.addWidget(self.product_empty)
-        products_layout.addWidget(add_button)
+    def _build_scanner(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("scanBar")
+        bar.setFixedHeight(62)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(18, 0, 14, 0)
+        row.setSpacing(14)
+        self.scan_icon = QLabel()
+        self.scan_icon.setFixedSize(28, 28)
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("scanInput")
+        self.search_input.setPlaceholderText("Escaneá el código o escribí el nombre del producto")
+        self.search_input.setAccessibleName("Buscar producto")
+        self.search_input.setProperty("empty", True)
+        self.search_input.setClearButtonEnabled(False)
+        self.search_input.textChanged.connect(self._on_scan_text_changed)
+        self.search_input.returnPressed.connect(self._on_scan_submitted)
+        self.search_input.installEventFilter(self)
+        self.quantity_hint = _label("", "scanHint")
+        self.reader_status = _label("Lector listo", "readerStatus")
+        row.addWidget(self.scan_icon)
+        row.addWidget(self.search_input, 1)
+        row.addWidget(self.quantity_hint)
+        row.addWidget(self.reader_status)
+        row.addWidget(KeyHint("F2"))
+        self._update_quantity_hint()
+        return bar
 
-        cart_box = QFrame()
-        cart_box.setObjectName("surfaceCard")
-        cart_layout = QVBoxLayout(cart_box)
-        cart_header = QHBoxLayout()
-        cart_title = QLabel("Venta actual")
-        cart_title.setObjectName("sectionTitle")
-        self.cart_count = QLabel("0 artículos")
-        self.cart_count.setObjectName("cartCount")
-        cart_header.addWidget(cart_title)
-        cart_header.addStretch()
-        cart_header.addWidget(self.cart_count)
-        cart_layout.addLayout(cart_header)
-        cart_layout.addWidget(self.cart_table)
-        cart_layout.addWidget(remove_button)
-        payment_layout = QGridLayout()
-        cart_layout.addLayout(payment_layout)
+    def _build_quick_keys(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.quick_buttons: list[QPushButton] = []
+        self._quick_names: list[ElidedLabel] = []
+        self._quick_prices: list[QLabel] = []
+        for index in range(QUICK_KEY_COUNT):
+            button = QPushButton()
+            button.setObjectName("quickKey")
+            button.setFixedHeight(52)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            inner = QVBoxLayout(button)
+            inner.setContentsMargins(12, 0, 10, 0)
+            inner.setSpacing(1)
+            top = QHBoxLayout()
+            top.setSpacing(6)
+            name = ElidedLabel("")
+            name.setObjectName("quickName")
+            top.addWidget(name, 1)
+            top.addWidget(KeyHint(str(index + 1)))
+            price = _label("", "quickPrice")
+            inner.addLayout(top)
+            inner.addWidget(price)
+            for child in (name, price):
+                child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            button.clicked.connect(lambda _checked=False, key=index: self.add_quick_product(key))
+            self.quick_buttons.append(button)
+            self._quick_names.append(name)
+            self._quick_prices.append(price)
+            row.addWidget(button, 1)
+        return row
 
-        title = QLabel("Caja")
-        title.setObjectName("pageTitle")
-        subtitle = QLabel("Registra ventas rápidamente y cobra con el método elegido.")
-        subtitle.setObjectName("pageSubtitle")
-        subtitle.setWordWrap(True)
-        subtitle.setMinimumWidth(0)
-        heading = QVBoxLayout()
-        heading.addWidget(title)
-        heading.addWidget(subtitle)
-        summary = QFrame()
-        summary.setObjectName("checkoutSummary")
-        summary_layout = QHBoxLayout(summary)
-        summary_layout.addWidget(QLabel("TOTAL DE LA VENTA"))
-        summary_layout.addStretch()
-        summary_layout.addWidget(self.total_label)
-        self.subtotal_label = QLabel()
-        self.subtotal_label.setObjectName("checkoutDetail")
-        self.tax_label = QLabel()
-        self.tax_label.setObjectName("checkoutDetail")
-        summary_layout.addWidget(self.subtotal_label)
-        summary_layout.addWidget(self.tax_label)
-        payment_layout.addWidget(summary, 0, 0, 1, 2)
-        payment_layout.addWidget(self.payment_status, 1, 0, 1, 2)
-        payment_layout.addWidget(self.payment_table, 2, 0, 1, 2)
-        payment_layout.addWidget(self.payment_method, 3, 0)
-        payment_layout.addWidget(self.payment_amount, 3, 1)
-        payment_layout.addWidget(self.payment_reference, 4, 0, 1, 2)
-        payment_layout.addWidget(add_payment, 5, 0)
-        payment_layout.addWidget(remove_payment, 5, 1)
-        payment_layout.addWidget(confirm_button, 6, 0, 1, 2)
-        self.payment_method.currentIndexChanged.connect(self._update_payment_fields)
+    def _build_ticket(self) -> QWidget:
+        container = QWidget()
+        container.setObjectName("ticketContainer")
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 14, 14, 10)
+        self.ticket_panel = QFrame()
+        self.ticket_panel.setObjectName("ticketPanel")
+        self.ticket_panel.setProperty("toastKeepClear", True)
+        apply_elevation(self.ticket_panel, "e2")
+        outer.addWidget(self.ticket_panel)
+        layout = QVBoxLayout(self.ticket_panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        content = QGridLayout()
-        content.addWidget(products_box, 0, 0)
-        content.addWidget(cart_box, 0, 1)
-        content.setColumnStretch(0, 1)
-        content.setColumnMinimumWidth(1, 400)
-        content.setColumnStretch(1, 0)
-        self.content_grid = content
-        self.products_box = products_box
-        self.cart_box = cart_box
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 28, 30, 30)
-        layout.setSpacing(16)
-        layout.addLayout(heading)
-        layout.addLayout(content)
-        for sequence in ("Ctrl+Return", "Ctrl+Enter"):
-            confirm_shortcut = QShortcut(QKeySequence(sequence), self)
-            confirm_shortcut.activated.connect(confirm_button.click)
-        remove_shortcut = QShortcut(QKeySequence("Delete"), self)
-        remove_shortcut.activated.connect(self.remove_selected_line)
-        quantity_shortcut = QShortcut(QKeySequence("F2"), self)
-        quantity_shortcut.activated.connect(self.edit_selected_quantity)
-        self._compact_layout = False
-        self._relayout(900)
-        self.refresh_products()
-        self.refresh_cart()
-        self._update_payment_fields()
-        self.search_input.setFocus()
+        head = QHBoxLayout()
+        head.setContentsMargins(20, 18, 20, 8)
+        self.sale_title = QLabel("Venta actual")
+        self.sale_title.setObjectName("saleTitle")
+        self.sale_title.setProperty("role", "display")
+        # Customers do not exist yet, so the sale is always anonymous and there is no assign action.
+        self.customer_label = _label("Consumidor final", "customerLabel")
+        head.addWidget(self.sale_title)
+        head.addStretch()
+        head.addWidget(self.customer_label)
+        layout.addLayout(head)
+
+        self.lines_scroll = QScrollArea()
+        self.lines_scroll.setObjectName("ticketLines")
+        self.lines_scroll.viewport().setObjectName("ticketLinesViewport")
+        self.lines_scroll.setWidgetResizable(True)
+        self.lines_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.lines_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.lines_scroll.setMinimumHeight(110)
+        host = QWidget()
+        host.setObjectName("ticketLinesHost")
+        self.lines_layout = QVBoxLayout(host)
+        self.lines_layout.setContentsMargins(10, 0, 10, 0)
+        self.lines_layout.setSpacing(0)
+        self.ticket_empty = _label(
+            "Escanea o toca un producto para empezar la venta.", "ticketEmpty"
+        )
+        self.ticket_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ticket_empty.setWordWrap(True)
+        self.lines_layout.addWidget(self.ticket_empty)
+        self.lines_layout.addStretch()
+        self.lines_scroll.setWidget(host)
+        layout.addWidget(self.lines_scroll, 1)
+
+        layout.addWidget(self._build_total_band())
+        layout.addWidget(self._build_checkout())
+        layout.addWidget(self._build_actions())
+        return container
+
+    def _build_total_band(self) -> QWidget:
+        wrapper = QWidget()
+        wrap_layout = QVBoxLayout(wrapper)
+        wrap_layout.setContentsMargins(12, 10, 12, 0)
+        band = QFrame()
+        band.setObjectName("checkoutSummary")
+        wrap_layout.addWidget(band)
+        layout = QVBoxLayout(band)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(2)
+        top = QHBoxLayout()
+        caption = _label("Total a cobrar", "heroCaption")
+        caption_font = QFont(caption.font())
+        caption_font.setCapitalization(QFont.Capitalization.AllUppercase)
+        caption_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+        caption.setFont(caption_font)
+        self.cart_count = _label("0 artículos", "cartCount")
+        top.addWidget(caption)
+        top.addStretch()
+        top.addWidget(self.cart_count)
+        self.total_label = _label(format_money(0, self.currency_symbol), "totalLabel")
+        self.subtotal_label = _label("", "checkoutDetail")
+        self.tax_label = _label("", "checkoutDetail")
+        details = QHBoxLayout()
+        details.setSpacing(14)
+        details.addWidget(self.subtotal_label)
+        details.addWidget(self.tax_label)
+        details.addStretch()
+        layout.addLayout(top)
+        layout.addWidget(self.total_label)
+        layout.addLayout(details)
+        return wrapper
+
+    def _build_checkout(self) -> QWidget:
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(12, 10, 12, 0)
+        layout.setSpacing(8)
+        labels = [METHOD_LABELS[method] for method in self.enabled_payment_methods]
+        self.method_control = SegmentedControl(labels)
+        # Payment methods share the ticket width instead of forcing it to fit their full text.
+        for segment in self.method_control.findChildren(QPushButton):
+            segment.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.method_control.selected.connect(self._on_method_selected)
+        layout.addWidget(self.method_control)
+
+        self.cash_panel = QWidget()
+        cash = QVBoxLayout(self.cash_panel)
+        cash.setContentsMargins(0, 0, 0, 0)
+        cash.setSpacing(8)
+        boxes = QHBoxLayout()
+        boxes.setSpacing(8)
+        recv = QFrame()
+        recv.setObjectName("recvBox")
+        recv.setFixedHeight(56)
+        recv_layout = QVBoxLayout(recv)
+        recv_layout.setContentsMargins(14, 6, 14, 6)
+        recv_layout.setSpacing(0)
+        self.received_edit = QLineEdit()
+        self.received_edit.setObjectName("recvInput")
+        self.received_edit.setAccessibleName("Efectivo recibido")
+        self.received_edit.setPlaceholderText("0.00")
+        self.received_edit.textChanged.connect(self._on_received_changed)
+        recv_layout.addWidget(_label("Recibido", "recvCaption"))
+        recv_layout.addWidget(self.received_edit)
+        change = QFrame()
+        change.setObjectName("inlineChange")
+        change.setFixedHeight(56)
+        change_layout = QVBoxLayout(change)
+        change_layout.setContentsMargins(14, 6, 14, 6)
+        change_layout.setSpacing(0)
+        self.change_value = _label(format_money(0, self.currency_symbol), "inlineChangeValue")
+        change_layout.addWidget(_label("Cambio", "inlineChangeCaption"))
+        change_layout.addWidget(self.change_value)
+        boxes.addWidget(recv, 1)
+        boxes.addWidget(change, 1)
+        cash.addLayout(boxes)
+        bills = QHBoxLayout()
+        bills.setSpacing(6)
+        self.bill_buttons: list[QPushButton] = []
+        for index in range(4):
+            button = QPushButton()
+            button.setObjectName("billChip")
+            button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            button.setAutoDefault(False)
+            button.clicked.connect(lambda _checked=False, bill=index: self._pick_bill(bill))
+            self.bill_buttons.append(button)
+            bills.addWidget(button, 1)
+        cash.addLayout(bills)
+        layout.addWidget(self.cash_panel)
+
+        self.reference_edit = QLineEdit()
+        self.reference_edit.setObjectName("referenceEdit")
+        self.reference_edit.setAccessibleName("Referencia de transferencia")
+        self.reference_edit.setPlaceholderText("Referencia de la transferencia")
+        self.reference_edit.textChanged.connect(self._on_reference_edited)
+        layout.addWidget(self.reference_edit)
+        self.checkout_message = InlineMessage()
+        layout.addWidget(self.checkout_message)
+        self._on_method_selected(self.method_control.current or "")
+        return wrapper
+
+    def _build_actions(self) -> QWidget:
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(6)
+        self.charge_button = QPushButton("Cobrar e imprimir" if self.can_print_ticket else "Cobrar")
+        self.charge_button.setObjectName("chargeButton")
+        set_variant(self.charge_button, "champagne")
+        self.charge_button.setToolTip("Cobrar la venta (F4)")
+        self.charge_button.clicked.connect(lambda: self.confirm_sale())
+        self.charge_amount = QLabel(format_money(0, self.currency_symbol))
+        self.charge_hint = KeyHint("F4")
+        _overlay_row(self.charge_button, self.charge_amount, self.charge_hint)
+        self.split_button = QPushButton("Dividir pago")
+        self.split_button.setObjectName("splitButton")
+        set_variant(self.split_button, "secondary")
+        self.split_button.setToolTip("Cobrar con varias formas de pago (F9)")
+        self.split_button.clicked.connect(lambda: self.open_split_payment())
+        self.split_hint = KeyHint("F9")
+        _overlay_row(self.split_button, self.split_hint)
+        layout.addWidget(self.charge_button)
+        layout.addWidget(self.split_button)
+        return wrapper
+
+    def _install_shortcuts(self) -> None:
+        scope = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        bindings: list[tuple[str, Callable[[], object]]] = [
+            ("Ctrl+Return", self.charge_button.click),
+            ("Ctrl+Enter", self.charge_button.click),
+            ("F4", self.charge_button.click),
+            ("F9", self.split_button.click),
+            ("Delete", self.remove_selected_line),
+            ("F2", self._on_f2),
+        ]
+        for index in range(QUICK_KEY_COUNT):
+            bindings.append((str(index + 1), lambda key=index: self.add_quick_product(key)))
+        for sequence, slot in bindings:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(scope)
+            shortcut.activated.connect(slot)
+
+    # -- events and layout --------------------------------------------------------------
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.search_input and isinstance(event, QKeyEvent):
-            step = {Qt.Key.Key_Down: 1, Qt.Key.Key_Up: -1}.get(Qt.Key(event.key()))
-            if step is not None and event.type() == QEvent.Type.KeyPress:
-                self._move_product_selection(step)
-                return True
+            if event.type() == QEvent.Type.KeyPress:
+                key = Qt.Key(event.key())
+                step = {Qt.Key.Key_Down: 1, Qt.Key.Key_Up: -1}.get(key)
+                if step is not None:
+                    self._move_product_selection(step)
+                    return True
+                if key == Qt.Key.Key_Delete and not self.search_input.text():
+                    # Nothing to delete in an empty scanner, so the key drops the ticket line.
+                    self.remove_selected_line()
+                    return True
+                self._arm_quick_key(event)
         return super().eventFilter(watched, event)
+
+    def _arm_quick_key(self, event: QKeyEvent) -> None:
+        """A lone 1-6 in the empty scanner becomes a quick key unless more keys follow.
+
+        Barcodes and the ``3*`` prefix start with digits too, so the digit is typed normally and
+        only counts as a quick key when it is still alone after a short pause.
+        """
+        digit = DIGIT_KEYS.get(Qt.Key(event.key()))
+        plain = not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if digit is None or not plain or event.isAutoRepeat() or self.search_input.text():
+            return
+        self._quick_digit = digit
+        self._quick_timer.start(self.quick_key_delay_ms)
+
+    def _fire_quick_key(self) -> None:
+        if self._quick_digit and self.search_input.text() == str(self._quick_digit):
+            self.search_input.clear()
+            self.add_quick_product(self._quick_digit - 1)
+
+    def _on_f2(self) -> None:
+        """F2 returns to the scanner; pressed inside the scanner it edits the line quantity."""
+        if self.search_input.hasFocus():
+            self.edit_selected_quantity()
+        else:
+            self.search_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            self.search_input.selectAll()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self.refresh_kpis()
+
+    def _on_filter_selected(self, _option: str) -> None:
+        self.refresh_products()
+
+    def _on_reference_edited(self, _text: str) -> None:
+        self.checkout_message.clear_message()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._relayout(self.width())
+
+    def _relayout(self, width: int) -> None:
+        compact = width < COMPACT_BELOW_WIDTH
+        if compact != self._compact or self.ticket_container.minimumWidth() == 0 and not compact:
+            self._compact = compact
+            self._root.setDirection(
+                QBoxLayout.Direction.TopToBottom if compact else QBoxLayout.Direction.LeftToRight
+            )
+            if compact:
+                self.ticket_container.setMinimumWidth(0)
+                self.ticket_container.setMaximumWidth(16_777_215)
+                self.ticket_container.setMinimumHeight(600)
+            else:
+                self.ticket_container.setMinimumHeight(0)
+                self.ticket_container.setMaximumHeight(16_777_215)
+        narrow = not compact and width < NARROW_BELOW_WIDTH
+        if not compact:
+            self.ticket_container.setFixedWidth(
+                TICKET_COLUMN_NARROW_WIDTH if narrow else TICKET_COLUMN_WIDTH
+            )
+        for secondary in (self.reader_status, self.quantity_hint, self.kpi_average_tile):
+            secondary.setVisible(not narrow)
+
+    def _apply_theme(self, _name: str = "") -> None:
+        """Redraw what is painted in Python; the stylesheet already carries every color."""
+        self.scan_icon.setPixmap(icon("barcode", current_tokens().brand_500, 28).pixmap(28, 28))
+
+    # -- catalog ------------------------------------------------------------------------
+
+    def refresh_products(self) -> None:
+        products = self.products.find_active(self._scan_query())
+        if self.filter_control.current == FILTER_LOW_STOCK:
+            products = [p for p in products if p.stock <= self.low_stock_threshold]
+        self.product_empty.setVisible(not products)
+        self.product_list.setVisible(bool(products))
+        self.product_list.set_products(
+            products,
+            self._cart_quantities(),
+            self.currency_symbol,
+            self.low_stock_threshold,
+            format_money,
+        )
+
+    def refresh_quick_keys(self) -> None:
+        """Quick keys 1-6 point at the first six products of the catalog (alphabetical)."""
+        catalog = self.products.find_active("")[:QUICK_KEY_COUNT]
+        self._quick_products = [*catalog, *[None] * (QUICK_KEY_COUNT - len(catalog))]
+        for index, product in enumerate(self._quick_products):
+            button = self.quick_buttons[index]
+            button.setEnabled(product is not None)
+            name = product.name if product else "—"
+            price = format_money(product.price_cents, self.currency_symbol) if product else ""
+            self._quick_names[index].setText(name)
+            self._quick_prices[index].setText(price)
+            button.setProperty("productName", name)
+            button.setProperty("priceText", price)
+            button.setAccessibleName(f"Tecla {index + 1}: {name} {price}".strip())
+
+    def refresh_kpis(self) -> None:
+        count, revenue = self.sales.today_summary()
+        self.kpi_sales.setText(str(count))
+        self.kpi_revenue.setText(format_money(revenue, self.currency_symbol))
+        average = format_money(revenue // count, self.currency_symbol) if count else "—"
+        self.kpi_average.setText(average)
+
+    def _cart_quantities(self) -> dict[int, int]:
+        return {line.product.id: line.quantity for line in self.cart.lines}
 
     def _move_product_selection(self, step: int) -> None:
         count = self.product_list.count()
@@ -220,107 +627,117 @@ class PosWidget(QWidget):
             return
         row = min(max(self.product_list.currentRow() + step, 0), count - 1)
         self.product_list.setCurrentRow(row)
-        self.product_list.scrollToItem(self.product_list.currentItem())
 
-    def resizeEvent(self, event: QResizeEvent) -> None:
-        super().resizeEvent(event)
-        self._relayout(self.width())
-
-    def _relayout(self, width: int) -> None:
-        compact = width < 1050
-        if compact == self._compact_layout and self.content_grid.count():
-            return
-        self._compact_layout = compact
-        self.content_grid.removeWidget(self.products_box)
-        self.content_grid.removeWidget(self.cart_box)
-        if compact:
-            self.content_grid.addWidget(self.products_box, 0, 0, 1, 2)
-            self.content_grid.addWidget(self.cart_box, 1, 0, 1, 2)
-            self.content_grid.setColumnMinimumWidth(1, 0)
-        else:
-            self.content_grid.addWidget(self.products_box, 0, 0)
-            self.content_grid.addWidget(self.cart_box, 0, 1)
-            self.content_grid.setColumnMinimumWidth(1, 400)
-
-    def refresh_products(self) -> None:
-        self.product_list.clear()
-        products = self.products.find_active(self.normalize_scan_value(self.search_input.text()))
-        self.product_empty.setVisible(not products)
-        for product in products:
-            item = QListWidgetItem(
-                f"{product.name}\n{product.code} · Stock {product.stock}    "
-                f"{format_money(product.price_cents, self.currency_symbol)}"
-            )
-            item.setData(Qt.ItemDataRole.UserRole, product)
-            item.setToolTip(f"{product.name} · {product.code}")
-            item.setSizeHint(QSize(0, 56))
-            self.product_list.addItem(item)
-        if products:
-            self.product_list.setCurrentRow(0)
-
-    def _on_scan_text_changed(self, value: str) -> None:
-        if not value:
-            self.scanner_status.setText(
-                "Busca por nombre o escanea un código para agregar productos."
-            )
-            self.scanner_status.setProperty("state", "default")
-            self._refresh_scanner_status()
+    # -- scanner ------------------------------------------------------------------------
 
     @staticmethod
     def normalize_scan_value(value: str) -> str:
         return value.replace("\r", "").replace("\n", "").strip()
 
+    def _scan_query(self) -> str:
+        text = self.normalize_scan_value(self.search_input.text())
+        match = QUANTITY_PREFIX.match(text)
+        return match.group(2).strip() if match else text
+
+    @property
+    def multiplier(self) -> int:
+        """Units the next add will put in the cart: typed ``N*`` prefix, else an armed one."""
+        return self._typed_quantity or self._armed_quantity
+
+    def _update_quantity_hint(self) -> None:
+        self.quantity_hint.setText(f"Cantidad ×{self.multiplier} · 3* multiplica")
+
+    def _on_scan_text_changed(self, value: str) -> None:
+        empty = not value
+        if empty != self._empty_input:
+            self._empty_input = empty
+            self.search_input.setProperty("empty", empty)
+            repolish(self.search_input)
+        match = QUANTITY_PREFIX.match(value)
+        quantity = int(match.group(1)) if match else 0
+        self._typed_quantity = quantity if quantity >= 1 else None
+        self._update_quantity_hint()
+        if empty:
+            self._set_status("", "default")
+        self.refresh_products()
+
+    def _on_scan_submitted(self) -> None:
+        match = QUANTITY_PREFIX.match(self.search_input.text())
+        if match and not match.group(2).strip():
+            # "3*" on its own arms the next scan instead of adding whatever is selected.
+            self._armed_quantity = max(1, int(match.group(1)))
+            self.search_input.clear()
+            return
+        self.add_selected_product()
+
+    def _set_status(self, text: str, state: str) -> None:
+        self.scanner_status.setText(text)
+        self.scanner_status.setProperty("state", state)
+        repolish(self.scanner_status)
+
+    # -- cart ---------------------------------------------------------------------------
+
     def add_selected_product(self) -> None:
-        row = self.product_list.currentRow()
-        if row < 0:
-            query = self.normalize_scan_value(self.search_input.text())
-            self.scanner_status.setText(
+        product = self.product_list.product_at(self.product_list.currentRow())
+        if product is None:
+            query = self._scan_query()
+            self._set_status(
                 f"No encontramos un producto con el código o texto «{query}»."
                 if query
-                else "Escribe o escanea un código para agregar un producto."
+                else "Escribe o escanea un código para agregar un producto.",
+                "error",
             )
-            self.scanner_status.setProperty("state", "error")
-            self._refresh_scanner_status()
             return
-        item = self.product_list.item(row)
-        product = item.data(Qt.ItemDataRole.UserRole)
+        self._add_product(product)
+
+    def add_quick_product(self, index: int) -> None:
+        if 0 <= index < QUICK_KEY_COUNT and (product := self._quick_products[index]) is not None:
+            self._add_product(product)
+
+    def _on_product_chosen(self, product: object) -> None:
+        if isinstance(product, Product):
+            self._add_product(product)
+
+    def _add_product(self, product: Product) -> bool:
+        quantity = self.multiplier
+        line = next((line for line in self.cart.lines if line.product.id == product.id), None)
+        before = line.quantity if line else 0
         try:
             self.cart.add(product)
+            if quantity > 1:
+                self.cart.set_quantity(product.id, before + quantity)
         except ValueError as error:
+            if before:
+                self.cart.set_quantity(product.id, before)
+            else:
+                self.cart.remove(product.id)
             self.notification.emit(f"No se puede agregar. {error}", "danger")
-            self.scanner_status.setText(str(error))
-            self.scanner_status.setProperty("state", "error")
-            self._refresh_scanner_status()
-            return
-        self.refresh_cart()
+            self._set_status(str(error), "error")
+            return False
+        self._selected_id = product.id
+        self._armed_quantity = 1
         self.search_input.clear()
+        self.refresh_cart()
+        self._set_status(
+            f"{product.name} agregado a la venta."
+            if quantity == 1
+            else f"{quantity} × {product.name} agregados a la venta.",
+            "success",
+        )
         self.search_input.setFocus()
-        self.scanner_status.setText(f"{product.name} agregado a la venta.")
-        self.scanner_status.setProperty("state", "success")
-        self._refresh_scanner_status()
+        return True
 
-    def _refresh_scanner_status(self) -> None:
-        self.scanner_status.style().unpolish(self.scanner_status)
-        self.scanner_status.style().polish(self.scanner_status)
+    def _line_for(self, product_id: int | None):  # noqa: ANN202 - CartLine is not exported
+        return next((line for line in self.cart.lines if line.product.id == product_id), None)
 
     def remove_selected_line(self) -> None:
-        row = self.cart_table.currentRow()
-        if row < 0:
+        if self._selected_id is None:
             return
-        item = self.cart_table.item(row, 0)
-        if item is None:
-            return
-        product_id = item.data(Qt.ItemDataRole.UserRole)
-        self.cart.remove(product_id)
+        self.cart.remove(self._selected_id)
         self.refresh_cart()
 
     def edit_selected_quantity(self) -> None:
-        row = self.cart_table.currentRow()
-        item = self.cart_table.item(row, 0) if row >= 0 else None
-        if item is None:
-            return
-        product_id = item.data(Qt.ItemDataRole.UserRole)
-        line = next((line for line in self.cart.lines if line.product.id == product_id), None)
+        line = self._line_for(self._selected_id)
         if line is None:
             return
         quantity, accepted = QInputDialog.getInt(
@@ -334,34 +751,57 @@ class PosWidget(QWidget):
         if not accepted:
             return
         try:
-            self.cart.set_quantity(product_id, quantity)
+            self.cart.set_quantity(line.product.id, quantity)
         except ValueError as error:
             self.notification.emit(f"No se puede cambiar la cantidad. {error}", "danger")
             return
         self.refresh_cart()
 
+    def _on_line_selected(self, product_id: int) -> None:
+        self._selected_id = product_id
+        for line in self.ticket_lines:
+            line.set_highlighted(line.product_id == product_id)
+
+    def _on_step(self, product_id: int, step: int) -> None:
+        line = self._line_for(product_id)
+        if line is None:
+            return
+        quantity = line.quantity + step
+        try:
+            if quantity <= 0:
+                self.cart.remove(product_id)
+            else:
+                self.cart.set_quantity(product_id, quantity)
+        except ValueError as error:
+            self.notification.emit(f"No se puede cambiar la cantidad. {error}", "danger")
+            return
+        self._selected_id = product_id
+        self.refresh_cart()
+        self.search_input.setFocus()
+
     def refresh_cart(self) -> None:
-        self.cart_table.setRowCount(0)
-        for line in self.cart.lines:
-            row = self.cart_table.rowCount()
-            self.cart_table.insertRow(row)
-            name_item = QTableWidgetItem(line.product.name)
-            name_item.setData(Qt.ItemDataRole.UserRole, line.product.id)
-            self.cart_table.setItem(row, 0, name_item)
-            quantity_item = QTableWidgetItem(str(line.quantity))
-            quantity_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        for widget in self.ticket_lines:
+            self.lines_layout.removeWidget(widget)
+            widget.hide()
+            widget.deleteLater()
+        self.ticket_lines = []
+        lines = self.cart.lines
+        ids = [line.product.id for line in lines]
+        if self._selected_id not in ids:
+            self._selected_id = ids[-1] if ids else None
+        for index, line in enumerate(lines):
+            widget = TicketLine(
+                line.product,
+                line.quantity,
+                format_money(line.product.price_cents, self.currency_symbol),
+                format_money(line.total_cents, self.currency_symbol),
+                line.product.id == self._selected_id,
             )
-            self.cart_table.setItem(row, 1, quantity_item)
-            price_item = QTableWidgetItem(
-                format_money(line.product.price_cents, self.currency_symbol)
-            )
-            price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.cart_table.setItem(row, 2, price_item)
-            total_item = QTableWidgetItem(format_money(line.total_cents, self.currency_symbol))
-            total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.cart_table.setItem(row, 3, total_item)
-        self.cart_table.setFixedHeight(max(72, min(178, 38 + self.cart_table.rowCount() * 34)))
+            widget.selected.connect(self._on_line_selected)
+            widget.quantity_step.connect(self._on_step)
+            self.lines_layout.insertWidget(index, widget)
+            self.ticket_lines.append(widget)
+        self.ticket_empty.setVisible(not lines)
         self.total_label.setText(format_money(self.cart.grand_total_cents, self.currency_symbol))
         self.subtotal_label.setText(
             f"Subtotal {format_money(self.cart.total_cents, self.currency_symbol)}"
@@ -370,22 +810,84 @@ class PosWidget(QWidget):
             f"IVA ({self.tax_rate_basis_points / 100:g}%) "
             f"{format_money(self.cart.tax_cents, self.currency_symbol)}"
         )
-        item_count = sum(line.quantity for line in self.cart.lines)
+        item_count = sum(line.quantity for line in lines)
         self.cart_count.setText(f"{item_count} artículo{'s' if item_count != 1 else ''}")
-        self.confirm_button.setEnabled(
-            bool(self.cart.lines) and self._paid_cents() >= self.cart.grand_total_cents
+        self.product_list.update_quantities(self._cart_quantities())
+        self._refresh_checkout()
+
+    # -- inline checkout ----------------------------------------------------------------
+
+    def _on_method_selected(self, label: str) -> None:
+        self._method = next(
+            (method for method, text in METHOD_LABELS.items() if text == label), self._method
         )
-        self._refresh_payment_status()
+        self.cash_panel.setVisible(self._method == "cash")
+        self.reference_edit.setVisible(self._method == "transfer")
+        self.checkout_message.clear_message()
 
-    def _update_payment_fields(self) -> None:
-        is_transfer = self.payment_method.currentData() == "transfer"
-        self.payment_reference.setVisible(is_transfer)
-        if not is_transfer:
-            self.payment_reference.clear()
-
-    def confirm_sale(self) -> None:
+    def _received_cents(self) -> int:
         try:
-            payments = self._payments_from_table()
+            return parse_money(self.received_edit.text())
+        except ValueError:
+            return 0
+
+    def _on_received_changed(self, _text: str) -> None:
+        self.checkout_message.clear_message()
+        self._refresh_checkout()
+
+    def _pick_bill(self, index: int) -> None:
+        if index < len(self._bill_amounts):
+            self.received_edit.setText(f"{Decimal(self._bill_amounts[index]) / 100:.2f}")
+
+    def _refresh_checkout(self) -> None:
+        total = self.cart.grand_total_cents
+        received = self._received_cents()
+        self.change_value.setText(format_money(max(0, received - total), self.currency_symbol))
+        self.charge_amount.setText(format_money(total, self.currency_symbol))
+        self.charge_button.setEnabled(bool(self.cart.lines))
+        self._bill_amounts = [total, *quick_bill_amounts(total)] if total else []
+        for index, button in enumerate(self.bill_buttons):
+            has_amount = index < len(self._bill_amounts)
+            button.setEnabled(has_amount)
+            button.setText(
+                "Exacto"
+                if index == 0
+                else format_money(self._bill_amounts[index], self.currency_symbol)
+                if has_amount
+                else ""
+            )
+            button.setProperty("selected", has_amount and received == self._bill_amounts[index])
+            repolish(button)
+
+    def _inline_payments(self) -> tuple[Payment, ...] | None:
+        """The single payment typed in the checkout, or None after showing why it is invalid."""
+        total = self.cart.grand_total_cents
+        if self._method == "cash":
+            received = self._received_cents()
+            if received < total:
+                self.checkout_message.show_error("El efectivo recibido no cubre el total.")
+                return None
+            return (Payment("cash", received),)
+        if self._method == "transfer":
+            reference = self.reference_edit.text().strip()
+            if not reference:
+                self.checkout_message.show_error(
+                    "La transferencia necesita un número de referencia."
+                )
+                return None
+            return (Payment("transfer", total, reference),)
+        return (Payment(self._method, total),)
+
+    def confirm_sale(self, payments: tuple[Payment, ...] | None = None) -> None:
+        """Register the sale; without ``payments`` the inline checkout supplies the payment."""
+        if payments is None:
+            if not self.cart.lines:
+                self.notification.emit("No se puede cobrar. Agrega al menos un producto.", "danger")
+                return
+            payments = self._inline_payments()
+            if payments is None:
+                return
+        try:
             sale = self.cart.to_sale(payments)
             sale_id = self.sales.register(sale)
         except (ValueError, SaleError) as error:
@@ -402,141 +904,50 @@ class PosWidget(QWidget):
             f"Vuelto: {change}",
             "success",
         )
-        self.cart.clear()
-        self.payment_table.setRowCount(0)
-        self.payment_amount.clear()
-        self.payment_reference.clear()
-        self.refresh_cart()
-        self._refresh_payment_status()
-        self.refresh_products()
-        self.search_input.setFocus()
+        self._reset_after_sale()
         self.sale_registered.emit()
 
-    def add_payment(self) -> None:
-        try:
-            amount = self._parse_money(self.payment_amount.text())
-            method = str(self.payment_method.currentData())
-            reference = self.payment_reference.text().strip()
-            if method == "transfer" and not reference:
-                raise ValueError("La transferencia necesita un número de referencia.")
-            if self._has_payment_method(method):
-                raise ValueError("Esa forma de pago ya fue agregada.")
-        except ValueError as error:
-            self.notification.emit(f"No se puede agregar el pago. {error}", "danger")
-            return
-        row = self.payment_table.rowCount()
-        self.payment_table.insertRow(row)
-        label = {"cash": "Efectivo", "transfer": "Transferencia", "card": "Tarjeta"}[method]
-        method_item = QTableWidgetItem(label)
-        method_item.setData(Qt.ItemDataRole.UserRole, method)
-        self.payment_table.setItem(row, 0, method_item)
-        amount_item = QTableWidgetItem(format_money(amount))
-        amount_item.setData(Qt.ItemDataRole.UserRole, amount)
-        self.payment_table.setItem(row, 1, amount_item)
-        self.payment_table.setItem(row, 2, QTableWidgetItem(reference))
-        self.payment_table.setFixedHeight(
-            max(62, min(100, 38 + self.payment_table.rowCount() * 30))
+    def _reset_after_sale(self) -> None:
+        self.cart.clear()
+        self._selected_id = None
+        self._armed_quantity = 1
+        self.received_edit.clear()
+        self.reference_edit.clear()
+        self.checkout_message.clear_message()
+        self.search_input.clear()
+        self.refresh_cart()
+        self.refresh_products()
+        self.refresh_quick_keys()
+        self.refresh_kpis()
+        self.search_input.setFocus()
+
+    def open_split_payment(self) -> None:
+        """Collect several payments in the dialog and, when accepted, charge with them."""
+        payments = self._collect_payments()
+        if payments is not None:
+            self.confirm_sale(payments)
+
+    def _collect_payments(self) -> tuple[Payment, ...] | None:
+        """Open the payment dialog; return its payments, or None when the cashier cancels."""
+        if not self.cart.lines:
+            self.notification.emit("No se puede cobrar. Agrega al menos un producto.", "danger")
+            return None
+        note = (
+            f"Incluye IVA ({self.tax_rate_basis_points / 100:g}%)"
+            if self.tax_rate_basis_points
+            else ""
         )
-        self.payment_amount.clear()
-        self.payment_reference.clear()
-        self._refresh_payment_status()
-
-    def _has_payment_method(self, method: str) -> bool:
-        for row in range(self.payment_table.rowCount()):
-            item = self.payment_table.item(row, 0)
-            if item is not None and item.data(Qt.ItemDataRole.UserRole) == method:
-                return True
-        return False
-
-    def remove_payment(self) -> None:
-        row = self.payment_table.currentRow()
-        if row >= 0:
-            self.payment_table.removeRow(row)
-            self.payment_table.setFixedHeight(
-                max(62, min(100, 38 + self.payment_table.rowCount() * 30))
-            )
-            self._refresh_payment_status()
-
-    def _refresh_payment_status(self) -> None:
-        total = self.cart.grand_total_cents
-        paid = 0
-        cash = 0
-        for row in range(self.payment_table.rowCount()):
-            amount_item = self.payment_table.item(row, 1)
-            method_item = self.payment_table.item(row, 0)
-            if amount_item is None or method_item is None:
-                continue
-            amount = amount_item.data(Qt.ItemDataRole.UserRole)
-            if not isinstance(amount, int):
-                continue
-            paid += amount
-            if method_item.data(Qt.ItemDataRole.UserRole) == "cash":
-                cash += amount
-        paid = self._paid_cents()
-        if total == 0:
-            message = "Agrega productos para comenzar el cobro."
-            state = "info"
-        elif paid < total:
-            message = (
-                f"Pagado {format_money(paid, self.currency_symbol)} · "
-                f"Falta {format_money(total - paid, self.currency_symbol)}"
-            )
-            state = "warning"
-        else:
-            change = max(0, cash - max(0, total - (paid - cash)))
-            message = (
-                f"Pago completo · Vuelto {format_money(change, self.currency_symbol)}"
-                if change
-                else "Pago completo · Listo para confirmar"
-            )
-            state = "success"
-        self.payment_status.setText(message)
-        self.payment_status.setProperty("state", state)
-        self.payment_status.style().unpolish(self.payment_status)
-        self.payment_status.style().polish(self.payment_status)
-        self.confirm_button.setEnabled(bool(self.cart.lines) and paid >= total)
-
-    def _paid_cents(self) -> int:
-        paid = 0
-        for row in range(self.payment_table.rowCount()):
-            amount_item = self.payment_table.item(row, 1)
-            if amount_item is None:
-                continue
-            amount = amount_item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(amount, int):
-                paid += amount
-        return paid
-
-    def _payments_from_table(self) -> tuple[Payment, ...]:
-        payments: list[Payment] = []
-        for row in range(self.payment_table.rowCount()):
-            method_item = self.payment_table.item(row, 0)
-            amount_item = self.payment_table.item(row, 1)
-            reference_item = self.payment_table.item(row, 2)
-            if method_item is None or amount_item is None or reference_item is None:
-                raise ValueError("Hay un pago incompleto.")
-            method = method_item.data(Qt.ItemDataRole.UserRole)
-            amount = amount_item.data(Qt.ItemDataRole.UserRole)
-            if not isinstance(method, str) or not isinstance(amount, int):
-                raise ValueError("Hay un pago incompleto.")
-            payments.append(
-                Payment(
-                    method,
-                    amount,
-                    reference_item.text(),
-                )
-            )
-        return tuple(payments)
-
-    @staticmethod
-    def _parse_money(value: str) -> int:
-        value = value.strip().replace(",", ".")
-        if not value:
-            raise ValueError("Ingresa el monto del pago.")
-        try:
-            amount = int((Decimal(value) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        except InvalidOperation as error:
-            raise ValueError("El pago debe ser un número válido.") from error
-        if amount <= 0:
-            raise ValueError("El pago debe ser mayor que cero.")
-        return amount
+        dialog = self.payment_dialog_factory(
+            total_cents=self.cart.grand_total_cents,
+            currency_symbol=self.currency_symbol,
+            enabled_methods=self.enabled_payment_methods,
+            sale_label=self.sale_label,
+            total_note=note,
+            validate=self.cart.to_sale,
+            parent=self,
+        )
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        payments = dialog.payments
+        self.last_print_ticket = dialog.print_ticket
+        dialog.deleteLater()
+        return payments if accepted and payments else None

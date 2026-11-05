@@ -5,10 +5,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QDialog, QPushButton
 
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session
+from suitelocal.domain.models import Payment
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
@@ -126,6 +127,122 @@ def test_pos_search_arrows_move_the_product_selection(qapp, database):
     QTest.keyClick(pos.search_input, Qt.Key.Key_Up)
     assert pos.product_list.currentRow() == 0
     assert pos.search_input.accessibleName() == "Buscar producto"
+
+
+class FakeDialog:
+    """Stands in for PaymentDialog so no test blocks on a real modal ``exec``."""
+
+    def __init__(self, payments: tuple[Payment, ...]) -> None:
+        self.payments = payments
+        self.print_ticket = False
+
+    def exec(self) -> QDialog.DialogCode:
+        return QDialog.DialogCode.Accepted
+
+    def deleteLater(self) -> None:
+        pass
+
+
+@pytest.fixture
+def pos_with_stock(qapp, database):
+    products = ProductRepository(database)
+    products.add("A-1", "Arroz", 250, 10)
+    products.add("B-2", "Frijol", 300, 5)
+    pos = PosWidget(products, SaleRepository(database), ("cash", "transfer"))
+    show_active(pos)
+    yield pos
+    pos.deleteLater()
+
+
+def test_pos_f4_charges_with_the_inline_payment(qapp, pos_with_stock):
+    pos = pos_with_stock
+    pos.add_quick_product(0)
+    pos.received_edit.setText("5.00")
+    pos.search_input.setFocus()
+
+    QTest.keyClick(pos.search_input, Qt.Key.Key_F4)
+
+    assert pos.sales.today_summary() == (1, 250)
+    assert pos.cart.lines == ()
+
+
+def test_pos_ctrl_return_charges_like_the_button(qapp, pos_with_stock):
+    pos = pos_with_stock
+    pos.add_quick_product(0)
+    pos.received_edit.setText("5.00")
+
+    QTest.keySequence(pos, "Ctrl+Return")
+
+    assert pos.sales.today_summary() == (1, 250)
+
+
+def test_pos_f4_with_insufficient_cash_only_shows_the_inline_error(qapp, pos_with_stock):
+    pos = pos_with_stock
+    pos.add_quick_product(0)
+    pos.received_edit.setText("1.00")
+
+    QTest.keyClick(pos.search_input, Qt.Key.Key_F4)
+
+    assert pos.sales.today_summary() == (0, 0)
+    assert pos.checkout_message.text() == "El efectivo recibido no cubre el total."
+
+
+def test_pos_f9_opens_the_split_dialog_through_the_factory(qapp, pos_with_stock):
+    pos = pos_with_stock
+    opened: list[int] = []
+
+    def factory(**kwargs):
+        opened.append(kwargs["total_cents"])
+        return FakeDialog((Payment("cash", 150), Payment("transfer", 100, "TR-7")))
+
+    pos.payment_dialog_factory = factory
+    pos.add_quick_product(0)
+
+    QTest.keyClick(pos.search_input, Qt.Key.Key_F9)
+
+    assert opened == [250]
+    assert pos.sales.today_summary() == (1, 250)
+
+
+def test_pos_delete_removes_the_highlighted_line(qapp, pos_with_stock):
+    pos = pos_with_stock
+    pos.add_quick_product(0)
+    pos.add_quick_product(1)
+
+    QTest.keyClick(pos.search_input, Qt.Key.Key_Delete)
+
+    assert [line.product.code for line in pos.cart.lines] == ["A-1"]
+
+
+def test_pos_f2_returns_the_focus_to_the_scanner(qapp, pos_with_stock):
+    pos = pos_with_stock
+    pos.received_edit.setFocus()
+    assert QApplication.focusWidget() is pos.received_edit
+
+    QTest.keyClick(pos.received_edit, Qt.Key.Key_F2)
+
+    assert QApplication.focusWidget() is pos.search_input
+
+
+def test_pos_typed_quantity_prefix_multiplies_with_enter(qapp, pos_with_stock):
+    pos = pos_with_stock
+    pos.search_input.setFocus()
+
+    QTest.keyClicks(pos.search_input, "3*B-2")
+    assert pos.quantity_hint.text() == "Cantidad ×3 · 3* multiplica"
+    QTest.keyClick(pos.search_input, Qt.Key.Key_Return)
+
+    assert [(line.product.code, line.quantity) for line in pos.cart.lines] == [("B-2", 3)]
+    assert pos.quantity_hint.text() == "Cantidad ×1 · 3* multiplica"
+
+
+def test_pos_number_keys_add_quick_products_when_focus_is_outside_text_fields(qapp, pos_with_stock):
+    pos = pos_with_stock
+    pos.quick_buttons[0].setFocus()
+
+    QTest.keyClick(pos.quick_buttons[0], Qt.Key.Key_2)
+
+    assert [line.product.code for line in pos.cart.lines] == ["B-2"]
 
 
 @pytest.fixture

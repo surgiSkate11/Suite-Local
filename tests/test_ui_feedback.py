@@ -108,8 +108,7 @@ def test_pos_confirms_sale_with_success_notification(qapp, database, no_message_
     notifications: list[tuple[str, str]] = []
     pos.notification.connect(lambda text, state: notifications.append((text, state)))
     pos.add_selected_product()
-    pos.payment_amount.setText("5.00")
-    pos.add_payment()
+    pos.received_edit.setText("5.00")
 
     pos.confirm_sale()
 
@@ -119,6 +118,8 @@ def test_pos_confirms_sale_with_success_notification(qapp, database, no_message_
     assert text.startswith("Venta N.º 1 registrada")
     assert "Vuelto: $2.50" in text
     assert pos.cart.lines == ()
+    assert pos.sales.today_summary() == (1, 250)
+    assert products.find_active("A-1")[0].stock == 9
 
 
 def test_shell_shows_page_notifications_as_toasts(qapp, database):
@@ -137,3 +138,34 @@ def test_shell_shows_page_notifications_as_toasts(qapp, database):
 
     toasts = [toast.message for toast in shell.findChildren(Toast)]
     assert toasts == ["Venta N.º 9 registrada"]
+
+
+def test_success_toast_does_not_cover_the_charge_buttons(qapp, database):
+    auth = AuthService(database)
+    owner = auth.setup_owner("Tienda Sol", "owner", "clave-segura", "clave-segura")
+    ProductRepository(database).add("A-1", "Arroz", 250, 10)
+    shell = AppShell(
+        ProductRepository(database),
+        SaleRepository(database),
+        Session(owner),
+        BusinessSettingsRepository(database),
+        auth,
+        database,
+    )
+    shell.resize(1440, 900)
+    shell.show()
+    shell.show_page(1)
+    QTest.qWait(50)
+    pos = shell.pos_widget
+    pos.add_quick_product(0)
+    pos.received_edit.setText("5.00")
+    pos.confirm_sale()
+    assert [toast.message for toast in shell.findChildren(Toast)]
+    toast_area = shell.toasts.geometry()
+    container = shell.centralWidget()
+
+    for button in (pos.charge_button, pos.split_button):
+        origin = button.mapTo(container, button.rect().topLeft())
+        rect = button.rect().translated(origin)
+        assert not toast_area.intersects(rect), button.text()
+    shell.close()
