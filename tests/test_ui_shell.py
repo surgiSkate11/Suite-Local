@@ -102,8 +102,15 @@ def test_logout_button_requests_logout_and_closes_window(shell):
 class FakeShell(QObject):
     logout_requested = Signal()
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.released = False
+
     def show(self) -> None:
         pass
+
+    def deleteLater(self) -> None:
+        self.released = True
 
 
 def test_session_loop_returns_to_login_after_logout():
@@ -131,6 +138,28 @@ def test_session_loop_returns_to_login_after_logout():
     assert logins == ["login", "login"]
     assert len(shells) == 2
     assert exit_code == 7
+
+
+def test_session_loop_releases_the_window_of_a_logged_out_session():
+    # Button lambdas capture the shell, so a dropped window is never garbage collected:
+    # without deleteLater() every logout would keep a whole shell alive and repainting.
+    shells: list[FakeShell] = []
+    sessions = iter(["first", "second"])
+
+    def open_shell(session, on_logout):
+        shell = FakeShell()
+        shell.logout_requested.connect(on_logout)
+        shells.append(shell)
+        return shell
+
+    def run_event_loop():
+        if len(shells) == 1:
+            shells[0].logout_requested.emit()
+        return 0
+
+    run_session_loop(lambda: next(sessions, None), open_shell, run_event_loop)
+
+    assert [shell.released for shell in shells] == [True, True]
 
 
 def test_session_loop_stops_when_login_is_cancelled():

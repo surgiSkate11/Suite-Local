@@ -67,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
 class SessionWindow(Protocol):
     def show(self) -> None: ...
 
+    def deleteLater(self) -> None: ...
+
 
 def run_session_loop(
     login: Callable[[], Session | None],
@@ -83,6 +85,9 @@ def run_session_loop(
         window = open_shell(session, lambda: logged_out.append(True))
         window.show()
         exit_code = run_event_loop()
+        # Button lambdas capture the window, so dropping it is not enough: release it
+        # explicitly or every logout keeps a whole shell alive and repainting.
+        window.deleteLater()
         if not logged_out:
             return exit_code
 
