@@ -2,12 +2,17 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import re
+
 import pytest
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt, Signal
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from suitelocal.application.auth import AuthService
+from suitelocal.application.cash_register import CashRegisterService
 from suitelocal.domain.auth import Session
+from suitelocal.domain.models import Sale, SaleItem
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
@@ -21,21 +26,63 @@ def qapp():
 
 
 @pytest.fixture
-def shell(qapp, tmp_path):
+def env(tmp_path):
     database = Database(tmp_path / "shell.db")
     database.initialize()
     auth = AuthService(database)
     owner = auth.setup_owner("Tienda Sol", "owner", "clave-segura", "clave-segura")
-    window = AppShell(
+    return database, auth, owner
+
+
+def build_shell(database, auth, user):
+    return AppShell(
         ProductRepository(database),
         SaleRepository(database),
-        Session(owner),
+        Session(user),
         BusinessSettingsRepository(database),
         auth,
         database,
     )
+
+
+@pytest.fixture
+def shell(qapp, env):
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
     yield window
+    destroy(window)
+
+
+def destroy(window: AppShell) -> None:
+    """Delete now so finished windows are not re-polished by later theme changes."""
+    window.close()
     window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+
+def nav_texts(shell) -> list[str]:
+    return [shell.navigation.item(row).text() for row in range(shell.navigation.count())]
+
+
+def open_register(env, opening_cents=15_000):
+    database, _, owner = env
+    return CashRegisterService(database).open(Session(owner), opening_cents)
+
+
+def register_cash_sale(env):
+    """2 x 250 paid with 1000 cash: 500 of change, so the drawer gains 500."""
+    database = env[0]
+    product = ProductRepository(database).add("A-1", "Arroz", 250, 100)
+    SaleRepository(database).register(Sale((SaleItem(product.id, product.name, 2, 250),), 1000))
+
+
+def status_cash_text(shell) -> str:
+    return " ".join(label.text() for label in shell.status_cash.findChildren(QLabel))
+
+
+def sidebar_texts(shell) -> list[str]:
+    widgets = [*shell.sidebar.findChildren(QLabel), *shell.sidebar.findChildren(QPushButton)]
+    return [w.text() for w in widgets if w.isVisibleTo(shell.sidebar) and w.text()]
 
 
 def test_logout_button_requests_logout_and_closes_window(shell):
@@ -93,3 +140,141 @@ def test_session_loop_stops_when_login_is_cancelled():
 
     assert exit_code == 0
     assert opened == []
+
+
+def test_rail_groups_and_entries_for_the_owner(shell):
+    assert nav_texts(shell) == [
+        "Operación",
+        "Panel principal",
+        "Caja",
+        "Inventario",
+        "Negocio",
+        "Equipo",
+        "Ajustes",
+    ]
+    assert shell.brand_name.text() == "SuiteLocal"
+    assert shell.brand_business.text() == "Tienda Sol"
+
+
+def test_rail_for_a_cashier_has_no_business_group(qapp, env):
+    database, auth, owner = env
+    cashier = auth.create_cashier(Session(owner), "cajero", "clave-segura-2", "clave-segura-2")
+    window = build_shell(database, auth, cashier)
+
+    assert nav_texts(window) == ["Operación", "Panel principal", "Caja"]
+    assert window.user_role.text() == "Cajero"
+    destroy(window)
+
+
+def test_ctrl_number_opens_the_page_in_rail_order(qapp, shell):
+    shell.show()
+    shell.activateWindow()
+    QTest.qWaitForWindowActive(shell)
+    expected = {"Ctrl+1": 0, "Ctrl+2": 1, "Ctrl+3": 2, "Ctrl+4": 3, "Ctrl+5": 4}
+
+    for shortcut, index in expected.items():
+        QTest.keySequence(shell, shortcut)
+        assert shell.pages.currentIndex() == index
+        current = shell.navigation.currentItem()
+        assert current is not None
+        assert current.data(Qt.ItemDataRole.UserRole) == index
+    assert nav_texts(shell)[shell.navigation.currentRow()] == "Ajustes"
+
+
+def test_register_card_shows_closed_register_and_user(shell):
+    assert shell.register_status.text() == "Caja cerrada"
+    assert shell.register_base_row.isHidden()
+    assert shell.register_expected_row.isHidden()
+    assert shell.user_avatar.text() == "OW"
+    assert shell.user_name.text() == "owner"
+    assert shell.user_role.text() == "Dueño"
+
+
+def test_register_card_shows_exact_base_and_expected_cash(qapp, env):
+    open_register(env, 15_000)
+    register_cash_sale(env)
+    database, auth, owner = env
+
+    window = build_shell(database, auth, owner)
+
+    assert re.fullmatch(r"Caja abierta · \d{1,2}:\d{2} [ap]\. m\.", window.register_status.text())
+    assert window.register_base.text() == "$150.00"
+    assert window.register_expected.text() == "$155.00"
+    assert not window.register_base_row.isHidden()
+    assert not window.register_expected_row.isHidden()
+    destroy(window)
+
+
+def test_status_bar_without_open_register(shell):
+    assert shell.status_offline.text() == "Funcionando sin internet"
+    assert shell.status_printer.text() == "Impresora: sin configurar"
+    assert shell.status_cash.isHidden()
+    texts = [label.text().lower() for label in shell.status_bar.findChildren(QLabel)]
+    assert not any("respaldo" in text for text in texts)
+
+
+def test_status_bar_shows_cash_and_refreshes_after_each_sale(qapp, env):
+    open_register(env, 15_000)
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    assert status_cash_text(window) == "Base de caja $150.00 · Efectivo esperado $150.00"
+    assert window.register_expected.text() == "$150.00"
+
+    register_cash_sale(env)
+    window.pos_widget.sale_registered.emit()
+
+    assert status_cash_text(window) == "Base de caja $150.00 · Efectivo esperado $155.00"
+    assert window.register_expected.text() == "$155.00"
+    destroy(window)
+
+
+def test_register_card_follows_opening_and_closing_when_refreshed(qapp, env, shell):
+    assert shell.register_status.text() == "Caja cerrada"
+    open_register(env, 2_000)
+
+    shell.refresh_register()
+
+    assert shell.register_status.text().startswith("Caja abierta · ")
+    assert shell.register_base.text() == "$20.00"
+    CashRegisterService(env[0]).close(Session(env[2]), 2_000)
+    shell.refresh_register()
+    assert shell.register_status.text() == "Caja cerrada"
+    assert shell.status_cash.isHidden()
+
+
+def test_collapsed_rail_shows_only_mark_and_avatar_without_clipping(qapp, env):
+    open_register(env)
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    window.resize(1100, 760)
+    window.show()
+    QTest.qWait(50)
+
+    assert window.sidebar.maximumWidth() == 72
+    assert sorted(sidebar_texts(window)) == ["OW", "S"]
+    entries = [window.navigation.item(row) for row in range(window.navigation.count())]
+    assert [item.text() for item in entries if not item.isHidden()] == [""] * 5
+    assert all(item.toolTip() for item in entries if not item.isHidden())
+    assert window.logout_button.accessibleName() == "Cerrar sesión"
+    for child in [window.brand_mark, window.user_avatar, window.logout_button, window.navigation]:
+        corner = child.mapTo(window.sidebar, child.rect().bottomRight())
+        assert corner.x() <= window.sidebar.width()
+    destroy(window)
+
+
+def test_expanding_the_rail_restores_text(qapp, env):
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    window.resize(1100, 760)
+    window.show()
+    QTest.qWait(50)
+
+    window.resize(1300, 760)
+    QTest.qWait(320)
+
+    texts = sidebar_texts(window)
+    assert "SuiteLocal" in texts
+    assert "Cerrar sesión" in texts
+    assert "Caja cerrada" in texts
+    assert nav_texts(window)[1] == "Panel principal"
+    destroy(window)

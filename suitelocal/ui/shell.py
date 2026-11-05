@@ -1,6 +1,11 @@
-from PySide6.QtCore import QDate, QEasingCurve, Qt, QVariantAnimation, Signal
-from PySide6.QtGui import QKeySequence, QResizeEvent, QShortcut
+import re
+from datetime import UTC, datetime
+
+from PySide6.QtCore import QDate, QEasingCurve, QSize, Qt, QVariantAnimation, Signal
+from PySide6.QtGui import QAction, QFont, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -16,16 +21,58 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.auth import AuthService
+from suitelocal.application.cash_register import CashRegisterService
 from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
-from suitelocal.ui.components import ToastHost
+from suitelocal.ui.components import ElidedLabel, ToastHost
 from suitelocal.ui.dashboard import DashboardWidget
 from suitelocal.ui.inventory import InventoryWidget
-from suitelocal.ui.pos import PosWidget
+from suitelocal.ui.pos import PosWidget, format_money
 from suitelocal.ui.theme.icons import icon
-from suitelocal.ui.theme.tokens import TOKENS
+from suitelocal.ui.theme.manager import current_tokens, set_theme, theme_manager
+
+RAIL_WIDTH = 232
+RAIL_COLLAPSED_WIDTH = 72
+COLLAPSE_BELOW_WIDTH = 1200
+ROLE_LABELS = {"owner": "Dueño", "cashier": "Cajero"}
+# Navigation items keep the page index (or "section") in UserRole, plus these two extras.
+LABEL_ROLE = Qt.ItemDataRole.UserRole + 1
+ICON_ROLE = Qt.ItemDataRole.UserRole + 3
+
+
+def initials(name: str) -> str:
+    """Two-letter avatar text: first letters of two words, or the first two letters."""
+    parts = [part for part in re.split(r"[\s._-]+", name.strip()) if part]
+    if len(parts) >= 2:
+        return (parts[0][0] + parts[1][0]).upper()
+    return (name.strip()[:2] or "?").upper()
+
+
+def format_clock(opened_at: str) -> str:
+    """Local 12-hour clock for a SQLite UTC timestamp, e.g. ``7:02 a. m.``."""
+    try:
+        moment = datetime.fromisoformat(opened_at).replace(tzinfo=UTC).astimezone()
+    except ValueError:
+        return opened_at
+    suffix = "a. m." if moment.hour < 12 else "p. m."
+    return f"{moment.hour % 12 or 12}:{moment.minute:02d} {suffix}"
+
+
+def _label(text: str, object_name: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName(object_name)
+    return label
+
+
+def _hbox(*widgets: QWidget, spacing: int = 8) -> QHBoxLayout:
+    layout = QHBoxLayout()
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(spacing)
+    for widget in widgets:
+        layout.addWidget(widget)
+    return layout
 
 
 class AppShell(QMainWindow):
@@ -45,6 +92,9 @@ class AppShell(QMainWindow):
         self.resize(1250, 760)
         business = settings.get(session.user.business_id)
         self.setWindowTitle(f"SuiteLocal — {business.name}")
+        self._session = session
+        self._currency_symbol = business.currency_symbol
+        self.cash_register = CashRegisterService(database)
         self.dashboard = DashboardWidget(
             products,
             sales,
@@ -63,7 +113,9 @@ class AppShell(QMainWindow):
         self.pages = QStackedWidget()
         self._add_page(self.dashboard)
         self._add_page(self.pos_widget)
-        labels = ["Panel principal", "Caja"]
+        # Page order is the rail order, so Ctrl+1..N follows what the user sees.
+        operation = [("Panel principal", 0, "dashboard"), ("Caja", 1, "cash")]
+        groups = [("Operación", operation)]
         if session.is_owner:
             inventory = InventoryWidget(products, session)
             inventory.notification.connect(self._show_toast)
@@ -71,13 +123,14 @@ class AppShell(QMainWindow):
             from suitelocal.ui.settings import SettingsWidget
             from suitelocal.ui.users import UsersWidget
 
-            settings_page = SettingsWidget(settings, session.user.business_id, database)
-            settings_page.notification.connect(self._show_toast)
-            self._add_page(settings_page)
             users = UsersWidget(auth, session)
             users.notification.connect(self._show_toast)
             self._add_page(users)
-            labels.extend(["Inventario", "Configuración", "Usuarios"])
+            settings_page = SettingsWidget(settings, session.user.business_id, database)
+            settings_page.notification.connect(self._show_toast)
+            self._add_page(settings_page)
+            operation.append(("Inventario", 2, "box"))
+            groups.append(("Negocio", [("Equipo", 3, "users"), ("Ajustes", 4, "settings")]))
 
         navigation = QListWidget()
         self.navigation = navigation
@@ -85,27 +138,27 @@ class AppShell(QMainWindow):
         navigation.setMinimumWidth(0)
         navigation.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         navigation.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        icon_names = ("dashboard", "cash", "box", "settings", "users")
-        page_index = 0
-        section_items = {"OPERACIÓN": labels[:2]}
-        if session.is_owner:
-            section_items["ADMINISTRACIÓN"] = labels[2:]
-        for section_name, section_labels in section_items.items():
-            if not section_labels:
-                continue
-            section = QListWidgetItem(section_name)
+        navigation.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        page_count = 0
+        for group_name, entries in groups:
+            section = QListWidgetItem(group_name)
             section.setFlags(Qt.ItemFlag.NoItemFlags)
             section.setData(Qt.ItemDataRole.UserRole, "section")
-            section.setData(Qt.ItemDataRole.UserRole + 2, "section")
+            section.setSizeHint(QSize(0, 34))
+            section_font = QFont(section.font())
+            section_font.setPointSizeF(8)
+            section_font.setBold(True)
+            section_font.setCapitalization(QFont.Capitalization.AllUppercase)
+            section_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.4)
+            section.setFont(section_font)
             navigation.addItem(section)
-            for label in section_labels:
-                index = labels.index(label)
+            for label, page_index, icon_name in entries:
                 item = QListWidgetItem(label, navigation)
                 item.setData(Qt.ItemDataRole.UserRole, page_index)
-                item.setData(Qt.ItemDataRole.UserRole + 1, label)
-                item.setIcon(icon(icon_names[index], TOKENS.surface, 18))
+                item.setData(LABEL_ROLE, label)
+                item.setData(ICON_ROLE, icon_name)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                page_index += 1
+                page_count += 1
 
         def select_page(row: int) -> None:
             item = navigation.item(row)
@@ -114,44 +167,22 @@ class AppShell(QMainWindow):
                 self.pages.setCurrentIndex(target)
 
         navigation.currentRowChanged.connect(select_page)
-        for number in range(1, page_index + 1):
+        for number in range(1, page_count + 1):
             page_shortcut = QShortcut(QKeySequence(f"Ctrl+{number}"), self)
             page_shortcut.activated.connect(lambda index=number - 1: self.show_page(index))
         navigation.setCurrentRow(1)
         self.pages.currentChanged.connect(self._focus_page)
         self._focus_page(self.pages.currentIndex())
 
-        brand = QLabel("<b>SuiteLocal</b><br><small>Gestión</small>")
-        self.brand = brand
-        brand.setObjectName("brand")
-        role_labels = {"owner": "Dueño", "cashier": "Cajero"}
-        role_label = role_labels.get(session.user.role, session.user.role)
-        user = QLabel(f"<b>{session.user.username}</b><br><span>{role_label}</span>")
-        user.setObjectName("currentUser")
-        logout = QPushButton("Cerrar sesión")
-        logout.setObjectName("logoutButton")
-        logout.setIcon(icon("logout", TOKENS.surface, 16))
-        logout.clicked.connect(self._logout)
-        sidebar_layout = QVBoxLayout()
-        sidebar_layout.setContentsMargins(16, 18, 16, 18)
-        sidebar_layout.setSpacing(10)
-        sidebar_layout.addWidget(brand)
-        sidebar_layout.addWidget(navigation)
-        sidebar_layout.addStretch()
-        sidebar_layout.addWidget(user)
-        sidebar_layout.addWidget(logout)
-        sidebar = QWidget()
-        self.sidebar = sidebar
-        sidebar.setObjectName("sidebar")
-        sidebar.setLayout(sidebar_layout)
+        sidebar = self._build_rail(business.name, session)
 
         search = QLineEdit()
         self.global_search = search
         search.setObjectName("topSearch")
         search.setMinimumWidth(0)
         search.setPlaceholderText(f"Buscar en {business.name}...")
-        search.addAction(
-            icon("search", TOKENS.text_500, 18), QLineEdit.ActionPosition.LeadingPosition
+        self._search_action: QAction = search.addAction(
+            icon("search", current_tokens().text_500, 18), QLineEdit.ActionPosition.LeadingPosition
         )
         search.setAccessibleName("Búsqueda global")
         search_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
@@ -163,24 +194,36 @@ class AppShell(QMainWindow):
         date.setObjectName("topDate")
         account = QLabel(f"<b>{business.name}</b>")
         account.setObjectName("topAccount")
+        self.theme_toggle = QPushButton()
+        self.theme_toggle.setObjectName("themeToggle")
+        self.theme_toggle.setCheckable(True)
+        self.theme_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_toggle.clicked.connect(self._switch_theme)
+        theme_shortcut = QShortcut(QKeySequence("Ctrl+Shift+L"), self)
+        theme_shortcut.activated.connect(self._toggle_theme)
         header = QWidget()
         header.setObjectName("topbar")
         header.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(24, 12, 24, 12)
+        header_layout.setSpacing(16)
         header_layout.addWidget(search, 1)
         header_layout.addWidget(date)
         header_layout.addWidget(account)
+        header_layout.addWidget(self.theme_toggle)
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
         content_layout.addWidget(header)
-        content_layout.addWidget(self.pages)
+        content_layout.addWidget(self.pages, 1)
+        content_layout.addWidget(self._build_status_bar())
         content = QWidget()
         content.setObjectName("content")
         content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         content.setLayout(content_layout)
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(sidebar)
         layout.addWidget(content)
         container = QWidget()
@@ -193,9 +236,210 @@ class AppShell(QMainWindow):
         self.top_account = account
         self._sidebar_collapsed = False
         self.sidebar_animation: QVariantAnimation | None = None
-        self._set_sidebar_collapsed(self.width() < 1200)
+        self._set_sidebar_width(RAIL_WIDTH)
+        self._set_sidebar_collapsed(self.width() < COLLAPSE_BELOW_WIDTH)
         self.pos_widget.sale_registered.connect(self.dashboard.refresh)
+        self.pos_widget.sale_registered.connect(self.refresh_register)
+        self.pages.currentChanged.connect(self._refresh_register_on_page_change)
         self.dashboard.quick_action.clicked.connect(lambda: self.pages.setCurrentIndex(1))
+        theme_manager().theme_changed.connect(self._apply_theme)
+        self._apply_theme(theme_manager().name)
+        self.refresh_register()
+
+    def _build_rail(self, business_name: str, session: Session) -> QWidget:
+        self.brand_mark = QLabel("S")
+        self.brand_mark.setObjectName("brandMark")
+        self.brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.brand_name = QLabel("SuiteLocal")
+        self.brand_name.setObjectName("brandName")
+        self.brand_business = ElidedLabel(business_name)
+        self.brand_business.setObjectName("brandBusiness")
+        self.brand_text = QWidget()
+        self.brand_text.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        brand_text_layout = QVBoxLayout(self.brand_text)
+        brand_text_layout.setContentsMargins(0, 0, 0, 0)
+        brand_text_layout.setSpacing(0)
+        brand_text_layout.addWidget(self.brand_name)
+        brand_text_layout.addWidget(self.brand_business)
+        brand_row = QWidget()
+        self.brand_layout = QHBoxLayout(brand_row)
+        self.brand_layout.setContentsMargins(8, 2, 8, 22)
+        self.brand_layout.setSpacing(12)
+        self.brand_layout.addWidget(self.brand_mark)
+        self.brand_layout.addWidget(self.brand_text, 1)
+
+        self.register_status = QLabel("Caja cerrada")
+        self.register_status.setObjectName("registerStatus")
+        self.register_status.setProperty("state", "closed")
+        self.register_base = QLabel()
+        self.register_expected = QLabel()
+        for value in (self.register_base, self.register_expected):
+            value.setObjectName("registerValue")
+        self.register_base_row = QWidget()
+        self.register_base_row.setLayout(_hbox(_label("Base", "registerLabel"), self.register_base))
+        self.register_expected_row = QWidget()
+        self.register_expected_row.setLayout(
+            _hbox(_label("Efectivo esperado", "registerLabel"), self.register_expected)
+        )
+        for row in (self.register_base_row, self.register_expected_row):
+            row_layout = row.layout()
+            if isinstance(row_layout, QHBoxLayout):
+                row_layout.insertStretch(1)
+        self.register_divider = QFrame()
+        self.register_divider.setObjectName("registerDivider")
+        self.register_divider.setFrameShape(QFrame.Shape.NoFrame)
+        self.register_detail = QWidget()
+        detail_layout = QVBoxLayout(self.register_detail)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(9)
+        detail_layout.addWidget(self.register_status)
+        detail_layout.addWidget(self.register_base_row)
+        detail_layout.addWidget(self.register_expected_row)
+
+        self.user_avatar = QLabel(initials(session.user.username))
+        self.user_avatar.setObjectName("avatar")
+        self.user_avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.user_name = ElidedLabel(session.user.username)
+        self.user_name.setObjectName("userName")
+        self.user_role = ElidedLabel(ROLE_LABELS.get(session.user.role, session.user.role))
+        self.user_role.setObjectName("userRole")
+        self.user_text = QWidget()
+        self.user_text.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        user_text_layout = QVBoxLayout(self.user_text)
+        user_text_layout.setContentsMargins(0, 0, 0, 0)
+        user_text_layout.setSpacing(0)
+        user_text_layout.addWidget(self.user_name)
+        user_text_layout.addWidget(self.user_role)
+        who_row = QWidget()
+        self.who_layout = QHBoxLayout(who_row)
+        self.who_layout.setContentsMargins(0, 0, 0, 0)
+        self.who_layout.setSpacing(10)
+        self.who_layout.addWidget(self.user_avatar)
+        self.who_layout.addWidget(self.user_text, 1)
+
+        self.register_card = QFrame()
+        self.register_card.setObjectName("registerCard")
+        self.register_card_layout = QVBoxLayout(self.register_card)
+        self.register_card_layout.setContentsMargins(14, 14, 14, 14)
+        self.register_card_layout.setSpacing(10)
+        self.register_card_layout.addWidget(self.register_detail)
+        self.register_card_layout.addWidget(self.register_divider)
+        self.register_card_layout.addWidget(who_row)
+
+        self.logout_button = QPushButton("Cerrar sesión")
+        self.logout_button.setObjectName("logoutButton")
+        self.logout_button.setAccessibleName("Cerrar sesión")
+        self.logout_button.clicked.connect(self._logout)
+
+        sidebar_layout = QVBoxLayout()
+        sidebar_layout.setContentsMargins(14, 22, 14, 14)
+        sidebar_layout.setSpacing(4)
+        sidebar_layout.addWidget(brand_row)
+        sidebar_layout.addWidget(self.navigation, 1)
+        sidebar_layout.addWidget(self.register_card)
+        sidebar_layout.addWidget(self.logout_button)
+        sidebar = QWidget()
+        self.sidebar = sidebar
+        sidebar.setObjectName("sidebar")
+        sidebar.setLayout(sidebar_layout)
+        return sidebar
+
+    def _build_status_bar(self) -> QWidget:
+        def item(text: str, state: str) -> tuple[QWidget, QLabel]:
+            dot = QLabel("●")
+            dot.setObjectName("statusDot")
+            dot.setProperty("state", state)
+            label = QLabel(text)
+            holder = QWidget()
+            holder.setLayout(_hbox(dot, label, spacing=6))
+            return holder, label
+
+        offline, self.status_offline = item("Funcionando sin internet", "ok")
+        # Ticket printing arrives with T7 and the backups module records no last-backup time,
+        # so only what is true today is shown.
+        printer, self.status_printer = item("Impresora: sin configurar", "idle")
+        self.status_cash_base = QLabel()
+        self.status_cash_expected = QLabel()
+        for value in (self.status_cash_base, self.status_cash_expected):
+            value.setObjectName("statusValue")
+        self.status_cash = QWidget()
+        self.status_cash.setLayout(
+            _hbox(
+                QLabel("Base de caja"),
+                self.status_cash_base,
+                QLabel("·"),
+                QLabel("Efectivo esperado"),
+                self.status_cash_expected,
+                spacing=6,
+            )
+        )
+        self.status_bar = QWidget()
+        self.status_bar.setObjectName("statusBar")
+        self.status_bar.setFixedHeight(40)
+        layout = QHBoxLayout(self.status_bar)
+        layout.setContentsMargins(26, 0, 26, 0)
+        layout.setSpacing(22)
+        layout.addWidget(offline)
+        layout.addWidget(printer)
+        layout.addStretch()
+        layout.addWidget(self.status_cash)
+        return self.status_bar
+
+    # -- cash register ----------------------------------------------------------------------
+
+    def refresh_register(self) -> None:
+        """Reload the open cash session into the rail card and the status bar."""
+        current = self.cash_register.current(self._session)
+        expected = None if current is None else self.cash_register.expected_cents(self._session)
+        is_open = current is not None and expected is not None
+        if current is not None and expected is not None:
+            self.register_status.setText(f"Caja abierta · {format_clock(current.opened_at)}")
+            base_text = format_money(current.opening_cents, self._currency_symbol)
+            expected_text = format_money(expected, self._currency_symbol)
+            self.register_base.setText(base_text)
+            self.register_expected.setText(expected_text)
+            self.status_cash_base.setText(base_text)
+            self.status_cash_expected.setText(expected_text)
+        else:
+            self.register_status.setText("Caja cerrada")
+        self.register_status.setProperty("state", "open" if is_open else "closed")
+        self.register_status.style().unpolish(self.register_status)
+        self.register_status.style().polish(self.register_status)
+        self.register_base_row.setVisible(is_open)
+        self.register_expected_row.setVisible(is_open)
+        self.status_cash.setVisible(is_open)
+
+    def _refresh_register_on_page_change(self, _index: int) -> None:
+        self.refresh_register()
+
+    # -- theme --------------------------------------------------------------------------------
+
+    def _toggle_theme(self) -> None:
+        self._switch_theme(theme_manager().name != "dark")
+
+    def _switch_theme(self, dark: bool) -> None:
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            set_theme(app, "dark" if dark else "light")
+
+    def _apply_theme(self, name: str) -> None:
+        """Redraw what is painted in Python; the stylesheet was already replaced."""
+        tokens = current_tokens()
+        dark = name == "dark"
+        label = "Modo claro" if dark else "Modo oscuro"
+        self.theme_toggle.setText(label)
+        self.theme_toggle.setAccessibleName(label)
+        self.theme_toggle.setToolTip(f"{label} (Ctrl+Shift+L)")
+        self.theme_toggle.setIcon(icon("sun" if dark else "moon", tokens.text_700, 16))
+        self.theme_toggle.setChecked(dark)
+        self._search_action.setIcon(icon("search", tokens.text_500, 18))
+        self.logout_button.setIcon(icon("logout", tokens.rail_text, 16))
+        for row in range(self.navigation.count()):
+            item = self.navigation.item(row)
+            icon_name = item.data(ICON_ROLE)
+            if isinstance(icon_name, str):
+                nav_icon = icon(icon_name, tokens.rail_text, 18, selected_color=tokens.rail_strong)
+                item.setIcon(nav_icon)
 
     def show_page(self, index: int) -> None:
         """Select the navigation entry that opens page ``index``."""
@@ -289,18 +533,35 @@ class AppShell(QMainWindow):
         if getattr(self, "_sidebar_collapsed", None) == collapsed:
             return
         self._sidebar_collapsed = collapsed
-        self.navigation.setProperty("collapsed", collapsed)
+        self._animate_sidebar(RAIL_COLLAPSED_WIDTH if collapsed else RAIL_WIDTH)
         self.top_date.setVisible(not collapsed)
         self.top_account.setVisible(not collapsed)
-        self._animate_sidebar(72 if collapsed else 248)
-        brand_text = "<b>SuiteLocal</b><br><small>Gestión</small>"
-        self.brand.setText("SL" if collapsed else brand_text)
+        # Collapsed, the rail keeps only the brand mark, the nav icons and the avatar.
+        self.brand_text.setVisible(not collapsed)
+        self.brand_layout.setContentsMargins(*((0, 2, 0, 18) if collapsed else (8, 2, 8, 22)))
+        self.brand_layout.setAlignment(
+            self.brand_mark,
+            Qt.AlignmentFlag.AlignHCenter if collapsed else Qt.AlignmentFlag.AlignLeft,
+        )
+        self.register_detail.setVisible(not collapsed)
+        self.register_divider.setVisible(not collapsed)
+        self.user_text.setVisible(not collapsed)
+        margin = 6 if collapsed else 14
+        self.register_card_layout.setContentsMargins(margin, margin, margin, margin)
+        self.who_layout.setAlignment(
+            self.user_avatar,
+            Qt.AlignmentFlag.AlignHCenter if collapsed else Qt.AlignmentFlag.AlignLeft,
+        )
+        self.logout_button.setText("" if collapsed else "Cerrar sesión")
+        self.logout_button.setToolTip("Cerrar sesión" if collapsed else "")
+        for widget in (self.navigation, self.logout_button):
+            widget.setProperty("collapsed", collapsed)
         for row in range(self.navigation.count()):
             item = self.navigation.item(row)
             if item.data(Qt.ItemDataRole.UserRole) == "section":
                 item.setHidden(collapsed)
                 continue
-            label = str(item.data(Qt.ItemDataRole.UserRole + 1))
+            label = str(item.data(LABEL_ROLE))
             item.setText("" if collapsed else label)
             item.setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter
@@ -308,5 +569,6 @@ class AppShell(QMainWindow):
                 else Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             )
             item.setToolTip(label if collapsed else "")
-        self.navigation.style().unpolish(self.navigation)
-        self.navigation.style().polish(self.navigation)
+        for widget in (self.navigation, self.logout_button):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)

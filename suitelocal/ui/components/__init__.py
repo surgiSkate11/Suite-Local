@@ -1,13 +1,16 @@
 """Componentes visuales reutilizables de SuiteLocal."""
 
-from suitelocal.ui.components.badge import StatusBadge
+from suitelocal.ui.components.badge import KeyHint, StatusBadge
 from suitelocal.ui.components.button import (
     DangerButton,
     PrimaryButton,
     SecondaryButton,
+    SegmentedControl,
+    SwitchButton,
     set_variant,
 )
 from suitelocal.ui.components.card import Card
+from suitelocal.ui.components.elided import ElidedLabel
 from suitelocal.ui.components.feedback import (
     EmptyState,
     InlineMessage,
@@ -32,14 +35,18 @@ __all__ = [
     "DangerButton",
     "DataTable",
     "Drawer",
+    "ElidedLabel",
     "EmptyState",
     "InlineMessage",
+    "KeyHint",
     "KpiCard",
     "PrimaryButton",
     "SearchField",
     "SecondaryButton",
+    "SegmentedControl",
     "Skeleton",
     "StatusBadge",
+    "SwitchButton",
     "Sidebar",
     "TextField",
     "Topbar",

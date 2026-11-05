@@ -20,7 +20,7 @@ from suitelocal.ui.components import (
     Toast,
 )
 from suitelocal.ui.theme.icons import icon
-from suitelocal.ui.theme.qss import build_stylesheet
+from suitelocal.ui.theme.manager import current_theme, set_theme
 
 
 def build_gallery() -> QWidget:
@@ -31,6 +31,20 @@ def build_gallery() -> QWidget:
     title = QLabel("Catálogo de fundamentos")
     title.setObjectName("pageTitle")
     layout.addWidget(title)
+    theme_button = QPushButton()
+    theme_button.setCheckable(True)
+    theme_button.setChecked(current_theme() == "dark")
+
+    def switch_theme(dark: bool) -> None:
+        # Previewing a theme in the catalog must not change the user's saved choice.
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            set_theme(app, "dark" if dark else "light", persist=False)
+        theme_button.setText("Modo claro" if dark else "Modo oscuro")
+
+    theme_button.setText("Modo claro" if theme_button.isChecked() else "Modo oscuro")
+    theme_button.clicked.connect(switch_theme)
+    layout.addWidget(theme_button)
     buttons = QHBoxLayout()
     for label, object_name in (
         ("Primario", "primaryAction"),
@@ -68,7 +82,7 @@ def build_gallery() -> QWidget:
 
 def main() -> int:
     application = QApplication([])
-    application.setStyleSheet(build_stylesheet())
+    set_theme(application, "light", persist=False)
     window = build_gallery()
     window.show()
     return application.exec()

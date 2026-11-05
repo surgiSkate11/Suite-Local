@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.ui.theme.icons import icon
-from suitelocal.ui.theme.tokens import TOKENS
+from suitelocal.ui.theme.manager import current_tokens, theme_manager
 
 
 class AppDialog(QDialog):
@@ -47,8 +47,10 @@ class Drawer(QFrame):
         self.heading = QLabel(title)
         self.heading.setObjectName("drawerTitle")
         close = QPushButton()
+        self._close_button = close
         close.setObjectName("drawerClose")
-        close.setIcon(icon("close", TOKENS.text_500, 18))
+        self._refresh_icon()
+        theme_manager().theme_changed.connect(self._refresh_icon)
         close.setFixedSize(40, 40)
         close.setAccessibleName("Cerrar panel")
         close.setToolTip("Cerrar panel (Esc)")
@@ -60,6 +62,9 @@ class Drawer(QFrame):
         header.addStretch()
         header.addWidget(close)
         layout.addLayout(header)
+
+    def _refresh_icon(self, _theme: str = "") -> None:
+        self._close_button.setIcon(icon("close", current_tokens().text_500, 18))
 
     def set_title(self, title: str) -> None:
         self.heading.setText(title)

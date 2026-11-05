@@ -8,8 +8,6 @@ from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
-from suitelocal.ui.theme.tokens import TOKENS
-
 ICONS: dict[str, str] = {
     "search": '<path d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z"/>',
     "check": '<path d="m5 12 4 4L19 6"/>',
@@ -38,6 +36,12 @@ ICONS: dict[str, str] = {
         'M16 3.13a4 4 0 0 1 0 7.75"/>'
     ),
     "logout": '<path d="M10 17l5-5-5-5M15 12H3M21 19V5a2 2 0 0 0-2-2h-6"/>',
+    "moon": '<path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10Z"/>',
+    "sun": (
+        '<circle cx="12" cy="12" r="4"/>'
+        '<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2'
+        'M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+    ),
 }
 
 
@@ -64,12 +68,26 @@ def icon_file(name: str, color: str, size: int, stroke_width: float = 1.75) -> P
     return target
 
 
-def icon(name: str, color: str = TOKENS.brand_500, size: int = 20) -> QIcon:
-    svg = svg_markup(name, color, size)
-    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+def _pixmap(name: str, color: str, size: int) -> QPixmap:
+    renderer = QSvgRenderer(QByteArray(svg_markup(name, color, size).encode("utf-8")))
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     renderer.render(painter)
     painter.end()
-    return QIcon(pixmap)
+    return pixmap
+
+
+def icon(
+    name: str, color: str | None = None, size: int = 20, selected_color: str | None = None
+) -> QIcon:
+    """Render an icon; ``color`` defaults to the active theme's accent.
+
+    ``selected_color`` paints the variant item views use for the selected row.
+    """
+    from suitelocal.ui.theme.manager import current_tokens
+
+    result = QIcon(_pixmap(name, color or current_tokens().brand_500, size))
+    if selected_color is not None:
+        result.addPixmap(_pixmap(name, selected_color, size), QIcon.Mode.Selected)
+    return result

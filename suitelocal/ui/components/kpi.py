@@ -2,7 +2,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from suitelocal.ui.theme.icons import icon
-from suitelocal.ui.theme.tokens import TOKENS
+from suitelocal.ui.theme.manager import current_tokens, theme_manager
 
 
 class KpiCard(QWidget):
@@ -33,11 +33,14 @@ class KpiCard(QWidget):
             "green": "cash",
             "purple": "dashboard",
         }.get(accent, "dashboard")
+        self._icon_name = icon_name
         icon_label = QLabel()
+        self._icon_label = icon_label
         icon_label.setObjectName("kpiIcon")
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setPixmap(icon(icon_name, TOKENS.brand_500, 20).pixmap(QSize(20, 20)))
         icon_label.setFixedSize(40, 40)
+        self._refresh_icon()
+        theme_manager().theme_changed.connect(self._refresh_icon)
         header = QHBoxLayout()
         header.addWidget(label)
         header.addStretch()
@@ -48,3 +51,7 @@ class KpiCard(QWidget):
         layout.addLayout(header)
         layout.addWidget(self.value_label)
         layout.addWidget(self.trend_label)
+
+    def _refresh_icon(self, _theme: str = "") -> None:
+        pixmap = icon(self._icon_name, current_tokens().brand_500, 20).pixmap(QSize(20, 20))
+        self._icon_label.setPixmap(pixmap)

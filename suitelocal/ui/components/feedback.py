@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from suitelocal.ui.theme.effects import apply_elevation
 from suitelocal.ui.theme.icons import icon
-from suitelocal.ui.theme.tokens import TOKENS
+from suitelocal.ui.theme.manager import current_tokens, theme_manager
 
 
 class EmptyState(QFrame):
@@ -125,14 +125,19 @@ class Toast(QWidget):
         label.setObjectName("toastText")
         label.setWordWrap(True)
         close = QPushButton()
+        self._close_button = close
         close.setObjectName("toastClose")
-        close.setIcon(icon("close", TOKENS.text_500, 16))
+        self._refresh_icon()
+        theme_manager().theme_changed.connect(self._refresh_icon)
         close.setFixedSize(QSize(28, 28))
         close.setAccessibleName("Cerrar aviso")
         close.setToolTip("Cerrar aviso")
         close.clicked.connect(self.fade_out)
         layout.addWidget(label, 1)
         layout.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
+
+    def _refresh_icon(self, _theme: str = "") -> None:
+        self._close_button.setIcon(icon("close", current_tokens().text_500, 16))
 
     def fade_in(self) -> None:
         self._run_fade(1.0)

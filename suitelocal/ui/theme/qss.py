@@ -1,9 +1,9 @@
 from suitelocal.ui.theme.icons import icon_file
-from suitelocal.ui.theme.tokens import TOKENS, DesignTokens
+from suitelocal.ui.theme.tokens import LIGHT_TOKENS, DesignTokens
 
 
-def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
-    check_mark = icon_file("check", tokens.surface, 18, stroke_width=2.5).as_posix()
+def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
+    check_mark = icon_file("check", tokens.on_brand, 18, stroke_width=2.5).as_posix()
     return f"""
     QWidget {{
         color: {tokens.text_900};
@@ -63,12 +63,12 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         padding: 0 12px;
     }}
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
-        border: 2px solid {tokens.brand_500};
+        border: 2px solid {tokens.focus};
         padding: 0 11px;
     }}
     QPushButton {{
         background: {tokens.brand_500};
-        color: {tokens.surface};
+        color: {tokens.on_brand};
         border: 0;
         border-radius: {tokens.radius_control}px;
         min-height: {tokens.control_height}px;
@@ -81,18 +81,27 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         height: 18px;
     }}
     QPushButton:hover {{ background: {tokens.brand_600}; }}
-    QPushButton:pressed {{ background: {tokens.brand_800}; }}
+    QPushButton:pressed {{ background: {tokens.brand_600}; }}
     QPushButton:disabled {{ background: {tokens.border}; color: {tokens.text_400}; }}
     QPushButton:focus {{
-        border: 2px solid {tokens.brand_400};
+        border: 2px solid {tokens.focus_ring};
         padding: 0 14px;
     }}
     QPushButton:checked {{ background: {tokens.brand_800}; }}
     #primaryAction {{
-        background: {tokens.brand_500};
+        background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                    stop: 0 {tokens.brand_600}, stop: 1 {tokens.brand_500});
         min-height: {tokens.large_action_height}px;
         font-size: 15px;
         font-weight: 700;
+    }}
+    #primaryAction:hover {{ background: {tokens.brand_600}; }}
+    #primaryAction:pressed {{ background: {tokens.brand_500}; }}
+    #primaryAction:disabled {{ background: {tokens.border}; color: {tokens.text_400}; }}
+    #primaryAction[size="hero"] {{
+        min-height: 60px;
+        border-radius: {tokens.radius_panel}px;
+        font-size: 17px;
     }}
     #secondaryAction {{
         background: {tokens.surface};
@@ -106,10 +115,68 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         border: 1px solid {tokens.border_input};
     }}
     QPushButton[variant="secondary"]:hover {{ background: {tokens.brand_50}; }}
-    QPushButton[variant="danger"] {{ background: {tokens.danger}; color: {tokens.surface}; }}
+    QPushButton[variant="danger"] {{ background: {tokens.danger}; color: {tokens.on_danger}; }}
     QPushButton[variant="danger"]:hover {{ background: {tokens.text_900}; }}
     QPushButton[variant="ghost"] {{ background: transparent; color: {tokens.text_700}; }}
-    QPushButton[variant="ghost"]:hover {{ background: {tokens.background}; }}
+    QPushButton[variant="ghost"]:hover {{ background: {tokens.sunken}; }}
+    QPushButton[variant="champagne"] {{
+        background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                    stop: 0 {tokens.champagne_100}, stop: 1 {tokens.champagne_500});
+        color: {tokens.on_champagne};
+        border-radius: {tokens.radius_card}px;
+        min-height: 58px;
+        font-size: 17px;
+        font-weight: 700;
+    }}
+    QPushButton[variant="champagne"]:hover {{ background: {tokens.champagne_100}; }}
+    QPushButton[variant="champagne"]:pressed {{ background: {tokens.champagne_500}; }}
+    QPushButton[variant="champagne"]:disabled {{ background: {tokens.border}; color: {tokens.text_400}; }}
+    #segmented {{
+        background: {tokens.sunken};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_pad}px;
+    }}
+    #segmented QPushButton[variant="segment"] {{
+        background: transparent;
+        color: {tokens.text_700};
+        border: 0;
+        border-radius: 10px;
+        min-height: 32px;
+        padding: 0 14px;
+        font-size: 13px;
+        font-weight: 400;
+    }}
+    #segmented QPushButton[variant="segment"]:hover {{ background: {tokens.brand_50}; }}
+    #segmented QPushButton[variant="segment"]:checked {{
+        background: {tokens.surface};
+        color: {tokens.text_900};
+        font-weight: 600;
+    }}
+    #segmented QPushButton[variant="segment"]:focus {{
+        border: 2px solid {tokens.focus};
+        padding: 0 12px;
+    }}
+    QLabel[role="display"], #pageTitle {{
+        color: {tokens.text_900};
+        font-family: {tokens.font_serif};
+        font-size: 28px;
+        font-weight: 400;
+    }}
+    QLabel[role="eyebrow"] {{ color: {tokens.text_500}; font-size: 12px; }}
+    QLabel[role="kbd"] {{
+        color: {tokens.text_700};
+        background: {tokens.sunken};
+        border: 1px solid {tokens.border_strong};
+        border-bottom-width: 2px;
+        border-radius: 6px;
+        padding: 1px 7px;
+        font-size: 11px;
+    }}
+    #ticketPanel {{
+        background: {tokens.surface};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_ticket}px;
+    }}
     #surfaceCard, #contentCard {{
         background: {tokens.surface};
         border: 1px solid {tokens.border};
@@ -135,11 +202,11 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     #cartTable QHeaderView::section, #paymentTable QHeaderView::section {{ min-height: 36px; padding: 0 10px; }}
     QTableWidget::item:hover {{ background: {tokens.brand_50}; }}
     QTableWidget QTableCornerButton::section {{
-        background: {tokens.brand_100};
+        background: {tokens.sunken};
         border: 0;
     }}
     QHeaderView::section {{
-        background: {tokens.brand_100};
+        background: {tokens.sunken};
         color: {tokens.text_700};
         border: 0;
         padding: 0 12px;
@@ -159,6 +226,7 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         background: {tokens.surface};
     }}
     QCheckBox::indicator:hover {{ border-color: {tokens.brand_500}; }}
+    QCheckBox::indicator:focus {{ border-color: {tokens.focus}; }}
     QCheckBox::indicator:checked {{
         background: {tokens.brand_500};
         border-color: {tokens.brand_500};
@@ -180,7 +248,6 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         selection-color: {tokens.text_900};
         padding: 4px;
     }}
-    #pageTitle {{ color: {tokens.text_900}; font-size: 24px; font-weight: 700; }}
     #pageSubtitle {{ color: {tokens.text_500}; font-size: 13px; }}
     #inlineMessage {{
         color: {tokens.success};
@@ -267,47 +334,113 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     #toastClose:hover {{ background: {tokens.background}; }}
     #drawerClose {{ background: transparent; border-radius: 20px; min-height: 0; padding: 0; }}
     #drawerClose:hover {{ background: {tokens.background}; }}
-    #dangerAction {{ background: {tokens.danger}; color: {tokens.surface}; }}
+    #dangerAction {{ background: {tokens.danger}; color: {tokens.on_danger}; }}
     #appDialog, #drawer {{ background: {tokens.surface}; border-radius: {tokens.radius_panel}px; }}
     #ghostButton {{ background: transparent; color: {tokens.text_500}; padding: 0; }}
-    #sidebar {{
-        background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-                                    stop: 0 {tokens.brand_900}, stop: 1 {tokens.brand_950});
-        min-width: 248px;
-        max-width: 248px;
+    #sidebar {{ background: {tokens.rail}; }}
+    #brandMark {{
+        background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+                                    stop: 0 {tokens.champagne_300}, stop: 1 {tokens.champagne_700});
+        color: {tokens.on_champagne};
+        border-radius: 11px;
+        min-width: 36px;
+        max-width: 36px;
+        min-height: 36px;
+        max-height: 36px;
+        font-size: 15px;
+        font-weight: 800;
     }}
-    #brand {{ color: {tokens.surface}; font-size: 20px; font-weight: 700; padding: 18px 14px 22px; }}
-    #brand small {{ color: rgba(255,255,255,0.65); font-size: 11px; font-weight: 500; }}
-    #currentUser {{ color: {tokens.surface}; background: rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; }}
-    #currentUser span {{ color: {tokens.brand_400}; font-size: 10px; letter-spacing: 1px; }}
-    #navigation {{ background: transparent; border: 0; color: rgba(255,255,255,0.82); outline: 0; }}
-    #navigation::item {{ padding: 11px 14px; border-radius: 10px; margin: 3px 0; }}
-    #navigation[collapsed="true"]::item {{
-        padding: 11px 0;
-        margin: 3px 4px;
+    #brandName {{ color: {tokens.rail_strong}; font-size: 15px; font-weight: 700; }}
+    #brandBusiness {{ color: {tokens.rail_text}; font-size: 12px; }}
+    #navigation {{ background: transparent; border: 0; color: {tokens.rail_text}; outline: 0; }}
+    #navigation::item {{
+        padding: 10px 12px;
+        border-radius: 10px;
+        margin: 2px 0;
+        border-left: 2px solid transparent;
     }}
-    #navigation::item:selected {{ background: {tokens.brand_500}; color: {tokens.surface}; font-weight: 600; }}
-    #navigation::item:hover:!selected {{ background: rgba(255,255,255,0.08); }}
-    #navigation::item[data-role="section"] {{ color: {tokens.brand_400}; font-size: 10px; font-weight: 600; padding-top: 18px; }}
-    #logoutButton {{ background: transparent; color: rgba(255,255,255,0.75); text-align: left; padding: 8px 12px; min-height: 32px; }}
-    #logoutButton:hover {{ background: rgba(255,255,255,0.08); color: {tokens.surface}; }}
-    #promoCard {{ background: {tokens.brand_800}; color: {tokens.surface}; border-radius: 12px; padding: 16px; font-weight: 600; }}
-    #topbar {{ background: {tokens.surface}; border-bottom: 1px solid {tokens.border}; min-height: 64px; }}
-    #topSearch {{ background: {tokens.background}; border: 1px solid {tokens.border}; border-radius: 10px; padding: 0 12px; }}
-    #topDate {{ background: {tokens.surface}; border: 0; color: {tokens.text_700}; }}
-    #topAccount {{ color: {tokens.text_900}; padding-left: 8px; }}
-    #topAccount span {{ color: {tokens.text_500}; font-size: 10px; }}
+    #navigation[collapsed="true"]::item {{ padding: 10px 0; margin: 2px 4px; }}
+    #navigation::item:selected {{
+        background: {tokens.rail_active};
+        color: {tokens.rail_strong};
+        border-left: 2px solid {tokens.champagne_300};
+        font-weight: 600;
+    }}
+    #navigation::item:hover:!selected {{ background: {tokens.rail_hover}; color: {tokens.rail_strong}; }}
+    #navigation::item:disabled {{ color: {tokens.rail_group}; background: transparent; }}
+    #registerCard {{
+        background: {tokens.rail_card};
+        border: 1px solid {tokens.rail_border};
+        border-radius: 16px;
+    }}
+    #registerLabel, #userRole {{ color: {tokens.rail_text}; font-size: 12px; }}
+    #registerStatus {{ color: {tokens.rail_text}; font-size: 12px; font-weight: 600; }}
+    #registerStatus[state="open"] {{ color: {tokens.rail_live}; }}
+    #registerValue {{ color: {tokens.rail_strong}; font-size: 12px; font-weight: 600; }}
+    #registerDivider {{ background: {tokens.rail_border}; max-height: 1px; min-height: 1px; border: 0; }}
+    #avatar {{
+        background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+                                    stop: 0 {tokens.champagne_300}, stop: 1 {tokens.champagne_700});
+        color: {tokens.on_champagne};
+        border-radius: 16px;
+        min-width: 32px;
+        max-width: 32px;
+        min-height: 32px;
+        max-height: 32px;
+        font-size: 12px;
+        font-weight: 700;
+    }}
+    #userName {{ color: {tokens.rail_strong}; font-size: 13px; font-weight: 600; }}
+    #logoutButton {{
+        background: transparent;
+        color: {tokens.rail_text};
+        border-radius: 10px;
+        text-align: left;
+        padding: 0 12px;
+        min-height: 36px;
+        font-weight: 500;
+    }}
+    #logoutButton:hover {{ background: {tokens.rail_hover}; color: {tokens.rail_strong}; }}
+    #logoutButton[collapsed="true"] {{ padding: 0; text-align: center; }}
+    #promoCard {{ background: {tokens.brand_800}; color: {tokens.on_brand}; border-radius: 12px; padding: 16px; font-weight: 600; }}
+    #topbar {{ background: {tokens.background}; border: 0; min-height: 64px; }}
+    #topSearch {{
+        background: {tokens.surface};
+        border: 1px solid {tokens.border_strong};
+        border-radius: {tokens.radius_control}px;
+        padding: 0 12px;
+        min-height: 40px;
+    }}
+    #topDate {{ background: transparent; border: 0; color: {tokens.text_500}; font-size: 12px; }}
+    #topAccount {{ background: transparent; color: {tokens.text_900}; padding-left: 8px; }}
+    #themeToggle {{
+        background: {tokens.surface};
+        color: {tokens.text_700};
+        border: 1px solid {tokens.border_strong};
+        border-radius: {tokens.radius_control}px;
+        min-height: 38px;
+        padding: 0 14px;
+        font-size: 13px;
+    }}
+    #themeToggle:hover {{ background: {tokens.brand_50}; }}
+    #themeToggle:checked {{ background: {tokens.sunken}; color: {tokens.text_900}; }}
+    #themeToggle:focus {{ border: 2px solid {tokens.focus}; padding: 0 13px; }}
+    #statusBar {{ background: {tokens.surface}; border-top: 1px solid {tokens.border}; }}
+    #statusBar QLabel {{ background: transparent; color: {tokens.text_500}; font-size: 12px; }}
+    #statusBar #statusValue {{ color: {tokens.text_700}; font-weight: 600; }}
+    #statusDot {{ color: {tokens.text_400}; font-size: 10px; }}
+    #statusDot[state="ok"] {{ color: {tokens.success}; }}
     #offlineStatus {{ color: {tokens.success}; background: {tokens.success_background}; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 500; }}
     #authDialog {{ background: {tokens.surface}; }}
-    #authBrandPanel {{ background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 {tokens.brand_900}, stop: 1 {tokens.brand_950}); }}
-    #authBrandTitle {{ color: {tokens.surface}; font-size: 30px; font-weight: 700; }}
-    #authLogo {{ background: {tokens.brand_500}; color: {tokens.surface}; border-radius: 12px; min-width: 44px; max-width: 44px; min-height: 44px; max-height: 44px; font-size: 16px; font-weight: 700; }}
-    #authBrandText, #authBenefit {{ color: rgba(255,255,255,0.75); }}
-    #authTitle {{ color: {tokens.text_900}; font-size: 24px; font-weight: 700; }}
+    #authBrandPanel {{ background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 {tokens.hero_2}, stop: 1 {tokens.rail}); }}
+    #authBrandTitle {{ color: {tokens.hero_text}; font-family: {tokens.font_serif}; font-size: 30px; font-weight: 400; }}
+    #authLogo {{ background: {tokens.champagne_300}; color: {tokens.on_champagne}; border-radius: 12px; min-width: 44px; max-width: 44px; min-height: 44px; max-height: 44px; font-size: 16px; font-weight: 700; }}
+    #authBrandText, #authBenefit {{ color: {tokens.hero_muted}; }}
+    #authTitle {{ color: {tokens.text_900}; font-family: {tokens.font_serif}; font-size: 26px; font-weight: 400; }}
     #authSubtitle, #authVersion {{ color: {tokens.text_500}; }}
     #authLabel {{ color: {tokens.text_700}; font-size: 12px; font-weight: 600; }}
     #authField {{ background: {tokens.surface}; color: {tokens.text_900}; border: 1px solid {tokens.border_input}; border-radius: 10px; padding: 0 12px; }}
-    #authField:focus {{ border: 1px solid {tokens.brand_500}; }}
+    #authField:focus {{ border: 1px solid {tokens.focus}; }}
     #authError {{ color: {tokens.danger}; background: {tokens.danger_background}; border: 1px solid {tokens.danger_border}; border-radius: 10px; padding: 10px; }}
     #authButton {{ min-height: 44px; font-size: 14px; }}
     #dashboardIntro, #contentCard {{ background: {tokens.surface}; border: 1px solid {tokens.border}; border-radius: {tokens.radius_card}px; }}
@@ -327,9 +460,14 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
     #metricValue {{ color: {tokens.text_900}; font-size: 26px; font-weight: 700; }}
     #metricTrend {{ color: {tokens.text_500}; font-size: 11px; }}
     #periodButton, #secondaryAction {{ background: {tokens.surface}; color: {tokens.text_700}; border: 1px solid {tokens.border_strong}; border-radius: {tokens.radius_control}px; }}
-    #checkoutSummary {{ background: {tokens.brand_100}; border-radius: {tokens.radius_control}px; padding: 10px 12px; }}
-    #checkoutSummary QLabel {{ color: {tokens.text_500}; font-size: 11px; font-weight: 600; }}
-    #checkoutSummary #totalLabel {{ color: {tokens.text_900}; font-size: 25px; font-weight: 700; }}
+    #checkoutSummary {{
+        background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+                                    stop: 0 {tokens.hero_2}, stop: 1 {tokens.hero});
+        border-radius: {tokens.radius_panel}px;
+    }}
+    #checkoutSummary QLabel {{ color: {tokens.hero_muted}; font-size: 12px; background: transparent; }}
+    #checkoutSummary #checkoutCaption {{ font-weight: 600; }}
+    #checkoutSummary #totalLabel {{ color: {tokens.hero_text}; font-size: 30px; font-weight: 300; }}
     #checkoutDetail {{ color: {tokens.text_500}; font-size: 11px; }}
     #paymentStatus {{ border-radius: {tokens.radius_control}px; padding: 8px 10px; font-size: 12px; }}
     #paymentStatus[state="info"] {{ color: {tokens.info}; background: {tokens.info_background}; }}
@@ -341,17 +479,7 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         color: {tokens.text_700};
         outline: 0;
     }}
-    #productResults::item {{
-        padding: 12px;
-        min-height: 48px;
-        border-bottom: 1px solid {tokens.border};
-        border-radius: {tokens.radius_control}px;
-    }}
-    #productResults::item:selected {{
-        background: {tokens.brand_50};
-        color: {tokens.brand_500};
-        border-left: 3px solid {tokens.brand_500};
-    }}
+    #productResults::item {{ border: 0; padding: 0; }}
     #scannerStatus {{ color: {tokens.text_500}; font-size: 11px; padding: 2px 4px; }}
     #scannerStatus[state="success"] {{ color: {tokens.success}; }}
     #scannerStatus[state="error"] {{ color: {tokens.danger}; }}
@@ -368,4 +496,119 @@ def build_stylesheet(tokens: DesignTokens = TOKENS) -> str:
         padding: 4px;
     }}
     #drawerTitle {{ color: {tokens.text_900}; font-size: 17px; font-weight: 600; }}
+    #paymentScrim {{ background: rgba(20,23,31,0.42); }}
+    #paymentCard {{
+        background: {tokens.surface};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_dialog}px;
+    }}
+    #paymentLeft {{ background: transparent; }}
+    #paymentRight {{
+        background: {tokens.mist};
+        border: 0;
+        border-left: 1px solid {tokens.border};
+        border-top-right-radius: {tokens.radius_dialog}px;
+        border-bottom-right-radius: {tokens.radius_dialog}px;
+    }}
+    #paymentRight QWidget {{ background: transparent; }}
+    #paymentEyebrow {{ color: {tokens.text_500}; font-size: 12px; }}
+    #paymentTitle {{
+        color: {tokens.text_900};
+        font-family: {tokens.font_serif};
+        font-size: 30px;
+        font-weight: 400;
+    }}
+    #paymentClose {{
+        background: {tokens.surface};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_control}px;
+        min-height: 0;
+        padding: 0;
+    }}
+    #paymentClose:hover {{ background: {tokens.background}; }}
+    #paymentDue {{
+        background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+                                    stop: 0 {tokens.hero_2}, stop: 1 {tokens.hero});
+        border-radius: {tokens.radius_panel}px;
+    }}
+    #paymentDue QLabel {{ background: transparent; }}
+    #paymentDueTitle {{ color: {tokens.hero_muted}; font-size: 13px; }}
+    #paymentDueNote {{ color: {tokens.hero_muted}; font-size: 12px; }}
+    #paymentDueAmount {{ color: {tokens.hero_text}; font-size: 48px; font-weight: 300; }}
+    #paymentSectionLabel {{ color: {tokens.text_500}; font-size: 13px; font-weight: 600; }}
+    #paymentRows, #paymentScroll, #paymentScroll > QWidget > QWidget {{ background: transparent; }}
+    #paymentRow {{
+        background: {tokens.mist};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_card}px;
+    }}
+    #paymentRow[active="true"] {{
+        background: {tokens.surface};
+        border: 2px solid {tokens.brand_800};
+    }}
+    #paymentRow QLabel {{ background: transparent; }}
+    #paymentIcon {{ border-radius: {tokens.radius_control}px; background: {tokens.brand_100}; }}
+    #paymentIcon[method="cash"] {{ background: {tokens.champagne_background}; }}
+    #paymentIcon[method="card"] {{ background: {tokens.success_background}; }}
+    #paymentRowTitle {{ color: {tokens.text_900}; font-size: 15px; font-weight: 600; }}
+    #paymentRowSubtitle {{ color: {tokens.text_500}; font-size: 12px; }}
+    #paymentRowAmount {{ color: {tokens.text_900}; font-size: 20px; font-weight: 600; }}
+    #paymentState {{ border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 700; }}
+    #paymentState[state="received"] {{ color: {tokens.success}; background: {tokens.success_background}; }}
+    #paymentState[state="pending"] {{ color: {tokens.champagne_text}; background: {tokens.champagne_background}; }}
+    #paymentRemove {{ background: transparent; border-radius: 14px; min-height: 0; padding: 0; }}
+    #paymentRemove:hover {{ background: {tokens.background}; }}
+    #paymentForm {{
+        background: {tokens.mist};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_card}px;
+    }}
+    #paymentForm QLineEdit, #paymentForm QComboBox {{ background: {tokens.surface}; }}
+    #addPayment {{
+        background: transparent;
+        color: {tokens.text_700};
+        border: 1px dashed {tokens.border_input};
+        border-radius: {tokens.radius_pad}px;
+        min-height: 48px;
+    }}
+    #addPayment:hover {{ background: {tokens.mist}; }}
+    #paymentFieldLabel {{ color: {tokens.text_500}; font-size: 13px; font-weight: 600; }}
+    #cashDisplay {{
+        background: {tokens.surface};
+        color: {tokens.text_900};
+        border: 2px solid {tokens.brand_800};
+        border-radius: 18px;
+        padding: 0 20px;
+        font-size: 38px;
+        font-weight: 300;
+    }}
+    #cashDisplay:disabled {{ border-color: {tokens.border_strong}; color: {tokens.text_400}; }}
+    #billButton, #padButton {{
+        background: {tokens.surface};
+        color: {tokens.text_900};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_control}px;
+        min-height: 44px;
+        padding: 0;
+        font-size: 13px;
+        font-weight: 600;
+    }}
+    #billButton {{ color: {tokens.text_700}; }}
+    #billButton[selected="true"] {{
+        background: {tokens.champagne_background};
+        border-color: {tokens.champagne_border};
+        color: {tokens.champagne_text};
+    }}
+    #padButton {{ min-height: 46px; border-radius: {tokens.radius_pad}px; font-size: 20px; font-weight: 400; }}
+    #billButton:hover, #padButton:hover {{ background: {tokens.background}; }}
+    #billButton:pressed, #padButton:pressed {{ background: {tokens.border}; }}
+    #billButton:disabled, #padButton:disabled {{ color: {tokens.text_400}; background: {tokens.mist}; }}
+    #billButton:focus, #padButton:focus {{ border: 2px solid {tokens.brand_800}; padding: 0; }}
+    #changeBox {{
+        background: {tokens.success_background};
+        border: 1px solid {tokens.success_border};
+        border-radius: {tokens.radius_card}px;
+    }}
+    #changeLabel {{ color: {tokens.success}; font-size: 13px; font-weight: 700; }}
+    #changeValue {{ color: {tokens.success_strong}; font-size: 30px; font-weight: 600; }}
     """

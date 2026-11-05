@@ -13,7 +13,7 @@ from suitelocal.infrastructure.repositories import ProductRepository, SaleReposi
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.ui.shell import AppShell
 from suitelocal.ui.theme.fonts import load_inter_font
-from suitelocal.ui.theme.qss import build_stylesheet
+from suitelocal.ui.theme.manager import apply_saved_theme
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
 
     application = QApplication(sys.argv)
     load_inter_font()
-    application.setStyleSheet(build_stylesheet())
+    apply_saved_theme(application)
 
     auth = AuthService(database)
     if not auth.has_users():
