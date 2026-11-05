@@ -203,3 +203,44 @@ def test_initialize_is_idempotent_and_adds_column_to_legacy_sales(tmp_path):
     with database.connect() as connection:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(sales)")}
     assert "cash_session_id" in columns
+
+
+def _cash_session_rows(database):
+    with database.connect() as connection:
+        return [tuple(row) for row in connection.execute("SELECT * FROM cash_sessions")]
+
+
+def test_expected_cents_is_none_without_an_open_session(env):
+    _, cash, _, owner, _, _ = env
+
+    assert cash.expected_cents(owner) is None
+
+    cash.open(owner, 100)
+    cash.close(owner, 100)
+    assert cash.expected_cents(owner) is None
+
+
+def test_expected_cents_matches_close_and_changes_no_data(env):
+    database, cash, sales, owner, cashier, product = env
+    cash.open(cashier, 1_000)
+    assert cash.expected_cents(owner) == 1_000
+
+    # Same mix as the close test: transfer is ignored, cash minus change counts.
+    sales.register(
+        Sale(
+            (SaleItem(product.id, product.name, 3, 250),),
+            0,
+            payments=(Payment("transfer", 500, "REF-1"), Payment("cash", 300)),
+        )
+    )
+    sales.register(Sale((SaleItem(product.id, product.name, 2, 250),), 1_000))
+    before = _cash_session_rows(database)
+
+    expected = cash.expected_cents(owner)
+
+    assert expected == 1_750
+    assert _cash_session_rows(database) == before
+    assert cash.current(owner) is not None
+    closed = cash.close(owner, expected)
+    assert closed.expected_cents == expected
+    assert closed.difference_cents == 0

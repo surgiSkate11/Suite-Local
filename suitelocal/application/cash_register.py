@@ -59,22 +59,7 @@ class CashRegisterService:
             open_row = self._find_open(connection, session.user.business_id)
             if open_row is None:
                 raise ValueError("No hay una caja abierta para cerrar.")
-            totals = connection.execute(
-                """
-                SELECT
-                    COALESCE((
-                        SELECT SUM(p.amount_cents)
-                        FROM sale_payments p
-                        JOIN sales s ON s.id = p.sale_id
-                        WHERE s.cash_session_id = ? AND p.method = 'cash'
-                    ), 0) AS cash_in,
-                    COALESCE((
-                        SELECT SUM(change_cents) FROM sales WHERE cash_session_id = ?
-                    ), 0) AS change_out
-                """,
-                (open_row["id"], open_row["id"]),
-            ).fetchone()
-            expected = open_row["opening_cents"] + totals["cash_in"] - totals["change_out"]
+            expected = self._expected_cents(connection, open_row)
             connection.execute(
                 """
                 UPDATE cash_sessions
@@ -89,6 +74,14 @@ class CashRegisterService:
             ).fetchone()
         return _to_session(row)
 
+    def expected_cents(self, session: Session) -> int | None:
+        """Cash the open register should hold now, or ``None`` when there is no open session."""
+        with self.database.connect() as connection:
+            open_row = self._find_open(connection, session.user.business_id)
+            if open_row is None:
+                return None
+            return self._expected_cents(connection, open_row)
+
     def history(self, session: Session, limit: int = 30) -> list[CashSession]:
         require_owner(session)
         with self.database.connect() as connection:
@@ -102,6 +95,27 @@ class CashRegisterService:
                 (session.user.business_id, limit),
             ).fetchall()
         return [_to_session(row) for row in rows]
+
+    @staticmethod
+    def _expected_cents(connection: sqlite3.Connection, open_row: sqlite3.Row) -> int:
+        """Opening cash plus cash payments minus change given, for the open session."""
+        totals = connection.execute(
+            """
+            SELECT
+                COALESCE((
+                    SELECT SUM(p.amount_cents)
+                    FROM sale_payments p
+                    JOIN sales s ON s.id = p.sale_id
+                    WHERE s.cash_session_id = ? AND p.method = 'cash'
+                ), 0) AS cash_in,
+                COALESCE((
+                    SELECT SUM(change_cents) FROM sales WHERE cash_session_id = ?
+                ), 0) AS change_out
+            """,
+            (open_row["id"], open_row["id"]),
+        ).fetchone()
+        expected: int = open_row["opening_cents"] + totals["cash_in"] - totals["change_out"]
+        return expected
 
     @staticmethod
     def _find_open(connection: sqlite3.Connection, business_id: int) -> sqlite3.Row | None:
