@@ -43,11 +43,14 @@ CREATE TABLE IF NOT EXISTS order_lines (
     unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
     sent_quantity INTEGER NOT NULL DEFAULT 0
         CHECK (sent_quantity >= 0 AND sent_quantity <= quantity),
+    tax_rate_basis_points INTEGER NOT NULL DEFAULT 0
+        CHECK (tax_rate_basis_points IN (1500, 500, 0)),
     UNIQUE (order_id, product_id)
 );
 """
 
 _ORDER_NOT_OPEN = "La cuenta ya no está abierta."
+_ORDER_ALREADY_FINISHED = "La cuenta de esta mesa ya fue cobrada o anulada."
 _TABLE_MISSING = "La mesa no existe."
 
 
@@ -131,20 +134,31 @@ class TablesRepository:
             connection.execute("BEGIN IMMEDIATE")
             self._require_open_order(connection, business_id, order_id)
             product = connection.execute(
-                "SELECT name, price_cents FROM products WHERE id = ? AND active = 1",
+                "SELECT name, price_cents, tax_rate_basis_points FROM products "
+                "WHERE id = ? AND active = 1",
                 (product_id,),
             ).fetchone()
             if product is None:
                 raise TableError("El producto ya no está disponible.")
-            # A repeated product keeps the price it was ordered at and only grows its quantity.
+            # A repeated product keeps the price and IVA rate it was ordered at and only grows
+            # its quantity.
             connection.execute(
                 """
                 INSERT INTO order_lines
-                    (order_id, product_id, product_name, quantity, unit_price_cents)
-                VALUES (?, ?, ?, ?, ?)
+                    (order_id, product_id, product_name, quantity, unit_price_cents,
+                     tax_rate_basis_points)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT (order_id, product_id) DO UPDATE SET quantity = quantity + ?
                 """,
-                (order_id, product_id, product["name"], quantity, product["price_cents"], quantity),
+                (
+                    order_id,
+                    product_id,
+                    product["name"],
+                    quantity,
+                    product["price_cents"],
+                    product["tax_rate_basis_points"],
+                    quantity,
+                ),
             )
             return self._read_order(connection, order_id)
 
@@ -214,6 +228,27 @@ class TablesRepository:
     def close(self, business_id: int, order_id: int, sale_id: int) -> None:
         self._finish(business_id, order_id, "closed", sale_id)
 
+    @staticmethod
+    def close_in(
+        connection: sqlite3.Connection, business_id: int, order_id: int, sale_id: int
+    ) -> None:
+        """Close an order inside the caller's transaction; it must still be open.
+
+        Meant for ``SaleRepository.register(on_registered=...)``: it opens no connection and no
+        transaction, so a failure here rolls back the sale that is being registered.
+        """
+        cursor = connection.execute(
+            """
+            UPDATE table_orders
+            SET status = 'closed', sale_id = ?, closed_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'open'
+              AND table_id IN (SELECT id FROM tables WHERE business_id = ?)
+            """,
+            (sale_id, order_id, business_id),
+        )
+        if cursor.rowcount != 1:
+            raise TableError(_ORDER_ALREADY_FINISHED)
+
     def get_order(self, business_id: int, order_id: int) -> OpenOrder:
         with self.database.connect() as connection:
             self._require_open_order(connection, business_id, order_id)
@@ -276,7 +311,8 @@ class TablesRepository:
         ).fetchone()
         rows = connection.execute(
             """
-            SELECT product_id, product_name, quantity, unit_price_cents, sent_quantity
+            SELECT product_id, product_name, quantity, unit_price_cents, sent_quantity,
+                   tax_rate_basis_points
             FROM order_lines WHERE order_id = ? ORDER BY id
             """,
             (order_id,),
@@ -288,6 +324,7 @@ class TablesRepository:
                 row["quantity"],
                 row["unit_price_cents"],
                 row["sent_quantity"],
+                row["tax_rate_basis_points"],
             )
             for row in rows
         )

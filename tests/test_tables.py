@@ -7,10 +7,17 @@ import pytest
 from suitelocal.application.auth import AuthService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
-from suitelocal.domain.models import Payment
-from suitelocal.domain.tables import ComandaLine, OpenOrder, OrderLine, Table, TableStatus
+from suitelocal.domain.models import Payment, Sale, SaleItem
+from suitelocal.domain.tables import (
+    ComandaLine,
+    OpenOrder,
+    OrderLine,
+    Table,
+    TableError,
+    TableStatus,
+)
 from suitelocal.infrastructure.database import Database
-from suitelocal.infrastructure.repositories import ProductRepository
+from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.tables_repository import (
     TABLES_SCHEMA,
     TablesRepository,
@@ -145,8 +152,8 @@ def test_add_product_twice_merges_quantity(env):
 
     assert isinstance(order, OpenOrder)
     assert order.lines == (
-        OrderLine(coffee.id, "Café", 3, 150, 0),
-        OrderLine(cake.id, "Torta", 1, 300, 0),
+        OrderLine(coffee.id, "Café", 3, 150, 0, 1500),
+        OrderLine(cake.id, "Torta", 1, 300, 0, 1500),
     )
     assert order.subtotal_cents == 3 * 150 + 300
     assert _count(database, "order_lines") == 2
@@ -343,7 +350,9 @@ def test_charge_registers_one_sale_decrements_stock_and_frees_table(env):
     assert sale["total_cents"] == 600
     assert sale["payment_cents"] == 1000
     assert sale["change_cents"] == 400
-    assert sale["tax_cents"] == 0
+    # Prices include IVA (15 % by default): 2 x 150 and 1 x 300 each hold 39 of IVA.
+    assert sale["subtotal_cents"] == 522
+    assert sale["tax_cents"] == 78
     assert [tuple(row) for row in items] == [(coffee.id, 2, 150), (cake.id, 1, 300)]
     assert _stock(products, coffee) == 8
     assert _stock(products, cake) == 3
@@ -355,19 +364,161 @@ def test_charge_registers_one_sale_decrements_stock_and_frees_table(env):
     assert _count(database, "sales") == 1
 
 
-def test_charge_passes_the_tax_rate_to_the_sale(env):
-    database, service, owner, _, _, coffee, _ = env
+def test_charge_at_mixed_rates_splits_base_iva_and_total_exactly(env):
+    database, service, owner, _, products, _, _ = env
+    sandwich = products.add("S-1", "Sándwich", 115, 10, tax_rate_basis_points=1500)
+    bread = products.add("P-1", "Pan", 200, 10, tax_rate_basis_points=0)
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(owner, table.id)
+    service.add_product(owner, order.id, sandwich.id, 3)
+    order = service.add_product(owner, order.id, bread.id, 1)
+
+    assert [line.tax_rate_basis_points for line in order.lines] == [1500, 0]
+    sale_id = service.charge(owner, order.id, [Payment("cash", 600)])
+
+    # 3 x 115 = 345 at 15 % -> base 345 * 100 / 115 = 300, IVA 45; 1 x 200 at 0 % -> 200, IVA 0.
+    with database.connect() as connection:
+        sale = connection.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
+        items = connection.execute(
+            "SELECT product_id, tax_rate_basis_points, tax_cents FROM sale_items "
+            "WHERE sale_id = ? ORDER BY id",
+            (sale_id,),
+        ).fetchall()
+    assert sale["subtotal_cents"] == 500
+    assert sale["tax_cents"] == 45
+    assert sale["total_cents"] == 545
+    assert sale["change_cents"] == 55
+    assert [tuple(row) for row in items] == [(sandwich.id, 1500, 45), (bread.id, 0, 0)]
+
+
+def test_order_line_keeps_the_rate_it_was_added_with(env):
+    database, service, owner, _, products, _, _ = env
+    bread = products.add("P-1", "Pan", 200, 10, tax_rate_basis_points=0)
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(owner, table.id)
+    service.add_product(owner, order.id, bread.id, 1)
+    order = service.add_product(owner, order.id, bread.id, 2)
+
+    assert order.lines[0].tax_rate_basis_points == 0
+    assert order.sale_items() == (SaleItem(bread.id, "Pan", 3, 200, 0),)
+    with database.connect() as connection:
+        ensure_tables_schema(connection)
+        ensure_tables_schema(connection)
+    assert service.get_order(owner, table.id) == order
+
+
+def _sale_of(product, quantity=1):
+    return Sale(
+        (SaleItem(product.id, product.name, quantity, product.price_cents, 1500),),
+        product.price_cents * quantity,
+    )
+
+
+def test_register_calls_the_hook_with_the_same_connection_before_commit(env):
+    database, _, _, _, products, coffee, _ = env
+    seen = {}
+
+    def hook(connection, sale_id):
+        seen["sale_id"] = sale_id
+        seen["sale_rows"] = connection.execute("SELECT COUNT(*) FROM sales").fetchone()[0]
+        seen["stock"] = connection.execute(
+            "SELECT stock FROM products WHERE id = ?", (coffee.id,)
+        ).fetchone()[0]
+        seen["payments"] = connection.execute("SELECT COUNT(*) FROM sale_payments").fetchone()[0]
+        seen["in_transaction"] = connection.in_transaction
+
+    sale_id = SaleRepository(database).register(_sale_of(coffee, 2), on_registered=hook)
+
+    assert seen == {
+        "sale_id": sale_id,
+        "sale_rows": 1,
+        "stock": 8,
+        "payments": 1,
+        "in_transaction": True,
+    }
+    assert _count(database, "sales") == 1
+
+
+def test_register_rolls_everything_back_when_the_hook_raises(env):
+    database, _, _, _, products, coffee, _ = env
+
+    def hook(connection, sale_id):
+        raise RuntimeError("falló el gancho")
+
+    with pytest.raises(RuntimeError, match="falló el gancho"):
+        SaleRepository(database).register(_sale_of(coffee, 2), on_registered=hook)
+
+    assert _count(database, "sales") == 0
+    assert _count(database, "sale_items") == 0
+    assert _count(database, "sale_payments") == 0
+    assert _stock(products, coffee) == 10
+
+
+def test_register_without_hook_behaves_as_before(env):
+    database, _, _, _, products, coffee, _ = env
+
+    sale_id = SaleRepository(database).register(_sale_of(coffee, 2))
+
+    assert _count(database, "sales") == 1
+    assert _count(database, "sale_items") == 1
+    assert _count(database, "sale_payments") == 1
+    assert _stock(products, coffee) == 8
+    assert sale_id > 0
+
+
+def test_charge_rolls_back_the_sale_when_closing_the_order_fails(env):
+    database, service, owner, _, products, coffee, cake = env
     table = service.create_table(owner, "Mesa 1")
     order = service.open_order(owner, table.id)
     service.add_product(owner, order.id, coffee.id, 2)
+    before = service.add_product(owner, order.id, cake.id, 1)
 
-    sale_id = service.charge(owner, order.id, [Payment("cash", 400)], tax_rate_basis_points=1500)
+    def failing_close(connection, business_id, order_id, sale_id):
+        raise TableError("No se pudo cerrar la cuenta.")
+
+    service.tables.close_in = failing_close
+    with pytest.raises(TableError, match="No se pudo cerrar la cuenta."):
+        service.charge(owner, order.id, [Payment("cash", 1000)])
+
+    assert _count(database, "sales") == 0
+    assert _count(database, "sale_items") == 0
+    assert _count(database, "sale_payments") == 0
+    assert _stock(products, coffee) == 10
+    assert _stock(products, cake) == 4
+    assert _order_status(database, order.id) == ("open", None)
+    assert service.get_order(owner, table.id) == before
+
+
+def test_charging_the_same_order_twice_creates_one_sale_and_decrements_stock_once(env):
+    database, service, owner, _, products, coffee, _ = env
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(owner, table.id)
+    stale = service.add_product(owner, order.id, coffee.id, 2)
+    sale_id = service.charge(owner, order.id, [Payment("cash", 1000)])
+
+    # A second cashier still holding the order read before the first charge finished.
+    service.tables.get_order = lambda business_id, order_id: stale
+    with pytest.raises(TableError, match="La cuenta de esta mesa ya fue cobrada o anulada."):
+        service.charge(owner, order.id, [Payment("cash", 1000)])
+
+    assert _count(database, "sales") == 1
+    assert _count(database, "sale_items") == 1
+    assert _count(database, "sale_payments") == 1
+    assert _stock(products, coffee) == 8
+    assert _order_status(database, order.id) == ("closed", sale_id)
+
+
+def test_close_in_requires_an_open_order_of_the_business(env):
+    database, service, owner, _, _, coffee, _ = env
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(owner, table.id)
+    service.add_product(owner, order.id, coffee.id, 1)
+    service.cancel(owner, order.id)
 
     with database.connect() as connection:
-        sale = connection.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
-    assert sale["subtotal_cents"] == 300
-    assert sale["tax_cents"] == 45
-    assert sale["total_cents"] == 345
+        with pytest.raises(TableError, match="La cuenta de esta mesa ya fue cobrada o anulada."):
+            service.tables.close_in(connection, owner.user.business_id, order.id, 1)
+    assert _order_status(database, order.id) == ("cancelled", None)
 
 
 def test_charge_with_insufficient_payment_keeps_order_open(env):

@@ -245,7 +245,6 @@ class TablesWidget(QWidget):
         session: Session,
         currency_symbol: str = "$",
         enabled_payment_methods: tuple[str, ...] = ("cash", "transfer"),
-        tax_rate_basis_points: int = 0,
         payment_dialog_factory: PaymentDialogFactory | None = None,
         now: Callable[[], datetime] = datetime.now,
         table_chooser: TableChooser | None = None,
@@ -258,7 +257,6 @@ class TablesWidget(QWidget):
         self.session = session
         self.currency_symbol = currency_symbol
         self.enabled_payment_methods = enabled_payment_methods or ("cash",)
-        self.tax_rate_basis_points = tax_rate_basis_points
         self.payment_dialog_factory: PaymentDialogFactory = payment_dialog_factory or PaymentDialog
         self.now = now
         self.table_chooser: TableChooser = table_chooser or choose_free_table
@@ -433,12 +431,9 @@ class TablesWidget(QWidget):
         self.panel_subtitle.setText(" · ".join(part for part in (zone, minutes) if part))
         self._fill_lines(self.order)
         self.total_label.setText(format_money(self._grand_total(self.order), self.currency_symbol))
-        self.total_note.setText(
-            f"Incluye IVA ({self.tax_rate_basis_points / 100:g}%)"
-            if self.tax_rate_basis_points
-            else ""
-        )
-        self.total_note.setVisible(bool(self.tax_rate_basis_points))
+        note = self._tax_note(self.order)
+        self.total_note.setText(note)
+        self.total_note.setVisible(bool(note))
 
     def _fill_lines(self, order: OpenOrder) -> None:
         table = self.lines_table
@@ -492,12 +487,18 @@ class TablesWidget(QWidget):
             order.sale_items(),
             sum(payment.amount_cents for payment in payments),
             tuple(payments),
-            self.tax_rate_basis_points,
         )
 
+    def _covering_sale(self, order: OpenOrder) -> Sale:
+        return self._sale_for(order, (Payment("cash", _COVERS_ANY_TOTAL_CENTS),))
+
     def _grand_total(self, order: OpenOrder) -> int:
-        covering = (Payment("cash", _COVERS_ANY_TOTAL_CENTS),)
-        return self._sale_for(order, covering).total_cents if order.lines else 0
+        return self._covering_sale(order).total_cents if order.lines else 0
+
+    def _tax_note(self, order: OpenOrder) -> str:
+        """The IVA already inside the total, as the counter POS shows it; empty when none."""
+        tax_cents = self._covering_sale(order).tax_cents if order.lines else 0
+        return f"IVA incluido {format_money(tax_cents, self.currency_symbol)}" if tax_cents else ""
 
     # -- selection and actions ------------------------------------------------------------
 
@@ -649,9 +650,7 @@ class TablesWidget(QWidget):
         if payments is None:
             return
         try:
-            sale_id = self.service.charge(
-                self.session, order.id, payments, self.tax_rate_basis_points
-            )
+            sale_id = self.service.charge(self.session, order.id, payments)
         except ValueError as error:
             self._fail("No se puede cobrar.", error)
             self.refresh()
@@ -665,11 +664,6 @@ class TablesWidget(QWidget):
 
     def _collect_payments(self, table_name: str, order: OpenOrder) -> tuple[Payment, ...] | None:
         """Open the payment dialog; return its payments, or None when the cashier cancels."""
-        note = (
-            f"Incluye IVA ({self.tax_rate_basis_points / 100:g}%)"
-            if self.tax_rate_basis_points
-            else ""
-        )
 
         def validate(payments: tuple[Payment, ...]) -> Sale:
             return self._sale_for(order, payments)
@@ -679,7 +673,7 @@ class TablesWidget(QWidget):
             currency_symbol=self.currency_symbol,
             enabled_methods=self.enabled_payment_methods,
             sale_label=table_name,
-            total_note=note,
+            total_note=self._tax_note(order),
             validate=validate,
             parent=self,
         )

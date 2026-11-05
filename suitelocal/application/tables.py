@@ -61,12 +61,12 @@ class TablesService:
         session: Session,
         order_id: int,
         payments: Sequence[Payment],
-        tax_rate_basis_points: int = 0,
     ) -> int:
         """Charge the order through the regular sale path and return the sale id.
 
-        The sale (totals, tax, payment and stock rules) is the existing one; the order is only
-        closed after it is registered, so any failure leaves the order open and unchanged.
+        The sale (totals, IVA, payment and stock rules) is the existing one. The order is closed
+        inside the sale's own transaction, so a failure at any step leaves the sale unregistered
+        and the order open, and an order that was already charged cannot be charged again.
         """
         business_id = session.user.business_id
         order = self.tables.get_order(business_id, order_id)
@@ -74,8 +74,10 @@ class TablesService:
             order.sale_items(),
             sum(payment.amount_cents for payment in payments),
             tuple(payments),
-            tax_rate_basis_points,
         )
-        sale_id = self.sales.register(sale)
-        self.tables.close(business_id, order_id, sale_id)
-        return sale_id
+        return self.sales.register(
+            sale,
+            on_registered=lambda connection, sale_id: self.tables.close_in(
+                connection, business_id, order_id, sale_id
+            ),
+        )

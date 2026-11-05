@@ -78,7 +78,6 @@ class Env:
             session or self.owner,
             currency_symbol="$",
             enabled_payment_methods=("cash", "transfer"),
-            tax_rate_basis_points=0,
             payment_dialog_factory=self.dialog_factory,
             now=lambda: NOW,
             table_chooser=lambda _parent, free: self.chosen_table,
@@ -247,6 +246,45 @@ def test_charge_registers_one_sale_decrements_stock_and_frees_the_table(env):
     assert state == "success"
     assert text.startswith("Mesa 1 cobrada · Venta N.º ")
     assert order_id
+
+
+def test_total_shows_iva_included_for_mixed_rates_and_passes_it_to_the_dialog(env):
+    sandwich = env.products.add("S-1", "Sándwich", 115, 10, tax_rate_basis_points=1500)
+    bread = env.products.add("P-1", "Pan", 200, 10, tax_rate_basis_points=0)
+    widget = env.build()
+    widget.select_table(env.table_1.id)
+    widget.open_account()
+    assert not widget.total_note.isVisibleTo(widget)
+    order = env.service.get_order(env.owner, env.table_1.id)
+    env.service.add_product(env.owner, order.id, sandwich.id, 3)
+    env.service.add_product(env.owner, order.id, bread.id, 1)
+    widget.refresh()
+    env.dialog_payments = (Payment("cash", 600),)
+
+    # 3 x 115 at 15 % holds $0.45 of IVA; 1 x 200 at 0 % holds none; total $5.45.
+    assert widget.total_label.text() == "$5.45"
+    assert widget.total_note.text() == "IVA incluido $0.45"
+    assert widget.total_note.isVisibleTo(widget)
+
+    widget.charge_button.click()
+
+    assert env.dialog_calls[0]["total_cents"] == 545
+    assert env.dialog_calls[0]["total_note"] == "IVA incluido $0.45"
+    assert env.count("sales") == 1
+
+
+def test_total_without_iva_hides_the_note(env):
+    bread = env.products.add("P-1", "Pan", 200, 10, tax_rate_basis_points=0)
+    widget = env.build()
+    widget.select_table(env.table_1.id)
+    widget.open_account()
+    order = env.service.get_order(env.owner, env.table_1.id)
+    env.service.add_product(env.owner, order.id, bread.id, 1)
+    widget.refresh()
+
+    assert widget.total_label.text() == "$2.00"
+    assert widget.total_note.text() == ""
+    assert not widget.total_note.isVisibleTo(widget)
 
 
 def test_cancelled_payment_dialog_charges_nothing(env):

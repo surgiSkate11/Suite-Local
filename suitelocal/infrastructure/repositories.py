@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from suitelocal.domain.models import KEEP, Keep, Product, Sale, validate_sale
@@ -304,7 +305,11 @@ class SaleRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def register(self, sale: Sale) -> int:
+    def register(
+        self,
+        sale: Sale,
+        on_registered: Callable[[sqlite3.Connection, int], None] | None = None,
+    ) -> int:
         validate_sale(sale)
         with self.database.connect() as connection:
             # Take the write lock up front so concurrent sales cannot oversell.
@@ -386,6 +391,9 @@ class SaleRepository:
                         payment.reference.strip(),
                     ),
                 )
+            # Runs in the same transaction: if it raises, the whole sale rolls back.
+            if on_registered is not None:
+                on_registered(connection, sale_id)
         return sale_id
 
     def today_summary(self) -> tuple[int, int]:

@@ -26,6 +26,8 @@ class OrderLine:
     quantity: int
     unit_price_cents: int
     sent_quantity: int = 0
+    # Taken from the product when the line was first added; the price already includes it.
+    tax_rate_basis_points: int = 0
 
     @property
     def total_cents(self) -> int:
@@ -68,7 +70,13 @@ class OpenOrder:
 
     def sale_items(self) -> tuple[SaleItem, ...]:
         return tuple(
-            SaleItem(line.product_id, line.product_name, line.quantity, line.unit_price_cents)
+            SaleItem(
+                line.product_id,
+                line.product_name,
+                line.quantity,
+                line.unit_price_cents,
+                line.tax_rate_basis_points,
+            )
             for line in self.lines
         )
 
