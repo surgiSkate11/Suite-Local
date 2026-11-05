@@ -30,7 +30,8 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - [ ] T6 (S2) Reportes y exportación CSV — inline
 - [ ] T7a (S4, S12) Ticket interno imprimible para todos los regímenes (logo, datos del negocio, leyenda, número de nota de venta opcional) — después de T4a
 - [ ] T7b (S10, S12) Factura electrónica SRI, esquema offline (XML, clave de acceso, firma .p12, cola de envío, RIDE) — después de T7a; requiere aprobar dependencia de firma y revisión de riesgo
-- [ ] T8 (S5) Mesas y comandas, sin propinas — sesión 2 (01a1a4a2), worktree propio
+- [x] T8 (S5) Mesas y comandas, sin propinas — sesión 2 (01a1a4a2), worktree propio — sesión 2: db5a54e, 60a1106, 9d01dcf (revisión aprobada)
+- [x] T8i (S5, S10) Integrar mesas: esquema y migración, cobro sin lectura vieja, scope por negocio, CatalogService, entrada en el riel e ícono — worker + padre (commits siguientes; 548 tests x2)
 - [x] T9a (S1, S9) Sistema de temas claro/oscuro + estructura (barra lateral, encabezado, barra de estado) — gentle-ai-worker — (commits siguientes; 241 tests sin el WIP de T9b)
 - [x] T9b (S1, S8, S9) Pantalla de caja Atelier + Grafito + cobro (inline y diálogo para dividir) — worker + cierre inline — (commits siguientes; 309 tests)
 
@@ -64,3 +65,4 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - L26: El worker de T4b (mw3s9pq3-1-58wg) se cortó por el límite de uso a mitad de trabajo. Dejó listas las piezas de T4b-1 (con RED observado) y los tests de Inventario. El padre cerró T4b-1 inline: shell.py le pasaba a PosWidget el parámetro de IVA eliminado (16 errores de TypeError) y ahora le pasa nombre, umbral, separador, módulos y categorías. 473 tests, ruff y pyright en verde.
 - L27: Sesión 2 entregó el cobro atómico en feat/mesas, rebasada sobre dbe8fa2: db5a54e, 60a1106, 2a3afaf (docs) y 9d01dcf (fix: cobro en una sola transacción con IVA por línea, hook on_registered en SaleRepository.register, close_in con mesa abierta). 494 tests, ruff, pyright y GGA ok. Siguiente: integrar, revisión nativa de 9d01dcf (plata) y T8i.
 - L28: Revisión nativa de 9d01dcf (review-e9331378e54a6f31, en el worktree SuiteLocal-ui) aprobada con 6 avisos, que se resuelven en T8i: (a) order_lines.tax_rate_basis_points sin migración (tables_repository.py:46-47): ensure_tables_schema debe agregarla con ALTER si falta; (b) charge arma la venta con una lectura de la cuenta hecha antes de la transacción (application/tables.py:72-83): verificar dentro de on_registered que las líneas y el total no cambiaron, y si cambiaron rechazar con un mensaje en español; (c) falta un test de que close_in respeta el business_id.
+- L29: T8i hecha (worker mw43myfj-2-felv + padre). El padre agregó un test y el arreglo para que cobrar una mesa refresque el stock de la caja de mostrador (RED observado). 548 tests x2, ruff y pyright en cero. Se borró de Engram una nota basura del worker (id 37).
