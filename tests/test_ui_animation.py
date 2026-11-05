@@ -1,4 +1,5 @@
 import os
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -13,6 +14,16 @@ from suitelocal.infrastructure.repositories import ProductRepository, SaleReposi
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.ui.components import Toast, ToastHost
 from suitelocal.ui.shell import AppShell
+
+
+def wait_until(condition, timeout_ms: int = 5000) -> bool:
+    """Process events until ``condition()`` holds; True when it did before the timeout."""
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        QTest.qWait(10)
+    return bool(condition())
 
 
 @pytest.fixture(scope="module")
@@ -66,11 +77,18 @@ def test_toast_fades_in_and_out(qapp):
     toast = host.show_toast("Guardado")
     effect = toast.graphicsEffect()
     assert isinstance(effect, QGraphicsOpacityEffect)
-    QTest.qWait(30)
-    assert 0 < effect.opacity() <= 1
-    QTest.qWait(400)
+    # Record every opacity step instead of sampling at a fixed time: a loaded machine can
+    # delay the event loop, but it can never skip the fade-in values being emitted.
+    opacities: list[float] = []
+    effect.opacityChanged.connect(opacities.append)
 
-    assert [t for t in host.findChildren(Toast) if not t.isHidden()] == []
+    def hidden() -> bool:
+        return [t for t in host.findChildren(Toast) if not t.isHidden()] == []
+
+    assert wait_until(hidden)
+
+    assert any(0 < value <= 1 for value in opacities)
+    assert opacities[-1] == 0.0
 
 
 def test_fade_in_after_interrupted_fade_out_keeps_toast_visible(qapp):

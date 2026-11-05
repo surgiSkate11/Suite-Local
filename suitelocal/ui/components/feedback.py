@@ -3,6 +3,7 @@ from PySide6.QtCore import (
     QEvent,
     QObject,
     QPropertyAnimation,
+    QRect,
     QSize,
     Qt,
     QTimer,
@@ -172,6 +173,7 @@ class ToastHost(QWidget):
     MAX_VISIBLE = 3
     MARGIN = 24
     WIDTH = 360
+    KEEP_CLEAR_GAP = 12
 
     def __init__(self, parent: QWidget, duration_ms: int = 4000) -> None:
         super().__init__(parent)
@@ -217,12 +219,21 @@ class ToastHost(QWidget):
             return
         width = min(self.WIDTH, max(parent.width() - 2 * self.MARGIN, 0))
         height = self._layout.sizeHint().height()
-        self.setGeometry(
-            parent.width() - width - self.MARGIN,
-            parent.height() - height - self.MARGIN,
-            width,
-            height,
-        )
+        x = parent.width() - width - self.MARGIN
+        y = parent.height() - height - self.MARGIN
+        # Slide left of any panel that must stay reachable (e.g. the charge buttons).
+        for area in self._keep_clear_areas(parent):
+            if area.intersects(QRect(x, y, width, height)):
+                x = min(x, max(self.MARGIN, area.left() - self.KEEP_CLEAR_GAP - width))
+        self.setGeometry(x, y, width, height)
+
+    def _keep_clear_areas(self, parent: QWidget) -> list[QRect]:
+        areas: list[QRect] = []
+        for widget in parent.findChildren(QWidget):
+            if widget.property("toastKeepClear") is True and widget.isVisible():
+                origin = widget.mapTo(parent, widget.rect().topLeft())
+                areas.append(widget.rect().translated(origin))
+        return areas
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.parentWidget() and event.type() == QEvent.Type.Resize:
