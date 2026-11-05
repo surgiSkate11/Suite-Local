@@ -21,11 +21,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from suitelocal.application.catalog import CatalogService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
 from suitelocal.domain.models import Payment, Sale
 from suitelocal.domain.tables import OpenOrder, OrderLine, TableStatus
-from suitelocal.infrastructure.repositories import ProductRepository
 from suitelocal.ui.components import (
     Card,
     DangerButton,
@@ -241,9 +241,10 @@ class TablesWidget(QWidget):
     def __init__(
         self,
         service: TablesService,
-        products: ProductRepository,
+        catalog: CatalogService,
         session: Session,
         currency_symbol: str = "$",
+        decimal_separator: str = ",",
         enabled_payment_methods: tuple[str, ...] = ("cash", "transfer"),
         payment_dialog_factory: PaymentDialogFactory | None = None,
         now: Callable[[], datetime] = datetime.now,
@@ -253,9 +254,10 @@ class TablesWidget(QWidget):
     ) -> None:
         super().__init__(parent)
         self.service = service
-        self.products = products
+        self.catalog = catalog
         self.session = session
         self.currency_symbol = currency_symbol
+        self.decimal_separator = decimal_separator
         self.enabled_payment_methods = enabled_payment_methods or ("cash",)
         self.payment_dialog_factory: PaymentDialogFactory = payment_dialog_factory or PaymentDialog
         self.now = now
@@ -399,7 +401,7 @@ class TablesWidget(QWidget):
     def _card_detail(self, status: TableStatus, now: datetime) -> str:
         if status.order is None:
             return ""
-        amount = format_money(status.order.subtotal_cents, self.currency_symbol)
+        amount = self._money(status.order.subtotal_cents)
         return f"{amount} · {status.order.minutes_open(now)} min"
 
     def _selected_status(self) -> TableStatus | None:
@@ -430,7 +432,7 @@ class TablesWidget(QWidget):
         minutes = f"Abierta hace {self.order.minutes_open(self.now())} min"
         self.panel_subtitle.setText(" · ".join(part for part in (zone, minutes) if part))
         self._fill_lines(self.order)
-        self.total_label.setText(format_money(self._grand_total(self.order), self.currency_symbol))
+        self.total_label.setText(self._money(self._grand_total(self.order)))
         note = self._tax_note(self.order)
         self.total_note.setText(note)
         self.total_note.setVisible(bool(note))
@@ -444,8 +446,8 @@ class TablesWidget(QWidget):
             values = [
                 line.product_name,
                 str(line.quantity),
-                format_money(line.unit_price_cents, self.currency_symbol),
-                format_money(line.total_cents, self.currency_symbol),
+                self._money(line.unit_price_cents),
+                self._money(line.total_cents),
                 status,
             ]
             for column, value in enumerate(values):
@@ -492,13 +494,16 @@ class TablesWidget(QWidget):
     def _covering_sale(self, order: OpenOrder) -> Sale:
         return self._sale_for(order, (Payment("cash", _COVERS_ANY_TOTAL_CENTS),))
 
+    def _money(self, cents: int) -> str:
+        return format_money(cents, self.currency_symbol, self.decimal_separator)
+
     def _grand_total(self, order: OpenOrder) -> int:
         return self._covering_sale(order).total_cents if order.lines else 0
 
     def _tax_note(self, order: OpenOrder) -> str:
         """The IVA already inside the total, as the counter POS shows it; empty when none."""
         tax_cents = self._covering_sale(order).tax_cents if order.lines else 0
-        return f"IVA incluido {format_money(tax_cents, self.currency_symbol)}" if tax_cents else ""
+        return f"IVA incluido {self._money(tax_cents)}" if tax_cents else ""
 
     # -- selection and actions ------------------------------------------------------------
 
@@ -545,7 +550,7 @@ class TablesWidget(QWidget):
         text = self.search.text().strip()
         if not text:
             return
-        matches = self.products.find_active(text)
+        matches = self.catalog.search(self.session, text)
         if not matches:
             self.notification.emit(f"No hay productos que coincidan con «{text}».", "info")
             return
@@ -655,7 +660,7 @@ class TablesWidget(QWidget):
             self._fail("No se puede cobrar.", error)
             self.refresh()
             return
-        total = format_money(self._grand_total(order), self.currency_symbol)
+        total = self._money(self._grand_total(order))
         self.refresh()
         self.notification.emit(
             f"{status.table.name} cobrada · Venta N.º {sale_id} · Total {total}", "success"
@@ -671,6 +676,7 @@ class TablesWidget(QWidget):
         dialog = self.payment_dialog_factory(
             total_cents=self._grand_total(order),
             currency_symbol=self.currency_symbol,
+            decimal_separator=self.decimal_separator,
             enabled_methods=self.enabled_payment_methods,
             sale_label=table_name,
             total_note=self._tax_note(order),

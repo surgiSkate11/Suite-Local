@@ -7,12 +7,13 @@ import re
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt, Signal
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.cash_register import CashRegisterService
+from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
-from suitelocal.domain.models import Sale, SaleItem
+from suitelocal.domain.models import Payment, Sale, SaleItem
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
@@ -62,6 +63,18 @@ def destroy(window: AppShell) -> None:
 
 def nav_texts(shell) -> list[str]:
     return [shell.navigation.item(row).text() for row in range(shell.navigation.count())]
+
+
+def enable_tables(env) -> None:
+    database, _, owner = env
+    BusinessSettingsRepository(database).update_profile(
+        owner.business_id, enabled_modules=["mesas"]
+    )
+
+
+def cashier_of(env):
+    database, auth, owner = env
+    return auth.create_cashier(Session(owner), "cajero", "clave-segura-2", "clave-segura-2")
 
 
 def open_register(env, opening_cents=15_000):
@@ -306,4 +319,139 @@ def test_expanding_the_rail_restores_text(qapp, env):
     assert "Cerrar sesión" in texts
     assert "Caja cerrada" in texts
     assert nav_texts(window)[1] == "Panel principal"
+    destroy(window)
+
+
+def test_rail_shows_mesas_after_caja_when_the_module_is_on_for_the_owner(qapp, env):
+    enable_tables(env)
+    window = build_shell(*env)
+
+    assert nav_texts(window) == [
+        "Operación",
+        "Panel principal",
+        "Caja",
+        "Mesas",
+        "Inventario",
+        "Negocio",
+        "Equipo",
+        "Ajustes",
+    ]
+    destroy(window)
+
+
+def test_rail_shows_mesas_to_a_cashier_when_the_module_is_on(qapp, env):
+    enable_tables(env)
+    window = build_shell(env[0], env[1], cashier_of(env))
+
+    assert nav_texts(window) == ["Operación", "Panel principal", "Caja", "Mesas"]
+    destroy(window)
+
+
+def test_rail_hides_mesas_when_the_module_is_off_for_owner_and_cashier(qapp, env, shell):
+    assert "Mesas" not in nav_texts(shell)
+    assert shell.tables_widget is None
+    window = build_shell(env[0], env[1], cashier_of(env))
+
+    assert "Mesas" not in nav_texts(window)
+    destroy(window)
+
+
+def press_each_shortcut_and_collect(window, count: int) -> list[str]:
+    window.show()
+    window.activateWindow()
+    QTest.qWaitForWindowActive(window)
+    opened: list[str] = []
+    for number in range(1, count + 1):
+        QTest.keySequence(window, f"Ctrl+{number}")
+        current = window.navigation.currentItem()
+        assert current is not None
+        assert window.pages.currentIndex() == current.data(Qt.ItemDataRole.UserRole)
+        opened.append(current.text())
+    return opened
+
+
+def test_ctrl_number_follows_the_visible_order_with_mesas_for_the_owner(qapp, env):
+    enable_tables(env)
+    window = build_shell(*env)
+
+    assert press_each_shortcut_and_collect(window, 6) == [
+        "Panel principal",
+        "Caja",
+        "Mesas",
+        "Inventario",
+        "Equipo",
+        "Ajustes",
+    ]
+    destroy(window)
+
+
+def test_ctrl_number_follows_the_visible_order_with_mesas_for_a_cashier(qapp, env):
+    enable_tables(env)
+    window = build_shell(env[0], env[1], cashier_of(env))
+
+    assert press_each_shortcut_and_collect(window, 3) == ["Panel principal", "Caja", "Mesas"]
+    destroy(window)
+
+
+class ChargeDialog:
+    """Stands in for the modal payment dialog so the test never blocks on ``exec``."""
+
+    def __init__(self, payments: tuple[Payment, ...]) -> None:
+        self.payments = payments
+
+    def exec(self):
+        return QDialog.DialogCode.Accepted
+
+    def deleteLater(self) -> None:
+        pass
+
+
+def test_a_table_charge_refreshes_the_status_bar_and_toasts(qapp, env):
+    enable_tables(env)
+    open_register(env, 15_000)
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    assert status_cash_text(window) == "Base de caja $ 150,00 · Efectivo esperado $ 150,00"
+    session = Session(owner)
+    service = TablesService(database)
+    product = ProductRepository(database).add("A-1", "Arroz", 250, 100)
+    table = service.create_table(session, "Mesa 1")
+    order = service.open_order(session, table.id)
+    service.add_product(session, order.id, product.id, 2)
+    assert window.tables_widget is not None
+    window.tables_widget.refresh()
+    window.tables_widget.payment_dialog_factory = lambda **_: ChargeDialog((Payment("cash", 500),))
+    toasts: list[tuple[str, str]] = []
+    window.toasts.show_toast = lambda message, state: toasts.append((message, state))  # type: ignore[method-assign]
+    window.tables_widget.select_table(table.id)
+
+    window.tables_widget.charge_order()
+
+    assert status_cash_text(window) == "Base de caja $ 150,00 · Efectivo esperado $ 155,00"
+    assert window.register_expected.text() == "$ 155,00"
+    assert [state for _, state in toasts] == ["success"]
+    assert "Mesa 1 cobrada" in toasts[0][0]
+    destroy(window)
+
+
+def test_a_table_charge_refreshes_the_counter_pos_stock(qapp, env):
+    enable_tables(env)
+    database, auth, owner = env
+    product = ProductRepository(database).add("A-1", "Arroz", 250, 10)
+    window = build_shell(database, auth, owner)
+    assert window.pos_widget.product_list.card_at(0).meta_label.text() == "10 en stock"
+    session = Session(owner)
+    service = TablesService(database)
+    table = service.create_table(session, "Mesa 1")
+    order = service.open_order(session, table.id)
+    service.add_product(session, order.id, product.id, 2)
+    assert window.tables_widget is not None
+    window.tables_widget.refresh()
+    window.tables_widget.payment_dialog_factory = lambda **_: ChargeDialog((Payment("cash", 500),))
+    window.toasts.show_toast = lambda message, state: None  # type: ignore[method-assign]
+    window.tables_widget.select_table(table.id)
+
+    window.tables_widget.charge_order()
+
+    assert window.pos_widget.product_list.card_at(0).meta_label.text() == "8 en stock"
     destroy(window)

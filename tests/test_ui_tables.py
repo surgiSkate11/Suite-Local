@@ -12,6 +12,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
 
 from suitelocal.application.auth import AuthService
+from suitelocal.application.catalog import CatalogService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
 from suitelocal.domain.models import Payment
@@ -71,12 +72,18 @@ class Env:
         self.dialog_calls.append(kwargs)
         return FakeDialog(self.dialog_payments, self.dialog_accepted)
 
-    def build(self, session: Session | None = None) -> TablesWidget:
+    def build(
+        self,
+        session: Session | None = None,
+        catalog: CatalogService | None = None,
+        decimal_separator: str = ",",
+    ) -> TablesWidget:
         widget = TablesWidget(
             self.service,
-            self.products,
+            catalog or CatalogService(self.products),
             session or self.owner,
             currency_symbol="$",
+            decimal_separator=decimal_separator,
             enabled_payment_methods=("cash", "transfer"),
             payment_dialog_factory=self.dialog_factory,
             now=lambda: NOW,
@@ -427,3 +434,42 @@ def test_tables_ui_has_no_hex_colors_or_tip_strings():
 
     assert not re.search(r"[\"'\s:]#[0-9A-Fa-f]{6}\b", text)
     assert not re.search(r"propina|\btips?\b|gratuity", text, re.IGNORECASE)
+
+
+def test_the_widget_looks_products_up_through_the_catalog_service_with_its_session(env):
+    searches: list[tuple[Session, str]] = []
+
+    class SpyCatalog(CatalogService):
+        def search(self, session, text):
+            searches.append((session, text))
+            return super().search(session, text)
+
+    widget = env.build(env.cashier, catalog=SpyCatalog(env.products))
+    widget.select_table(env.table_1.id)
+    widget.open_account()
+
+    type_and_enter(widget, "caf")
+
+    assert searches == [(env.cashier, "caf")]
+    order = env.service.get_order(env.cashier, env.table_1.id)
+    assert order is not None and [line.product_name for line in order.lines] == ["Café"]
+
+
+def test_the_ui_module_does_not_reach_into_the_product_repository():
+    import suitelocal.ui.tables as module
+
+    assert not hasattr(module, "ProductRepository")
+
+
+def test_amounts_and_the_payment_dialog_use_the_business_decimal_separator(env):
+    widget = env.build(decimal_separator=".")
+    open_with_coffee(env, widget, quantity=2)
+    widget.select_table(env.table_1.id)
+
+    assert widget.total_label.text() == "$ 3.00"
+    assert line_texts(widget) == [("Café", "2", "$ 1.50", "$ 3.00", "Pendiente")]
+    assert card(widget, env.table_1.id).detail_text.startswith("$ 3.00")
+
+    env.dialog_payments = (Payment("cash", 300),)
+    widget.charge_order()
+    assert env.dialog_calls[0]["decimal_separator"] == "."

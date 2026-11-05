@@ -35,6 +35,7 @@ ICONS: dict[str, str] = {
         "m8-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8 10v-2a4 4 0 0 0-3-3.87"
         'M16 3.13a4 4 0 0 1 0 7.75"/>'
     ),
+    "table": '<rect x="3" y="6" width="18" height="4" rx="1"/><path d="M6 10v9M18 10v9"/>',
     "logout": '<path d="M10 17l5-5-5-5M15 12H3M21 19V5a2 2 0 0 0-2-2h-6"/>',
     "moon": '<path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10Z"/>',
     "sun": (

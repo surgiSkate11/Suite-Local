@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.cash_register import CashRegisterService
+from suitelocal.application.catalog import CatalogService
 from suitelocal.application.categories import CategoryService
+from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import (
@@ -35,6 +37,7 @@ from suitelocal.ui.components import ElidedLabel, ToastHost
 from suitelocal.ui.dashboard import DashboardWidget
 from suitelocal.ui.inventory import InventoryWidget
 from suitelocal.ui.pos import PosWidget, format_money
+from suitelocal.ui.tables import TablesWidget
 from suitelocal.ui.theme.icons import icon
 from suitelocal.ui.theme.manager import current_tokens, set_theme, theme_manager
 
@@ -123,24 +126,40 @@ class AppShell(QMainWindow):
         self.pages = QStackedWidget()
         self._add_page(self.dashboard)
         self._add_page(self.pos_widget)
-        # Page order is the rail order, so Ctrl+1..N follows what the user sees.
+        # Pages are added in rail order, and Ctrl+1..N picks the Nth rail entry.
         operation = [("Panel principal", 0, "dashboard"), ("Caja", 1, "cash")]
         groups = [("Operación", operation)]
+        self.tables_widget: TablesWidget | None = None
+        if "mesas" in business.enabled_modules:
+            self.tables_widget = TablesWidget(
+                TablesService(database),
+                CatalogService(products),
+                session,
+                currency_symbol=business.currency_symbol,
+                decimal_separator=business.decimal_separator,
+                enabled_payment_methods=tuple(business.enabled_payment_methods),
+            )
+            operation.append(("Mesas", self._add_page(self.tables_widget), "table"))
         if session.is_owner:
             inventory = InventoryWidget(products, session)
             inventory.notification.connect(self._show_toast)
-            self._add_page(inventory)
+            inventory_index = self._add_page(inventory)
             from suitelocal.ui.settings import SettingsWidget
             from suitelocal.ui.users import UsersWidget
 
             users = UsersWidget(auth, session)
             users.notification.connect(self._show_toast)
-            self._add_page(users)
+            users_index = self._add_page(users)
             settings_page = SettingsWidget(settings, session.user.business_id, database)
             settings_page.notification.connect(self._show_toast)
-            self._add_page(settings_page)
-            operation.append(("Inventario", 2, "box"))
-            groups.append(("Negocio", [("Equipo", 3, "users"), ("Ajustes", 4, "settings")]))
+            settings_index = self._add_page(settings_page)
+            operation.append(("Inventario", inventory_index, "box"))
+            groups.append(
+                (
+                    "Negocio",
+                    [("Equipo", users_index, "users"), ("Ajustes", settings_index, "settings")],
+                )
+            )
 
         navigation = QListWidget()
         self.navigation = navigation
@@ -179,7 +198,7 @@ class AppShell(QMainWindow):
         navigation.currentRowChanged.connect(select_page)
         for number in range(1, page_count + 1):
             page_shortcut = QShortcut(QKeySequence(f"Ctrl+{number}"), self)
-            page_shortcut.activated.connect(lambda index=number - 1: self.show_page(index))
+            page_shortcut.activated.connect(lambda position=number - 1: self._show_entry(position))
         navigation.setCurrentRow(1)
         self.pages.currentChanged.connect(self._focus_page)
         self._focus_page(self.pages.currentIndex())
@@ -242,6 +261,8 @@ class AppShell(QMainWindow):
         self.setCentralWidget(container)
         self.toasts = ToastHost(container)
         self.pos_widget.notification.connect(self._show_toast)
+        if self.tables_widget is not None:
+            self.tables_widget.notification.connect(self._show_toast)
         self.top_date = date
         self.top_account = account
         self._sidebar_collapsed = False
@@ -250,6 +271,11 @@ class AppShell(QMainWindow):
         self._set_sidebar_collapsed(self.width() < COLLAPSE_BELOW_WIDTH)
         self.pos_widget.sale_registered.connect(self.dashboard.refresh)
         self.pos_widget.sale_registered.connect(self.refresh_register)
+        if self.tables_widget is not None:
+            self.tables_widget.sale_registered.connect(self.dashboard.refresh)
+            self.tables_widget.sale_registered.connect(self.refresh_register)
+            # A table charge lowers stock, so the counter catalog must not keep stale counts.
+            self.tables_widget.sale_registered.connect(self.pos_widget.refresh_products)
         self.pages.currentChanged.connect(self._refresh_register_on_page_change)
         self.dashboard.quick_action.clicked.connect(lambda: self.pages.setCurrentIndex(1))
         theme_manager().theme_changed.connect(self._apply_theme)
@@ -458,6 +484,16 @@ class AppShell(QMainWindow):
                 self.navigation.setCurrentRow(row)
                 return
 
+    def _show_entry(self, position: int) -> None:
+        """Select the ``position``-th page entry of the rail, counting from zero."""
+        rows = [
+            row
+            for row in range(self.navigation.count())
+            if isinstance(self.navigation.item(row).data(Qt.ItemDataRole.UserRole), int)
+        ]
+        if 0 <= position < len(rows):
+            self.navigation.setCurrentRow(rows[position])
+
     def _focus_search(self) -> None:
         if self.pages.currentIndex() == 1:
             self.pos_widget.search_input.setFocus(Qt.FocusReason.ShortcutFocusReason)
@@ -472,7 +508,8 @@ class AppShell(QMainWindow):
         self.logout_requested.emit()
         self.close()
 
-    def _add_page(self, page: QWidget) -> None:
+    def _add_page(self, page: QWidget) -> int:
+        """Add a page to the stack and return its index."""
         page.setObjectName("pageContent")
         page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         scroll = QScrollArea()
@@ -483,7 +520,7 @@ class AppShell(QMainWindow):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidget(page)
-        self.pages.addWidget(scroll)
+        return self.pages.addWidget(scroll)
 
     def _focus_page(self, index: int) -> None:
         if index == 1:

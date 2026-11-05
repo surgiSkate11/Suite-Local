@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from suitelocal.ui.theme.icons import ICONS, svg_markup
 from suitelocal.ui.theme.qss import build_stylesheet
 from suitelocal.ui.theme.tokens import DARK_TOKENS, LIGHT_TOKENS, TOKENS
 
@@ -137,3 +138,12 @@ def test_checked_checkbox_check_mark_follows_on_brand(tokens):
     svg = Path(match.group(1)).read_text(encoding="utf-8")
     assert f'stroke="{tokens.on_brand}"' in svg
     assert "m5 12 4 4L19 6" in svg
+
+
+def test_table_icon_is_a_tabletop_with_two_legs_drawn_in_the_requested_color():
+    markup = svg_markup("table", "#102030", 18)
+
+    assert "table" in ICONS
+    assert markup.count("<rect") == 1
+    assert 'stroke="#102030"' in markup
+    assert "M6 10v9M18 10v9" in markup
