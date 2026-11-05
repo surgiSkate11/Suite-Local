@@ -16,11 +16,12 @@ Branch `feat/mesas` from `feat/multinegocio` da20a1d, worktree `C:\Users\daybu\D
 
 ## Tasks
 
-- [x] T1 S1-S3, S5, S6 — domain + application + tables_repository; tests/test_tables.py — worker — commit: (this commit)
-- [ ] T2 S4, S6 — TablesWidget; tests/test_ui_tables.py — worker — commit:
+- [x] T1 S1-S3, S5, S6 — domain + application + tables_repository; tests/test_tables.py — worker — commit: 4613ecc
+- [x] T2 S4, S6 — TablesWidget; tests/test_ui_tables.py — worker — commit: (this commit)
 - [ ] T3 S8 — full checks, send commit ids to 01a1a49b — inline — commit: n/a
 
 ## Log
 
 - L1 (peer 01a1a49b, relaying the user's T8 assignment; full message): New task for you from the user (Edwin): T8 "Mesas y comandas" for cafés/restaurants, WITHOUT tips. Base feat/multinegocio da20a1d, branch feat/mesas. Scope, persistence, UI, tests, allowed files and done criteria as quoted in S1-S8.
 - L2 User confirmed in this session: "Sí, hacela".
+- L3 T1 done 4613ecc. Worker flagged: charge() registers the sale and closes the order in two transactions (possible double charge under concurrency; fix needs repositories.py, peer-owned); charge does not require an open cash session.
