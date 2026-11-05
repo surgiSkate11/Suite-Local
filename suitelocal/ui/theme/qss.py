@@ -467,7 +467,7 @@ def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
     }}
     #checkoutSummary QLabel {{ color: {tokens.hero_muted}; font-size: 12px; background: transparent; }}
     #checkoutSummary #checkoutCaption {{ font-weight: 600; }}
-    #checkoutSummary #totalLabel {{ color: {tokens.hero_text}; font-size: 30px; font-weight: 300; }}
+    #checkoutSummary #totalLabel {{ color: {tokens.hero_text}; font-size: 40px; font-weight: 300; }}
     #checkoutDetail {{ color: {tokens.text_500}; font-size: 11px; }}
     #paymentStatus {{ border-radius: {tokens.radius_control}px; padding: 8px 10px; font-size: 12px; }}
     #paymentStatus[state="info"] {{ color: {tokens.info}; background: {tokens.info_background}; }}
@@ -611,4 +611,198 @@ def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
     }}
     #changeLabel {{ color: {tokens.success}; font-size: 13px; font-weight: 700; }}
     #changeValue {{ color: {tokens.success_strong}; font-size: 30px; font-weight: 600; }}
+    #posHeader QLabel[role="display"] {{ font-size: 28px; }}
+    #kpiTile {{
+        background: {tokens.surface};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_pad}px;
+    }}
+    #kpiTile QLabel {{ background: transparent; }}
+    #kpiTileLabel {{ color: {tokens.text_500}; font-size: 11px; }}
+    #kpiTileValue {{ color: {tokens.text_900}; font-size: 16px; font-weight: 600; }}
+    #scanBar {{
+        background: {tokens.surface};
+        border: 2px solid {tokens.brand_500};
+        border-radius: 16px;
+    }}
+    #scanBar QLabel {{ background: transparent; }}
+    #scanInput {{
+        background: transparent;
+        border: 0;
+        padding: 0;
+        min-height: 0;
+        font-family: "Cascadia Mono", "Consolas", monospace;
+        font-size: 19px;
+    }}
+    #scanInput:focus {{ border: 0; padding: 0; }}
+    #scanInput[empty="true"] {{ font-family: "Inter", "Segoe UI", sans-serif; font-size: 16px; }}
+    #scanHint {{
+        color: {tokens.text_500};
+        font-size: 12px;
+        border-left: 1px solid {tokens.border};
+        padding-left: 14px;
+    }}
+    #readerStatus {{
+        color: {tokens.success};
+        background: {tokens.success_background};
+        border-radius: 12px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QPushButton#quickKey {{
+        background: {tokens.surface};
+        color: {tokens.text_900};
+        border: 1px solid {tokens.border};
+        border-radius: 12px;
+        min-height: 52px;
+        max-height: 52px;
+        padding: 0;
+        text-align: left;
+    }}
+    QPushButton#quickKey:hover {{ border-color: {tokens.border_strong}; background: {tokens.mist}; }}
+    QPushButton#quickKey:focus {{ border: 1px solid {tokens.focus}; padding: 0; }}
+    QPushButton#quickKey:disabled {{ background: {tokens.mist}; }}
+    #quickKey QLabel {{ background: transparent; }}
+    #quickName {{ font-size: 13px; font-weight: 600; }}
+    #quickPrice {{ color: {tokens.text_500}; font-size: 11px; }}
+    #quickKey:disabled #quickName, #quickKey:disabled #quickPrice {{ color: {tokens.text_400}; }}
+    #productGrid, #productGridViewport, #productGridHost {{ background: transparent; border: 0; }}
+    #productOverflow {{ color: {tokens.text_500}; font-size: 12px; }}
+    QPushButton#productCard {{
+        background: {tokens.surface};
+        color: {tokens.text_900};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_card}px;
+        /* QSS min/max-height override setFixedHeight(); keep in sync with ProductCard.HEIGHT. */
+        min-height: 176px;
+        max-height: 176px;
+        padding: 0;
+        text-align: left;
+    }}
+    QPushButton#productCard:hover {{ border-color: {tokens.border_strong}; }}
+    QPushButton#productCard[current="true"] {{ background: {tokens.mist}; border-color: {tokens.border_strong}; }}
+    QPushButton#productCard[inCart="true"] {{ border: 1px solid {tokens.brand_500}; }}
+    QPushButton#productCard:focus {{ border: 1px solid {tokens.focus}; padding: 0; }}
+    #productCard QLabel {{ background: transparent; }}
+    #productName {{ font-size: 13px; font-weight: 600; }}
+    #productMeta {{ color: {tokens.text_500}; font-size: 12px; }}
+    #productPrice {{ font-size: 16px; font-weight: 700; }}
+    #productBadge {{
+        background: {tokens.sunken};
+        color: {tokens.brand_500};
+        border-radius: 9px;
+        font-weight: 700;
+    }}
+    #productBadge[inCart="true"] {{ background: {tokens.brand_500}; color: {tokens.on_brand}; }}
+    #productTag {{
+        border-radius: 10px;
+        padding: 3px 9px;
+        font-size: 11px;
+        font-weight: 700;
+        color: {tokens.warning};
+        background: {tokens.warning_background};
+    }}
+    #productTag[state="out"] {{ color: {tokens.danger}; background: {tokens.danger_background}; }}
+    QLabel#productArt {{
+        color: {tokens.art_ink};
+        border-radius: 12px;
+        font-size: 22px;
+        font-weight: 700;
+    }}
+    QLabel#productArt[size="thumb"] {{ border-radius: 10px; font-size: 12px; }}
+    QLabel#productArt[tint="1"] {{ background: {tokens.art_1}; }}
+    QLabel#productArt[tint="2"] {{ background: {tokens.art_2}; }}
+    QLabel#productArt[tint="3"] {{ background: {tokens.art_3}; }}
+    QLabel#productArt[tint="4"] {{ background: {tokens.art_4}; }}
+    QLabel#productArt[tint="5"] {{ background: {tokens.art_5}; }}
+    #saleTitle {{ font-size: 21px; }}
+    #customerLabel, #ticketEmpty {{ color: {tokens.text_500}; font-size: 12px; }}
+    #ticketLines, #ticketLinesViewport, #ticketLinesHost {{ background: transparent; border: 0; }}
+    #ticketLine {{
+        background: transparent;
+        border: 0;
+        border-bottom: 1px solid {tokens.border};
+        border-left: 2px solid transparent;
+    }}
+    #ticketLine[highlighted="true"] {{
+        background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0,
+                                    stop: 0 {tokens.brand_100}, stop: 1 {tokens.surface});
+        border-left: 2px solid {tokens.brand_500};
+    }}
+    #ticketLine QLabel {{ background: transparent; }}
+    #lineName {{ font-size: 13px; font-weight: 600; }}
+    #lineTotal {{ font-size: 14px; font-weight: 700; }}
+    #lineSub {{ color: {tokens.text_500}; font-size: 12px; }}
+    #stepper {{ background: {tokens.sunken}; border: 0; border-radius: 8px; }}
+    QPushButton#stepButton {{
+        background: transparent;
+        color: {tokens.text_700};
+        border: 0;
+        border-radius: 6px;
+        min-height: 0;
+        padding: 0;
+        font-size: 15px;
+    }}
+    QPushButton#stepButton:hover {{ background: {tokens.surface}; }}
+    #stepQty {{ font-size: 12px; font-weight: 700; background: transparent; }}
+    #heroCaption {{ font-size: 11px; font-weight: 600; }}
+    #recvBox {{
+        background: {tokens.mist};
+        border: 1px solid {tokens.border_strong};
+        border-radius: {tokens.radius_pad}px;
+    }}
+    #recvBox QLabel {{ background: transparent; }}
+    #recvCaption {{ color: {tokens.text_500}; font-size: 11px; font-weight: 600; }}
+    #recvInput {{
+        background: transparent;
+        border: 0;
+        padding: 0;
+        min-height: 0;
+        font-size: 20px;
+        font-weight: 500;
+    }}
+    #recvInput:focus {{ border: 0; padding: 0; }}
+    #inlineChange {{
+        background: {tokens.success_background};
+        border: 1px solid {tokens.success_border};
+        border-radius: {tokens.radius_pad}px;
+    }}
+    #inlineChange QLabel {{ background: transparent; }}
+    #inlineChangeCaption {{ color: {tokens.success}; font-size: 11px; font-weight: 600; }}
+    #inlineChangeValue {{ color: {tokens.success_strong}; font-size: 20px; font-weight: 700; }}
+    QPushButton#billChip {{
+        background: {tokens.surface};
+        color: {tokens.text_700};
+        border: 1px solid {tokens.border};
+        border-radius: 10px;
+        min-height: 34px;
+        max-height: 34px;
+        padding: 0;
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QPushButton#billChip:hover {{ background: {tokens.mist}; }}
+    QPushButton#billChip[selected="true"] {{
+        border-color: {tokens.brand_500};
+        color: {tokens.brand_500};
+        background: {tokens.brand_100};
+    }}
+    QPushButton#billChip:focus {{ border: 1px solid {tokens.focus}; padding: 0; }}
+    #referenceEdit {{ min-height: 40px; }}
+    #ticketPanel #inlineMessage {{ font-size: 12px; padding: 6px 10px; }}
+    QPushButton#chargeButton {{ text-align: left; padding: 0 20px; }}
+    QPushButton#chargeButton:focus {{ padding: 0 18px; border: 2px solid {tokens.focus}; }}
+    #chargeButton QLabel {{ background: transparent; color: {tokens.on_champagne}; font-size: 17px; font-weight: 700; }}
+    #chargeButton QLabel[role="kbd"] {{
+        background: rgba(26,20,7,0.08);
+        border: 1px solid rgba(26,20,7,0.2);
+        border-bottom-width: 2px;
+        color: {tokens.on_champagne};
+        font-size: 11px;
+        font-weight: 400;
+    }}
+    #chargeButton:disabled QLabel {{ color: {tokens.text_400}; }}
+    QPushButton#splitButton {{ min-height: 36px; font-size: 12px; font-weight: 500; }}
+    #splitButton QLabel {{ background: transparent; }}
     """

@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 
 
 class StatusBadge(QLabel):
@@ -16,3 +16,5 @@ class KeyHint(QLabel):
         super().__init__(text, parent)
         self.setProperty("role", "kbd")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # A key cap keeps its own size; layouts must not stretch it to the row height.
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)

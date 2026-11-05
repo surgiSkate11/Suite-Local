@@ -27,7 +27,9 @@ from suitelocal.ui.components.overlay import (
     build_confirmation,
     confirm_action,
 )
+from suitelocal.ui.components.product import ProductCard, ProductGrid
 from suitelocal.ui.components.table import DataTable
+from suitelocal.ui.components.ticket import TicketLine
 
 __all__ = [
     "AppDialog",
@@ -41,6 +43,8 @@ __all__ = [
     "KeyHint",
     "KpiCard",
     "PrimaryButton",
+    "ProductCard",
+    "ProductGrid",
     "SearchField",
     "SecondaryButton",
     "SegmentedControl",
@@ -49,6 +53,7 @@ __all__ = [
     "SwitchButton",
     "Sidebar",
     "TextField",
+    "TicketLine",
     "Topbar",
     "Toast",
     "ToastHost",
