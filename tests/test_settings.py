@@ -40,12 +40,12 @@ def test_business_settings_validate_and_store_tax_rate(tmp_path):
         ).lastrowid
     repository = BusinessSettingsRepository(database)
 
-    repository.update(business_id, "Tienda Sol", "$", 3, ("cash",), "19,5")
+    repository.update(business_id, "Tienda Sol", "$", 3, ("cash",), "5")
 
-    assert repository.get(business_id).tax_rate_basis_points == 1950
+    assert repository.get(business_id).tax_rate_basis_points == 500
 
 
-@pytest.mark.parametrize("value", ["-1", "100,01", "19,999", "no válido"])
+@pytest.mark.parametrize("value", ["-1", "100,01", "19,999", "no válido", "19,5", "12"])
 def test_business_settings_reject_invalid_tax_rate(tmp_path, value):
     database = Database(tmp_path / "settings-invalid-tax.db")
     database.initialize()

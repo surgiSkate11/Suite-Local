@@ -227,8 +227,8 @@ def test_register_card_shows_exact_base_and_expected_cash(qapp, env):
     window = build_shell(database, auth, owner)
 
     assert re.fullmatch(r"Caja abierta · \d{1,2}:\d{2} [ap]\. m\.", window.register_status.text())
-    assert window.register_base.text() == "$150.00"
-    assert window.register_expected.text() == "$155.00"
+    assert window.register_base.text() == "$ 150,00"
+    assert window.register_expected.text() == "$ 155,00"
     assert not window.register_base_row.isHidden()
     assert not window.register_expected_row.isHidden()
     destroy(window)
@@ -246,14 +246,14 @@ def test_status_bar_shows_cash_and_refreshes_after_each_sale(qapp, env):
     open_register(env, 15_000)
     database, auth, owner = env
     window = build_shell(database, auth, owner)
-    assert status_cash_text(window) == "Base de caja $150.00 · Efectivo esperado $150.00"
-    assert window.register_expected.text() == "$150.00"
+    assert status_cash_text(window) == "Base de caja $ 150,00 · Efectivo esperado $ 150,00"
+    assert window.register_expected.text() == "$ 150,00"
 
     register_cash_sale(env)
     window.pos_widget.sale_registered.emit()
 
-    assert status_cash_text(window) == "Base de caja $150.00 · Efectivo esperado $155.00"
-    assert window.register_expected.text() == "$155.00"
+    assert status_cash_text(window) == "Base de caja $ 150,00 · Efectivo esperado $ 155,00"
+    assert window.register_expected.text() == "$ 155,00"
     destroy(window)
 
 
@@ -264,7 +264,7 @@ def test_register_card_follows_opening_and_closing_when_refreshed(qapp, env, she
     shell.refresh_register()
 
     assert shell.register_status.text().startswith("Caja abierta · ")
-    assert shell.register_base.text() == "$20.00"
+    assert shell.register_base.text() == "$ 20,00"
     CashRegisterService(env[0]).close(Session(env[2]), 2_000)
     shell.refresh_register()
     assert shell.register_status.text() == "Caja cerrada"

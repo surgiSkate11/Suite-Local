@@ -1,9 +1,43 @@
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from collections.abc import Iterable
+from decimal import Decimal, InvalidOperation
 
-from suitelocal.domain.business import BusinessSettings
+from suitelocal.domain.business import (
+    ADDRESS_MAX_LENGTH,
+    DEFAULT_BUSINESS_TYPE,
+    DEFAULT_TAX_REGIME,
+    PHONE_MAX_LENGTH,
+    RECEIPT_FOOTER_MAX_LENGTH,
+    BusinessSettings,
+    format_modules,
+    normalize_ruc,
+    normalize_text,
+    parse_modules,
+    validate_business_type,
+    validate_decimal_separator,
+    validate_ruc_for_regime,
+    validate_tax_regime,
+)
+from suitelocal.domain.tax import (
+    DEFAULT_TAX_RATE_BASIS_POINTS,
+    TAX_RATES_BASIS_POINTS,
+    validate_tax_rate,
+)
 from suitelocal.infrastructure.database import Database
 
 DEFAULT_PAYMENT_METHODS = ("cash", "transfer")
+
+
+def _parse_tax_rate_percent(value: str | Decimal | int | float) -> int:
+    """Turn "15", "5,0" or 0 into basis points, accepting only the legal Ecuadorian rates."""
+    try:
+        rate = Decimal(str(value).strip().replace(",", "."))
+    except InvalidOperation as error:
+        raise ValueError("El IVA debe ser un porcentaje válido.") from error
+    # Compare as Decimal so odd inputs such as "1e999999999" never become a huge int.
+    for allowed in TAX_RATES_BASIS_POINTS:
+        if rate.is_finite() and rate * 100 == allowed:
+            return validate_tax_rate(allowed)
+    raise ValueError("El IVA debe ser 15 %, 5 % o 0 %.")
 
 
 class BusinessSettingsRepository:
@@ -15,7 +49,9 @@ class BusinessSettingsRepository:
             row = connection.execute(
                 """
                 SELECT b.name, s.currency_symbol, s.low_stock_threshold,
-                s.enabled_payment_methods, s.tax_rate_basis_points
+                s.enabled_payment_methods, s.tax_rate_basis_points, s.ruc, s.tax_regime,
+                s.business_type, s.enabled_modules, s.decimal_separator, s.address, s.phone,
+                s.receipt_footer
                 FROM businesses b
                 LEFT JOIN business_settings s ON s.business_id = b.id
                 WHERE b.id = ?
@@ -26,13 +62,22 @@ class BusinessSettingsRepository:
             raise ValueError("No se encontró la configuración del negocio.")
         configured_methods = row["enabled_payment_methods"] or ",".join(DEFAULT_PAYMENT_METHODS)
         methods = tuple(method for method in configured_methods.split(",") if method)
+        tax_rate = row["tax_rate_basis_points"]
         return BusinessSettings(
             business_id,
             row["name"],
             row["currency_symbol"] or "$",
             row["low_stock_threshold"] if row["low_stock_threshold"] is not None else 3,
             methods,
-            row["tax_rate_basis_points"] or 0,
+            DEFAULT_TAX_RATE_BASIS_POINTS if tax_rate is None else tax_rate,
+            row["ruc"] or "",
+            row["tax_regime"] or DEFAULT_TAX_REGIME,
+            row["business_type"] or DEFAULT_BUSINESS_TYPE,
+            parse_modules(row["enabled_modules"] or ""),
+            row["decimal_separator"] or ",",
+            row["address"] or "",
+            row["phone"] or "",
+            row["receipt_footer"] or "",
         )
 
     def update(
@@ -42,8 +87,12 @@ class BusinessSettingsRepository:
         currency_symbol: str,
         low_stock_threshold: int,
         enabled_payment_methods: tuple[str, ...],
-        tax_rate_percent: str | Decimal | int | float = 0,
+        tax_rate_percent: str | Decimal | int | float | None = None,
     ) -> BusinessSettings:
+        """Update the general settings.
+
+        The IVA rate is the default for NEW products only and keeps its value when omitted.
+        """
         name = name.strip()
         currency_symbol = currency_symbol.strip()
         if not name or not currency_symbol:
@@ -52,15 +101,10 @@ class BusinessSettingsRepository:
             raise ValueError("El umbral de reposición no puede ser negativo.")
         if "cash" not in enabled_payment_methods:
             raise ValueError("El efectivo debe estar habilitado.")
-        try:
-            rate = Decimal(str(tax_rate_percent).strip().replace(",", "."))
-        except InvalidOperation as error:
-            raise ValueError("El IVA debe ser un porcentaje válido.") from error
-        if not rate.is_finite() or rate < 0 or rate > 100:
-            raise ValueError("El IVA debe estar entre 0 y 100%.")
-        if rate != rate.quantize(Decimal("0.01")):
-            raise ValueError("El IVA admite como máximo dos decimales.")
-        tax_rate_basis_points = int((rate * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        if tax_rate_percent is None:
+            tax_rate_basis_points = self.get(business_id).tax_rate_basis_points
+        else:
+            tax_rate_basis_points = _parse_tax_rate_percent(tax_rate_percent)
         with self.database.connect() as connection:
             connection.execute("UPDATE businesses SET name = ? WHERE id = ?", (name, business_id))
             connection.execute(
@@ -83,6 +127,77 @@ class BusinessSettingsRepository:
                     low_stock_threshold,
                     ",".join(enabled_payment_methods),
                     tax_rate_basis_points,
+                ),
+            )
+        return self.get(business_id)
+
+    def update_profile(
+        self,
+        business_id: int,
+        *,
+        ruc: str | None = None,
+        tax_regime: str | None = None,
+        business_type: str | None = None,
+        enabled_modules: Iterable[str] | None = None,
+        decimal_separator: str | None = None,
+        address: str | None = None,
+        phone: str | None = None,
+        receipt_footer: str | None = None,
+    ) -> BusinessSettings:
+        """Change the given profile fields (None keeps the current value) in one transaction.
+
+        Everything is validated against the resulting profile before anything is written.
+        """
+        current = self.get(business_id)
+        new_ruc = current.ruc if ruc is None else normalize_ruc(ruc)
+        new_regime = current.tax_regime if tax_regime is None else validate_tax_regime(tax_regime)
+        validate_ruc_for_regime(new_ruc, new_regime)
+        new_type = current.business_type if business_type is None else business_type
+        validate_business_type(new_type)
+        new_modules = (
+            current.enabled_modules if enabled_modules is None else parse_modules(enabled_modules)
+        )
+        new_separator = (
+            current.decimal_separator
+            if decimal_separator is None
+            else validate_decimal_separator(decimal_separator)
+        )
+        new_address = (
+            current.address
+            if address is None
+            else normalize_text(address, "La dirección", ADDRESS_MAX_LENGTH)
+        )
+        new_phone = (
+            current.phone
+            if phone is None
+            else normalize_text(phone, "El teléfono", PHONE_MAX_LENGTH)
+        )
+        new_footer = (
+            current.receipt_footer
+            if receipt_footer is None
+            else normalize_text(receipt_footer, "El pie del comprobante", RECEIPT_FOOTER_MAX_LENGTH)
+        )
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO business_settings (business_id) VALUES (?)", (business_id,)
+            )
+            connection.execute(
+                """
+                UPDATE business_settings
+                SET ruc = ?, tax_regime = ?, business_type = ?, enabled_modules = ?,
+                    decimal_separator = ?, address = ?, phone = ?, receipt_footer = ?
+                WHERE business_id = ?
+                """,
+                (
+                    new_ruc,
+                    new_regime,
+                    new_type,
+                    format_modules(new_modules),
+                    new_separator,
+                    new_address,
+                    new_phone,
+                    new_footer,
+                    business_id,
                 ),
             )
         return self.get(business_id)

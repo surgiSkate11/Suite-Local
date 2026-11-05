@@ -1,7 +1,7 @@
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
 
 from suitelocal.domain.models import Payment, Product, Sale, SaleItem
+from suitelocal.domain.tax import split_tax_included, tax_breakdown
 
 
 @dataclass(slots=True)
@@ -13,11 +13,20 @@ class CartLine:
     def total_cents(self) -> int:
         return self.quantity * self.product.price_cents
 
+    @property
+    def base_cents(self) -> int:
+        return split_tax_included(self.total_cents, self.product.tax_rate_basis_points)[0]
+
+    @property
+    def tax_cents(self) -> int:
+        return split_tax_included(self.total_cents, self.product.tax_rate_basis_points)[1]
+
 
 class Cart:
-    def __init__(self, tax_rate_basis_points: int = 0) -> None:
+    """Prices already include IVA, so the total is the sum of the lines and nothing is added."""
+
+    def __init__(self) -> None:
         self._lines: dict[int, CartLine] = {}
-        self.tax_rate_basis_points = tax_rate_basis_points
 
     @property
     def lines(self) -> tuple[CartLine, ...]:
@@ -25,19 +34,29 @@ class Cart:
 
     @property
     def total_cents(self) -> int:
+        """What the customer pays."""
         return sum(line.total_cents for line in self._lines.values())
 
     @property
-    def tax_cents(self) -> int:
-        return int(
-            (
-                Decimal(self.total_cents) * Decimal(self.tax_rate_basis_points) / Decimal(10000)
-            ).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-        )
+    def grand_total_cents(self) -> int:
+        return self.total_cents
 
     @property
-    def grand_total_cents(self) -> int:
-        return self.total_cents + self.tax_cents
+    def subtotal_cents(self) -> int:
+        """Sum of the taxable bases."""
+        return sum(line.base_cents for line in self._lines.values())
+
+    @property
+    def tax_cents(self) -> int:
+        """IVA contained in the total."""
+        return sum(line.tax_cents for line in self._lines.values())
+
+    @property
+    def tax_breakdown(self) -> tuple[tuple[int, int, int], ...]:
+        """(rate in basis points, taxable base, IVA) per rate in use, highest rate first."""
+        return tax_breakdown(
+            (line.total_cents, line.product.tax_rate_basis_points) for line in self._lines.values()
+        )
 
     def add(self, product: Product) -> None:
         line = self._lines.get(product.id)
@@ -76,10 +95,10 @@ class Cart:
                     line.product.name,
                     line.quantity,
                     line.product.price_cents,
+                    line.product.tax_rate_basis_points,
                 )
                 for line in self._lines.values()
             ),
             payment_cents,
             payments,
-            self.tax_rate_basis_points,
         )

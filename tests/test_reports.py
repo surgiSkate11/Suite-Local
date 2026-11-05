@@ -30,19 +30,16 @@ class Seed:
         self.sales = SaleRepository(database)
 
     def sell(self, day: date, lines: list[tuple[str, int]], *payments: Payment, tax: int = 0):
-        """Register a sale and move it to local noon of the given day."""
+        """Register a sale (all items at the IVA rate `tax`) and move it to local noon."""
         items = tuple(
-            SaleItem(product.id, product.name, quantity, product.price_cents)
+            SaleItem(product.id, product.name, quantity, product.price_cents, tax)
             for code, quantity in lines
             for product in self.products.find_active(code)
             if product.code == code
         )
-        subtotal = sum(item.total_cents for item in items)
-        total = subtotal + round(subtotal * tax / 10000)
+        total = sum(item.total_cents for item in items)
         sale_payments = payments or (Payment("cash", total),)
-        sale_id = self.sales.register(
-            Sale(items, total, payments=sale_payments, tax_rate_basis_points=tax)
-        )
+        sale_id = self.sales.register(Sale(items, total, payments=sale_payments))
         local_noon = datetime(day.year, day.month, day.day, 12).astimezone(UTC)
         with self.database.connect() as connection:
             connection.execute(
@@ -75,13 +72,13 @@ def reports(database):
 
 def test_sales_by_day_totals_and_skips_empty_days(seed, reports):
     seed.sell(DAY_1, [("A-1", 2)])  # 500
-    seed.sell(DAY_1, [("B-1", 1)], tax=1000)  # 1000 + 100 tax
+    seed.sell(DAY_1, [("B-1", 1)], tax=1500)  # 1000 with 130 of IVA included
     seed.sell(DAY_3, [("C-1", 1)])  # 400
 
     rows = reports.sales_by_day(OWNER, DAY_1, DAY_3)
 
     assert rows == [
-        DaySales(DAY_1, 2, 1600, 100),
+        DaySales(DAY_1, 2, 1500, 130),
         DaySales(DAY_3, 1, 400, 0),
     ]
 

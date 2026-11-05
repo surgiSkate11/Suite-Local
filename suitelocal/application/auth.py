@@ -48,7 +48,7 @@ class AuthService:
                         business_id, currency_symbol, low_stock_threshold,
                         enabled_payment_methods, tax_rate_basis_points
                     )
-                VALUES (?, '$', 3, 'cash,transfer', 0)
+                VALUES (?, '$', 3, 'cash,transfer', 1500)
                 """,
                 (business_id,),
             )

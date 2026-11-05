@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from suitelocal.application.cart import Cart
 from suitelocal.domain.models import Payment, Product, SaleError
+from suitelocal.domain.money import format_usd
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.ui.components import (
     ElidedLabel,
@@ -36,7 +37,6 @@ from suitelocal.ui.components.product import repolish
 from suitelocal.ui.payment_dialog import (
     METHOD_LABELS,
     PaymentDialog,
-    format_money,
     parse_money,
     quick_bill_amounts,
 )
@@ -51,6 +51,13 @@ ICONS.setdefault(
 )
 
 PaymentDialogFactory = Callable[..., PaymentDialog]
+
+
+def format_money(cents: int, currency_symbol: str = "$", decimal_separator: str = ",") -> str:
+    """Format cents for the screen, e.g. "$ 1.234,56"; delegates to the Qt-free formatter."""
+    text = format_usd(cents, decimal_separator)
+    return text if currency_symbol == "$" else text.replace("$", currency_symbol, 1)
+
 
 QUICK_KEY_COUNT = 6
 TICKET_COLUMN_WIDTH = 440
@@ -127,7 +134,7 @@ class PosWidget(QWidget):
         sales: SaleRepository,
         enabled_payment_methods: tuple[str, ...] = ("cash", "transfer"),
         currency_symbol: str = "$",
-        tax_rate_basis_points: int = 0,
+        tax_rate_basis_points: int = 0,  # unused: every product carries its own IVA rate
         parent: QWidget | None = None,
         business_name: str = "",
         low_stock_threshold: int = 3,
@@ -143,8 +150,7 @@ class PosWidget(QWidget):
         self.last_print_ticket = False
         # Ticket printing arrives with T7; until then the primary action only charges.
         self.can_print_ticket = False
-        self.cart = Cart(tax_rate_basis_points)
-        self.tax_rate_basis_points = tax_rate_basis_points
+        self.cart = Cart()
         self.quick_key_delay_ms = 400
         self.ticket_lines: list[TicketLine] = []
         self._selected_id: int | None = None
@@ -804,11 +810,10 @@ class PosWidget(QWidget):
         self.ticket_empty.setVisible(not lines)
         self.total_label.setText(format_money(self.cart.grand_total_cents, self.currency_symbol))
         self.subtotal_label.setText(
-            f"Subtotal {format_money(self.cart.total_cents, self.currency_symbol)}"
+            f"Subtotal {format_money(self.cart.subtotal_cents, self.currency_symbol)}"
         )
         self.tax_label.setText(
-            f"IVA ({self.tax_rate_basis_points / 100:g}%) "
-            f"{format_money(self.cart.tax_cents, self.currency_symbol)}"
+            f"IVA incluido {format_money(self.cart.tax_cents, self.currency_symbol)}"
         )
         item_count = sum(line.quantity for line in lines)
         self.cart_count.setText(f"{item_count} artículo{'s' if item_count != 1 else ''}")
@@ -933,8 +938,8 @@ class PosWidget(QWidget):
             self.notification.emit("No se puede cobrar. Agrega al menos un producto.", "danger")
             return None
         note = (
-            f"Incluye IVA ({self.tax_rate_basis_points / 100:g}%)"
-            if self.tax_rate_basis_points
+            f"IVA incluido {format_money(self.cart.tax_cents, self.currency_symbol)}"
+            if self.cart.tax_cents
             else ""
         )
         dialog = self.payment_dialog_factory(

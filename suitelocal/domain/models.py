@@ -1,7 +1,22 @@
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from enum import Enum
+
+from suitelocal.domain.tax import (
+    DEFAULT_TAX_RATE_BASIS_POINTS,
+    TAX_RATES_BASIS_POINTS,
+    split_tax_included,
+    tax_breakdown,
+)
 
 PAYMENT_METHODS = ("cash", "transfer", "card")
+
+
+class Keep(Enum):
+    KEEP = "keep"
+
+
+# Passed to an update to say "leave this column as it is" (None would mean "clear it").
+KEEP = Keep.KEEP
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +33,10 @@ class Product:
     name: str
     price_cents: int
     stock: int
+    category_id: int | None = None
+    cost_cents: int | None = None
+    # The price is final (IVA included); this rate says how much of it is IVA.
+    tax_rate_basis_points: int = DEFAULT_TAX_RATE_BASIS_POINTS
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,10 +65,20 @@ class SaleItem:
     product_name: str
     quantity: int
     unit_price_cents: int
+    tax_rate_basis_points: int = 0
 
     @property
     def total_cents(self) -> int:
+        """What the customer pays for the line; the IVA is already inside."""
         return self.quantity * self.unit_price_cents
+
+    @property
+    def base_cents(self) -> int:
+        return split_tax_included(self.total_cents, self.tax_rate_basis_points)[0]
+
+    @property
+    def tax_cents(self) -> int:
+        return split_tax_included(self.total_cents, self.tax_rate_basis_points)[1]
 
 
 class SaleError(ValueError):
@@ -61,6 +90,8 @@ def validate_sale(sale: "Sale") -> None:
         raise SaleError("La venta debe tener al menos un producto.")
     if any(item.quantity <= 0 for item in sale.items):
         raise SaleError("La cantidad de cada producto debe ser mayor que cero.")
+    if any(item.tax_rate_basis_points not in TAX_RATES_BASIS_POINTS for item in sale.items):
+        raise SaleError("La tarifa de IVA de un producto no es válida.")
     if not sale.payments:
         raise SaleError("La venta debe tener al menos un pago.")
     methods: set[str] = set()
@@ -86,7 +117,6 @@ class Sale:
     items: tuple[SaleItem, ...]
     payment_cents: int
     payments: tuple[Payment, ...] = ()
-    tax_rate_basis_points: int = 0
 
     def __post_init__(self) -> None:
         if not self.payments:
@@ -95,21 +125,21 @@ class Sale:
 
     @property
     def total_cents(self) -> int:
-        return self.subtotal_cents + self.tax_cents
-
-    @property
-    def subtotal_cents(self) -> int:
+        """What the customer is charged: the sum of the final prices, IVA included."""
         return sum(item.total_cents for item in self.items)
 
     @property
+    def subtotal_cents(self) -> int:
+        """Sum of the taxable bases."""
+        return sum(item.base_cents for item in self.items)
+
+    @property
     def tax_cents(self) -> int:
-        if self.tax_rate_basis_points < 0 or self.tax_rate_basis_points > 10000:
-            raise SaleError("El porcentaje de IVA no es válido.")
-        return int(
-            (
-                Decimal(self.subtotal_cents) * Decimal(self.tax_rate_basis_points) / Decimal(10000)
-            ).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-        )
+        return sum(item.tax_cents for item in self.items)
+
+    @property
+    def tax_breakdown(self) -> tuple[tuple[int, int, int], ...]:
+        return tax_breakdown((item.total_cents, item.tax_rate_basis_points) for item in self.items)
 
     @property
     def change_cents(self) -> int:

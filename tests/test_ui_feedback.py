@@ -116,7 +116,7 @@ def test_pos_confirms_sale_with_success_notification(qapp, database, no_message_
     text, state = notifications[0]
     assert state == "success"
     assert text.startswith("Venta N.º 1 registrada")
-    assert "Vuelto: $2.50" in text
+    assert "Vuelto: $ 2,50" in text
     assert pos.cart.lines == ()
     assert pos.sales.today_summary() == (1, 250)
     assert products.find_active("A-1")[0].stock == 9

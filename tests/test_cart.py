@@ -38,16 +38,16 @@ def test_cart_rejects_zero_payment():
         cart.to_sale(0)
 
 
-def test_cart_calculates_tax_in_cents_with_half_up_rounding():
-    cart = Cart(tax_rate_basis_points=1900)
-    cart.add(Product(1, "A-1", "Arroz", 101, 5))
+def test_cart_extracts_tax_from_the_price_in_cents_with_half_up_rounding():
+    cart = Cart()
+    cart.add(Product(1, "A-1", "Arroz", 101, 5, tax_rate_basis_points=1500))
 
     sale = cart.to_sale(121)
 
-    assert sale.subtotal_cents == 101
-    assert sale.tax_cents == 19
-    assert sale.total_cents == 120
-    assert sale.change_cents == 1
+    assert sale.subtotal_cents == 88
+    assert sale.tax_cents == 13
+    assert sale.total_cents == 101
+    assert sale.change_cents == 20
 
 
 def test_cart_can_edit_quantity_without_exceeding_stock():

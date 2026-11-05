@@ -14,7 +14,7 @@ from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.ui.components import ElidedLabel, KeyHint
 from suitelocal.ui.components.product import ProductCard
-from suitelocal.ui.pos import PosWidget
+from suitelocal.ui.pos import PosWidget, format_money
 from suitelocal.ui.theme.manager import current_tokens, set_theme
 
 
@@ -125,7 +125,7 @@ def test_header_shows_the_serif_title_and_real_indicators(pos):
     assert pos.eyebrow_label.text()
     assert [pos.kpi_sales.text(), pos.kpi_revenue.text(), pos.kpi_average.text()] == [
         "0",
-        "$0.00",
+        "$ 0,00",
         "—",
     ]
 
@@ -194,7 +194,7 @@ def test_quick_keys_show_the_first_six_products_with_name_and_price(pos):
     assert len(pos.quick_buttons) == 6
     first = pos.quick_buttons[0]
     assert "Arroz" in first.property("productName")
-    assert first.property("priceText") == "$2.50"
+    assert first.property("priceText") == "$ 2,50"
     assert not pos.quick_buttons[2].isEnabled()
 
 
@@ -256,7 +256,7 @@ def test_product_cards_show_name_meta_price_and_cart_quantity(pos):
     assert card.name_label.full_text() == "Arroz"
     assert isinstance(card.name_label, ElidedLabel)
     assert card.meta_label.text() == "10 en stock"
-    assert card.price_label.text() == "$2.50"
+    assert card.price_label.text() == "$ 2,50"
     assert card.badge.text() == "2"
     assert card.property("inCart") is True
     assert pos.product_list.card_at(1).badge.text() == "+"
@@ -322,13 +322,14 @@ def test_ticket_panel_lines_stepper_and_summary(pos):
     pos.add_selected_product()
 
     first, second = pos.ticket_lines
-    assert first.subtitle_label.text() == "2 × $2.50"
-    assert first.total_label.text() == "$5.00"
+    assert first.subtitle_label.text() == "2 × $ 2,50"
+    assert first.total_label.text() == "$ 5,00"
     assert second.property("highlighted") is True
     assert first.property("highlighted") is False
-    assert pos.total_label.text() == "$8.00"
-    assert pos.subtotal_label.text() == "Subtotal $8.00"
-    assert pos.tax_label.text() == "IVA (0%) $0.00"
+    assert pos.total_label.text() == "$ 8,00"
+    # Prices include IVA: 800 total = 696 base + 104 IVA at 15 % (rounded per line).
+    assert pos.subtotal_label.text() == "Subtotal $ 6,96"
+    assert pos.tax_label.text() == "IVA incluido $ 1,04"
     assert pos.cart_count.text() == "3 artículos"
 
     first.plus_button.click()
@@ -374,9 +375,9 @@ def test_cash_change_is_received_minus_total(pos):
 
     pos.received_edit.setText("5.00")
 
-    assert pos.change_value.text() == "$2.50"
+    assert pos.change_value.text() == "$ 2,50"
     pos.received_edit.setText("2.50")
-    assert pos.change_value.text() == "$0.00"
+    assert pos.change_value.text() == "$ 0,00"
 
 
 def test_exact_button_sets_received_to_the_total(pos):
@@ -386,7 +387,7 @@ def test_exact_button_sets_received_to_the_total(pos):
     pos.bill_buttons[0].click()
 
     assert pos.received_edit.text() == "2.50"
-    assert pos.change_value.text() == "$0.00"
+    assert pos.change_value.text() == "$ 0,00"
 
 
 def test_quick_bills_are_round_amounts_above_the_total(pos):
@@ -394,10 +395,10 @@ def test_quick_bills_are_round_amounts_above_the_total(pos):
 
     labels = [button.text() for button in pos.bill_buttons]
 
-    assert labels == ["Exacto", "$3.00", "$5.00", "$10.00"]
+    assert labels == ["Exacto", "$ 3,00", "$ 5,00", "$ 10,00"]
     pos.bill_buttons[2].click()
     assert pos.received_edit.text() == "5.00"
-    assert pos.change_value.text() == "$2.50"
+    assert pos.change_value.text() == "$ 2,50"
 
 
 def test_charge_with_enough_cash_registers_the_sale_and_clears_the_checkout(pos):
@@ -414,7 +415,7 @@ def test_charge_with_enough_cash_registers_the_sale_and_clears_the_checkout(pos)
     assert stock_of(pos, "A-1") == 9
     assert registered == [True]
     assert notifications[-1][1] == "success"
-    assert "Vuelto: $2.50" in notifications[-1][0]
+    assert "Vuelto: $ 2,50" in notifications[-1][0]
     assert pos.cart.lines == ()
     assert pos.received_edit.text() == ""
     assert not pos.checkout_message.isVisible()
@@ -490,9 +491,31 @@ def test_split_payment_opens_the_dialog_through_the_injected_factory(pos):
     pos.split_button.click()
 
     assert calls and calls[0]["total_cents"] == 500
+    # 500 at 15 %: the price is final and 65 of it is IVA.
+    assert calls[0]["total_note"] == "IVA incluido $ 0,65"
     assert calls[0]["enabled_methods"] == ("cash", "transfer", "card")
     assert sale_count(pos) == 1
     assert stock_of(pos, "A-1") == 8
+
+
+def test_format_money_delegates_to_the_usd_formatter():
+    assert format_money(123_456) == "$ 1.234,56"
+    assert format_money(123_456, "$", ".") == "$ 1,234.56"
+    assert format_money(-123_456) == "-$ 1.234,56"
+    assert format_money(5, "US$") == "US$ 0,05"
+
+
+def test_ticket_shows_the_tax_included_in_mixed_rates(pos):
+    pos.products.add("Z-9", "Pan", 200, 5, tax_rate_basis_points=0)
+    pos.refresh_products()
+    pos.search_input.setText("A-1")
+    pos.add_selected_product()
+    pos.search_input.setText("Z-9")
+    pos.add_selected_product()
+
+    assert pos.total_label.text() == "$ 4,50"
+    assert pos.subtotal_label.text() == "Subtotal $ 4,17"
+    assert pos.tax_label.text() == "IVA incluido $ 0,33"
 
 
 def test_cancelled_split_dialog_registers_nothing(pos):
@@ -532,8 +555,8 @@ def test_kpis_show_real_values_after_a_sale(pos):
     pos.charge_button.click()
 
     assert pos.kpi_sales.text() == "2"
-    assert pos.kpi_revenue.text() == "$8.00"
-    assert pos.kpi_average.text() == "$4.00"
+    assert pos.kpi_revenue.text() == "$ 8,00"
+    assert pos.kpi_average.text() == "$ 4,00"
 
 
 # -- theme --------------------------------------------------------------------------------
