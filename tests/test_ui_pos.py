@@ -1,3 +1,4 @@
+import inspect
 import os
 import time
 
@@ -9,9 +10,14 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
 
+from suitelocal.domain.business import BusinessSettings
 from suitelocal.domain.models import Payment
 from suitelocal.infrastructure.database import Database
-from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
+from suitelocal.infrastructure.repositories import (
+    CategoryRepository,
+    ProductRepository,
+    SaleRepository,
+)
 from suitelocal.ui.components import ElidedLabel, KeyHint
 from suitelocal.ui.components.product import ProductCard
 from suitelocal.ui.pos import PosWidget, format_money
@@ -608,3 +614,156 @@ def test_product_art_paints_an_opaque_tint(pos):
 
     assert pixel.alpha() == 255
     assert pixel.name().upper() == getattr(current_tokens(), f"art_{art.property('tint')}").upper()
+
+
+# -- business profile: categories filter, separator, live settings --------------------------
+
+
+@pytest.fixture
+def catalog(qapp, tmp_path):
+    """A catalog with two categories, one empty category and one inactive category."""
+    database = Database(tmp_path / "catalog.db")
+    database.initialize()
+    with database.connect() as connection:
+        business_id = connection.execute(
+            "INSERT INTO businesses (name) VALUES ('Tienda')"
+        ).lastrowid
+    assert business_id is not None
+    categories = CategoryRepository(database)
+    bebidas = categories.add(business_id, "Bebidas")
+    snacks = categories.add(business_id, "Snacks")
+    categories.add(business_id, "Vacía")
+    hidden = categories.add(business_id, "Oculta")
+    categories.set_active(business_id, hidden.id, False)
+    products = ProductRepository(database)
+    products.add("C-1", "Cola", 150, 10, category_id=bebidas.id)
+    products.add("S-1", "Papas", 100, 2, category_id=snacks.id)
+    products.add("H-1", "Fantasma", 100, 5, category_id=hidden.id)
+    products.add("X-1", "Sin categoría", 200, 5)
+    sales = SaleRepository(database)
+    return products, sales, categories.list(business_id)
+
+
+def filter_options(widget: PosWidget) -> list[str]:
+    return [button.text() for button in widget.filter_control.findChildren(QPushButton)]
+
+
+def product_names(widget: PosWidget) -> list[str]:
+    shown = (widget.product_list.product_at(row) for row in range(widget.product_list.count()))
+    return [product.name for product in shown if product is not None]
+
+
+def test_pos_drops_the_ignored_tax_rate_parameter():
+    assert "tax_rate_basis_points" not in inspect.signature(PosWidget).parameters
+
+
+def test_filter_lists_categories_with_products_when_the_module_is_on(catalog):
+    products, sales, categories = catalog
+
+    pos = PosWidget(
+        products,
+        sales,
+        enabled_modules=frozenset({"categorias"}),
+        categories=categories,
+    )
+
+    assert filter_options(pos) == ["Todos", "Bebidas", "Snacks", "Stock bajo"]
+
+
+def test_filter_by_category_shows_only_its_products(catalog):
+    products, sales, categories = catalog
+    pos = PosWidget(
+        products, sales, enabled_modules=frozenset({"categorias"}), categories=categories
+    )
+    assert product_names(pos) == ["Cola", "Fantasma", "Papas", "Sin categoría"]
+
+    pos.filter_control.select("Snacks")
+    pos.filter_control.selected.emit("Snacks")
+
+    assert product_names(pos) == ["Papas"]
+    pos.filter_control.select("Stock bajo")
+    pos.filter_control.selected.emit("Stock bajo")
+    assert product_names(pos) == ["Papas"]
+    pos.filter_control.select("Todos")
+    pos.filter_control.selected.emit("Todos")
+    assert len(product_names(pos)) == 4
+
+
+def test_filter_stays_as_today_without_the_module_or_without_categories(catalog):
+    products, sales, categories = catalog
+
+    module_off = PosWidget(products, sales, categories=categories)
+    no_categories = PosWidget(products, sales, enabled_modules=frozenset({"categorias"}))
+
+    assert filter_options(module_off) == ["Todos", "Stock bajo"]
+    assert filter_options(no_categories) == ["Todos", "Stock bajo"]
+
+
+def test_a_selected_category_that_disappears_falls_back_to_all(catalog):
+    products, sales, categories = catalog
+    pos = PosWidget(
+        products, sales, enabled_modules=frozenset({"categorias"}), categories=categories
+    )
+    pos.filter_control.select("Snacks")
+    pos.filter_control.selected.emit("Snacks")
+
+    pos.apply_business(business_settings(), [])
+
+    assert filter_options(pos) == ["Todos", "Stock bajo"]
+    assert pos.filter_control.current == "Todos"
+    assert len(product_names(pos)) == 4
+
+
+def business_settings(**changes) -> BusinessSettings:
+    values = {
+        "business_id": 1,
+        "name": "Tienda",
+        "currency_symbol": "$",
+        "low_stock_threshold": 3,
+        "enabled_payment_methods": ("cash", "transfer"),
+    }
+    return BusinessSettings(**{**values, **changes})
+
+
+def test_apply_business_reformats_money_with_the_new_separator(pos):
+    pos.add_quick_product(0)
+    assert pos.total_label.text() == "$ 2,50"
+    assert pos.quick_buttons[0].property("priceText") == "$ 2,50"
+    assert pos.received_edit.placeholderText() == "0,00"
+
+    pos.apply_business(business_settings(decimal_separator="."), [])
+
+    assert pos.total_label.text() == "$ 2.50"
+    assert pos.subtotal_label.text() == "Subtotal $ 2.17"
+    assert pos.tax_label.text() == "IVA incluido $ 0.33"
+    assert pos.quick_buttons[0].property("priceText") == "$ 2.50"
+    assert pos.product_list.card_at(0).price_label.text() == "$ 2.50"
+    assert pos.received_edit.placeholderText() == "0.00"
+    assert pos.charge_amount.text() == "$ 2.50"
+
+
+def test_apply_business_updates_payment_methods_and_low_stock_threshold(pos):
+    pos.apply_business(
+        business_settings(enabled_payment_methods=("cash",), low_stock_threshold=7), []
+    )
+
+    assert [b.text() for b in pos.method_control.findChildren(QPushButton)] == ["Efectivo"]
+    assert pos.enabled_payment_methods == ("cash",)
+    assert pos.low_stock_threshold == 7
+
+
+def test_split_payment_dialog_receives_the_decimal_separator(pos):
+    calls: list[dict] = []
+
+    def factory(**kwargs):
+        calls.append(kwargs)
+        return FakeDialog((Payment("cash", 250),))
+
+    pos.payment_dialog_factory = factory
+    pos.apply_business(business_settings(decimal_separator="."), [])
+    pos.add_quick_product(0)
+
+    pos.split_button.click()
+
+    assert calls[0]["decimal_separator"] == "."
+    assert calls[0]["total_note"] == "IVA incluido $ 0.33"

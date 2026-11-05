@@ -22,9 +22,14 @@ from PySide6.QtWidgets import (
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.cash_register import CashRegisterService
+from suitelocal.application.categories import CategoryService
 from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.database import Database
-from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
+from suitelocal.infrastructure.repositories import (
+    CategoryRepository,
+    ProductRepository,
+    SaleRepository,
+)
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.ui.components import ElidedLabel, ToastHost
 from suitelocal.ui.dashboard import DashboardWidget
@@ -103,12 +108,17 @@ class AppShell(QMainWindow):
             session.user.username,
             business.name,
         )
+        self.categories = CategoryService(CategoryRepository(database))
         self.pos_widget = PosWidget(
             products,
             sales,
             business.enabled_payment_methods,
             business.currency_symbol,
-            business.tax_rate_basis_points,
+            business_name=business.name,
+            low_stock_threshold=business.low_stock_threshold,
+            decimal_separator=business.decimal_separator,
+            enabled_modules=business.enabled_modules,
+            categories=self.categories.list(session),
         )
         self.pages = QStackedWidget()
         self._add_page(self.dashboard)

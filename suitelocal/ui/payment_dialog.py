@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.domain.models import PAYMENT_METHODS, Payment, Sale, SaleItem
+from suitelocal.domain.money import format_usd
 from suitelocal.ui.components import InlineMessage, PrimaryButton, SwitchButton
 from suitelocal.ui.theme.icons import ICONS, icon
 from suitelocal.ui.theme.manager import current_tokens
@@ -33,9 +34,10 @@ QUICK_BILL_COUNT = 3
 PaymentValidator = Callable[[tuple[Payment, ...]], object]
 
 
-def format_money(cents: int, currency_symbol: str = "$") -> str:
-    amount = (Decimal(cents) / Decimal(100)).quantize(Decimal("0.01"))
-    return f"{currency_symbol}{amount:,.2f}"
+def format_money(cents: int, currency_symbol: str = "$", decimal_separator: str = ",") -> str:
+    """Format cents for the screen, e.g. "$ 1.234,56"; delegates to the Qt-free formatter."""
+    text = format_usd(cents, decimal_separator)
+    return text if currency_symbol == "$" else text.replace("$", currency_symbol, 1)
 
 
 def parse_money(value: str) -> int:
@@ -151,10 +153,12 @@ class PaymentDialog(QDialog):
         total_note: str = "",
         validate: PaymentValidator | None = None,
         parent: QWidget | None = None,
+        decimal_separator: str = ",",
     ) -> None:
         super().__init__(parent)
         self.total_cents = total_cents
         self.currency_symbol = currency_symbol
+        self.decimal_separator = decimal_separator
         self.payments: tuple[Payment, ...] = ()
         self._enabled = tuple(
             method for method in PAYMENT_METHODS if method != "cash" and method in enabled_methods
@@ -235,7 +239,7 @@ class PaymentDialog(QDialog):
             note = QLabel(total_note)
             note.setObjectName("paymentDueNote")
             caption.addWidget(note)
-        self.total_label = QLabel(format_money(self.total_cents, self.currency_symbol))
+        self.total_label = QLabel(self._money(self.total_cents))
         self.total_label.setObjectName("paymentDueAmount")
         band_layout.addLayout(caption)
         band_layout.addStretch()
@@ -508,7 +512,8 @@ class PaymentDialog(QDialog):
         for method in self.payment_methods:
             self.method_combo.addItem(METHOD_LABELS[method], method)
         self.method_combo.blockSignals(False)
-        self.amount_edit.setText(f"{Decimal(self.remaining_cents) / 100:.2f}")
+        units, cents = divmod(self.remaining_cents, 100)
+        self.amount_edit.setText(f"{units}{self.decimal_separator}{cents:02d}")
         self.reference_edit.clear()
         self._on_method_changed()
 
@@ -530,10 +535,12 @@ class PaymentDialog(QDialog):
 
     # -- rendering ----------------------------------------------------------------------
 
+    def _money(self, cents: int) -> str:
+        return format_money(cents, self.currency_symbol, self.decimal_separator)
+
     def _refresh(self) -> None:
-        money = self.currency_symbol
-        self.cash_display.setText(format_money(self.cash_cents, money))
-        self.change_value.setText(format_money(self.change_cents, money))
+        self.cash_display.setText(self._money(self.cash_cents))
+        self.change_value.setText(self._money(self.change_cents))
         self.confirm_button.setEnabled(self.covered)
         self.cash_panel.setEnabled(self.remaining_cents > 0)
         self._refresh_bills()
@@ -550,7 +557,7 @@ class PaymentDialog(QDialog):
         for index, (button, amount) in enumerate(
             zip(self.quick_bill_buttons, amounts, strict=True)
         ):
-            button.setText("Exacto" if index == 0 else format_money(amount, self.currency_symbol))
+            button.setText("Exacto" if index == 0 else self._money(amount))
             button.setProperty("selected", self._cash_cents == amount and self._cash_cents > 0)
             _repolish(button)
 
@@ -560,13 +567,12 @@ class PaymentDialog(QDialog):
             row.hide()
             row.deleteLater()
         self.payment_rows = []
-        money = self.currency_symbol
         for payment in self._noncash:
             reference = f"ref. {payment.reference}" if payment.reference else "Pago recibido"
             row = PaymentRow(
                 payment.method,
                 reference,
-                format_money(payment.amount_cents, money),
+                self._money(payment.amount_cents),
                 received=True,
                 active=False,
                 removable=True,
@@ -579,15 +585,13 @@ class PaymentDialog(QDialog):
         if self.remaining_cents > 0:
             cash_done = self.covered
             subtitle = (
-                f"Recibido {format_money(self.cash_cents, money)}"
-                if cash_done
-                else "Restante por cobrar"
+                f"Recibido {self._money(self.cash_cents)}" if cash_done else "Restante por cobrar"
             )
             self.payment_rows.append(
                 PaymentRow(
                     "cash",
                     subtitle,
-                    format_money(self.remaining_cents, money),
+                    self._money(self.remaining_cents),
                     received=cash_done,
                     active=not cash_done,
                     removable=False,

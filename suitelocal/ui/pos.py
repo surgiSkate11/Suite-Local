@@ -1,5 +1,5 @@
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 
 from PySide6.QtCore import QDate, QEvent, QObject, Qt, QTimer, Signal
@@ -20,9 +20,9 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.cart import Cart
+from suitelocal.domain.business import BusinessSettings
 from suitelocal.domain.models import Payment, Product, SaleError
-from suitelocal.domain.money import format_usd
-from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
+from suitelocal.infrastructure.repositories import Category, ProductRepository, SaleRepository
 from suitelocal.ui.components import (
     ElidedLabel,
     EmptyState,
@@ -37,6 +37,7 @@ from suitelocal.ui.components.product import repolish
 from suitelocal.ui.payment_dialog import (
     METHOD_LABELS,
     PaymentDialog,
+    format_money,
     parse_money,
     quick_bill_amounts,
 )
@@ -51,12 +52,6 @@ ICONS.setdefault(
 )
 
 PaymentDialogFactory = Callable[..., PaymentDialog]
-
-
-def format_money(cents: int, currency_symbol: str = "$", decimal_separator: str = ",") -> str:
-    """Format cents for the screen, e.g. "$ 1.234,56"; delegates to the Qt-free formatter."""
-    text = format_usd(cents, decimal_separator)
-    return text if currency_symbol == "$" else text.replace("$", currency_symbol, 1)
 
 
 QUICK_KEY_COUNT = 6
@@ -134,15 +129,21 @@ class PosWidget(QWidget):
         sales: SaleRepository,
         enabled_payment_methods: tuple[str, ...] = ("cash", "transfer"),
         currency_symbol: str = "$",
-        tax_rate_basis_points: int = 0,  # unused: every product carries its own IVA rate
         parent: QWidget | None = None,
         business_name: str = "",
         low_stock_threshold: int = 3,
+        decimal_separator: str = ",",
+        enabled_modules: frozenset[str] = frozenset(),
+        categories: Sequence[Category] = (),
     ) -> None:
         super().__init__(parent)
         self.products = products
         self.sales = sales
         self.currency_symbol = currency_symbol
+        self.decimal_separator = decimal_separator
+        self.enabled_modules = enabled_modules
+        self.categories = tuple(categories)
+        self._category_ids: dict[str, int] = {}
         self.enabled_payment_methods = enabled_payment_methods or ("cash",)
         self.low_stock_threshold = low_stock_threshold
         self.sale_label = business_name or "Venta actual"
@@ -197,12 +198,12 @@ class PosWidget(QWidget):
         self.scanner_status.setMinimumWidth(0)
         layout.addWidget(self.scanner_status)
         layout.addLayout(self._build_quick_keys())
-        self.filter_control = SegmentedControl([FILTER_ALL, FILTER_LOW_STOCK])
-        self.filter_control.selected.connect(self._on_filter_selected)
-        filter_row = QHBoxLayout()
-        filter_row.addWidget(self.filter_control)
-        filter_row.addStretch()
-        layout.addLayout(filter_row)
+        self._category_ids = self._categories_with_products()
+        self.filter_control = self._new_filter_control()
+        self._filter_row = QHBoxLayout()
+        self._filter_row.addWidget(self.filter_control)
+        self._filter_row.addStretch()
+        layout.addLayout(self._filter_row)
         self.product_list = ProductGrid()
         self.product_list.setMinimumHeight(170)
         self.product_list.product_chosen.connect(self._on_product_chosen)
@@ -380,7 +381,7 @@ class PosWidget(QWidget):
         top.addWidget(caption)
         top.addStretch()
         top.addWidget(self.cart_count)
-        self.total_label = _label(format_money(0, self.currency_symbol), "totalLabel")
+        self.total_label = _label(self._money(0), "totalLabel")
         self.subtotal_label = _label("", "checkoutDetail")
         self.tax_label = _label("", "checkoutDetail")
         details = QHBoxLayout()
@@ -398,12 +399,8 @@ class PosWidget(QWidget):
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(12, 10, 12, 0)
         layout.setSpacing(8)
-        labels = [METHOD_LABELS[method] for method in self.enabled_payment_methods]
-        self.method_control = SegmentedControl(labels)
-        # Payment methods share the ticket width instead of forcing it to fit their full text.
-        for segment in self.method_control.findChildren(QPushButton):
-            segment.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.method_control.selected.connect(self._on_method_selected)
+        self._checkout_layout = layout
+        self.method_control = self._new_method_control()
         layout.addWidget(self.method_control)
 
         self.cash_panel = QWidget()
@@ -421,7 +418,7 @@ class PosWidget(QWidget):
         self.received_edit = QLineEdit()
         self.received_edit.setObjectName("recvInput")
         self.received_edit.setAccessibleName("Efectivo recibido")
-        self.received_edit.setPlaceholderText("0.00")
+        self.received_edit.setPlaceholderText(self._amount_placeholder())
         self.received_edit.textChanged.connect(self._on_received_changed)
         recv_layout.addWidget(_label("Recibido", "recvCaption"))
         recv_layout.addWidget(self.received_edit)
@@ -431,7 +428,7 @@ class PosWidget(QWidget):
         change_layout = QVBoxLayout(change)
         change_layout.setContentsMargins(14, 6, 14, 6)
         change_layout.setSpacing(0)
-        self.change_value = _label(format_money(0, self.currency_symbol), "inlineChangeValue")
+        self.change_value = _label(self._money(0), "inlineChangeValue")
         change_layout.addWidget(_label("Cambio", "inlineChangeCaption"))
         change_layout.addWidget(self.change_value)
         boxes.addWidget(recv, 1)
@@ -472,7 +469,7 @@ class PosWidget(QWidget):
         set_variant(self.charge_button, "champagne")
         self.charge_button.setToolTip("Cobrar la venta (F4)")
         self.charge_button.clicked.connect(lambda: self.confirm_sale())
-        self.charge_amount = QLabel(format_money(0, self.currency_symbol))
+        self.charge_amount = QLabel(self._money(0))
         self.charge_hint = KeyHint("F4")
         _overlay_row(self.charge_button, self.charge_amount, self.charge_hint)
         self.split_button = QPushButton("Dividir pago")
@@ -549,6 +546,86 @@ class PosWidget(QWidget):
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self.refresh_kpis()
+        if self._refresh_category_filter():
+            self.refresh_products()
+
+    # -- business profile ---------------------------------------------------------------
+
+    def _money(self, cents: int) -> str:
+        return format_money(cents, self.currency_symbol, self.decimal_separator)
+
+    def _amount_placeholder(self) -> str:
+        return f"0{self.decimal_separator}00"
+
+    def _new_method_control(self) -> SegmentedControl:
+        labels = [METHOD_LABELS[method] for method in self.enabled_payment_methods]
+        control = SegmentedControl(labels)
+        # Payment methods share the ticket width instead of forcing it to fit their full text.
+        for segment in control.findChildren(QPushButton):
+            segment.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        control.selected.connect(self._on_method_selected)
+        return control
+
+    def _categories_with_products(self) -> dict[str, int]:
+        """Active categories that have at least one active product, by name, when enabled."""
+        if "categorias" not in self.enabled_modules or not self.categories:
+            return {}
+        used = {product.category_id for product in self.products.find_active("")}
+        reserved = {FILTER_ALL, FILTER_LOW_STOCK}
+        return {
+            category.name: category.id
+            for category in self.categories
+            if category.active and category.id in used and category.name not in reserved
+        }
+
+    def _filter_options(self) -> list[str]:
+        return [FILTER_ALL, *self._category_ids, FILTER_LOW_STOCK]
+
+    def _new_filter_control(self, current: str | None = None) -> SegmentedControl:
+        control = SegmentedControl(self._filter_options(), current)
+        control.selected.connect(self._on_filter_selected)
+        return control
+
+    def _refresh_category_filter(self) -> bool:
+        """Rebuild the filter when its options changed; True when the catalog must reload."""
+        category_ids = self._categories_with_products()
+        if list(category_ids) == list(self._category_ids) and category_ids == self._category_ids:
+            return False
+        selected = self.filter_control.current
+        self._category_ids = category_ids
+        old = self.filter_control
+        self.filter_control = self._new_filter_control(selected)
+        self._filter_row.removeWidget(old)
+        old.hide()
+        old.deleteLater()
+        self._filter_row.insertWidget(0, self.filter_control)
+        return True
+
+    def apply_business(self, business: BusinessSettings, categories: Sequence[Category]) -> None:
+        """Adopt saved business settings without rebuilding the screen."""
+        methods_changed = (business.enabled_payment_methods or ("cash",)) != (
+            self.enabled_payment_methods
+        )
+        self.currency_symbol = business.currency_symbol
+        self.decimal_separator = business.decimal_separator
+        self.low_stock_threshold = business.low_stock_threshold
+        self.enabled_modules = business.enabled_modules
+        self.categories = tuple(categories)
+        if methods_changed:
+            self.enabled_payment_methods = business.enabled_payment_methods or ("cash",)
+            old = self.method_control
+            self.method_control = self._new_method_control()
+            self._checkout_layout.removeWidget(old)
+            old.hide()
+            old.deleteLater()
+            self._checkout_layout.insertWidget(0, self.method_control)
+            self._on_method_selected(self.method_control.current or "")
+        self._refresh_category_filter()
+        self.received_edit.setPlaceholderText(self._amount_placeholder())
+        self.refresh_products()
+        self.refresh_quick_keys()
+        self.refresh_kpis()
+        self.refresh_cart()
 
     def _on_filter_selected(self, _option: str) -> None:
         self.refresh_products()
@@ -590,8 +667,11 @@ class PosWidget(QWidget):
 
     def refresh_products(self) -> None:
         products = self.products.find_active(self._scan_query())
-        if self.filter_control.current == FILTER_LOW_STOCK:
+        selected = self.filter_control.current
+        if selected == FILTER_LOW_STOCK:
             products = [p for p in products if p.stock <= self.low_stock_threshold]
+        elif selected in self._category_ids:
+            products = [p for p in products if p.category_id == self._category_ids[selected]]
         self.product_empty.setVisible(not products)
         self.product_list.setVisible(bool(products))
         self.product_list.set_products(
@@ -599,7 +679,7 @@ class PosWidget(QWidget):
             self._cart_quantities(),
             self.currency_symbol,
             self.low_stock_threshold,
-            format_money,
+            lambda cents, symbol: format_money(cents, symbol, self.decimal_separator),
         )
 
     def refresh_quick_keys(self) -> None:
@@ -610,7 +690,7 @@ class PosWidget(QWidget):
             button = self.quick_buttons[index]
             button.setEnabled(product is not None)
             name = product.name if product else "—"
-            price = format_money(product.price_cents, self.currency_symbol) if product else ""
+            price = self._money(product.price_cents) if product else ""
             self._quick_names[index].setText(name)
             self._quick_prices[index].setText(price)
             button.setProperty("productName", name)
@@ -620,8 +700,8 @@ class PosWidget(QWidget):
     def refresh_kpis(self) -> None:
         count, revenue = self.sales.today_summary()
         self.kpi_sales.setText(str(count))
-        self.kpi_revenue.setText(format_money(revenue, self.currency_symbol))
-        average = format_money(revenue // count, self.currency_symbol) if count else "—"
+        self.kpi_revenue.setText(self._money(revenue))
+        average = self._money(revenue // count) if count else "—"
         self.kpi_average.setText(average)
 
     def _cart_quantities(self) -> dict[int, int]:
@@ -799,8 +879,8 @@ class PosWidget(QWidget):
             widget = TicketLine(
                 line.product,
                 line.quantity,
-                format_money(line.product.price_cents, self.currency_symbol),
-                format_money(line.total_cents, self.currency_symbol),
+                self._money(line.product.price_cents),
+                self._money(line.total_cents),
                 line.product.id == self._selected_id,
             )
             widget.selected.connect(self._on_line_selected)
@@ -808,13 +888,9 @@ class PosWidget(QWidget):
             self.lines_layout.insertWidget(index, widget)
             self.ticket_lines.append(widget)
         self.ticket_empty.setVisible(not lines)
-        self.total_label.setText(format_money(self.cart.grand_total_cents, self.currency_symbol))
-        self.subtotal_label.setText(
-            f"Subtotal {format_money(self.cart.subtotal_cents, self.currency_symbol)}"
-        )
-        self.tax_label.setText(
-            f"IVA incluido {format_money(self.cart.tax_cents, self.currency_symbol)}"
-        )
+        self.total_label.setText(self._money(self.cart.grand_total_cents))
+        self.subtotal_label.setText(f"Subtotal {self._money(self.cart.subtotal_cents)}")
+        self.tax_label.setText(f"IVA incluido {self._money(self.cart.tax_cents)}")
         item_count = sum(line.quantity for line in lines)
         self.cart_count.setText(f"{item_count} artículo{'s' if item_count != 1 else ''}")
         self.product_list.update_quantities(self._cart_quantities())
@@ -847,8 +923,8 @@ class PosWidget(QWidget):
     def _refresh_checkout(self) -> None:
         total = self.cart.grand_total_cents
         received = self._received_cents()
-        self.change_value.setText(format_money(max(0, received - total), self.currency_symbol))
-        self.charge_amount.setText(format_money(total, self.currency_symbol))
+        self.change_value.setText(self._money(max(0, received - total)))
+        self.charge_amount.setText(self._money(total))
         self.charge_button.setEnabled(bool(self.cart.lines))
         self._bill_amounts = [total, *quick_bill_amounts(total)] if total else []
         for index, button in enumerate(self.bill_buttons):
@@ -857,7 +933,7 @@ class PosWidget(QWidget):
             button.setText(
                 "Exacto"
                 if index == 0
-                else format_money(self._bill_amounts[index], self.currency_symbol)
+                else self._money(self._bill_amounts[index])
                 if has_amount
                 else ""
             )
@@ -898,14 +974,10 @@ class PosWidget(QWidget):
         except (ValueError, SaleError) as error:
             self.notification.emit(f"No se puede confirmar. {error}", "danger")
             return
-        change = (
-            format_money(sale.change_cents, self.currency_symbol)
-            if sale.change_cents
-            else "No aplica"
-        )
+        change = self._money(sale.change_cents) if sale.change_cents else "No aplica"
         self.notification.emit(
             f"Venta N.º {sale_id} registrada · "
-            f"Total {format_money(sale.total_cents, self.currency_symbol)} · "
+            f"Total {self._money(sale.total_cents)} · "
             f"Vuelto: {change}",
             "success",
         )
@@ -937,14 +1009,11 @@ class PosWidget(QWidget):
         if not self.cart.lines:
             self.notification.emit("No se puede cobrar. Agrega al menos un producto.", "danger")
             return None
-        note = (
-            f"IVA incluido {format_money(self.cart.tax_cents, self.currency_symbol)}"
-            if self.cart.tax_cents
-            else ""
-        )
+        note = f"IVA incluido {self._money(self.cart.tax_cents)}" if self.cart.tax_cents else ""
         dialog = self.payment_dialog_factory(
             total_cents=self.cart.grand_total_cents,
             currency_symbol=self.currency_symbol,
+            decimal_separator=self.decimal_separator,
             enabled_methods=self.enabled_payment_methods,
             sale_label=self.sale_label,
             total_note=note,

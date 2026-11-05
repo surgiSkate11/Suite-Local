@@ -57,7 +57,7 @@ def test_header_texts_and_accessible_names(make_dialog):
     assert dialog.eyebrow_label.text() == "Venta #1.285 · Café La Esquina"
     assert dialog.close_button.accessibleName() == "Cerrar sin cobrar"
     assert dialog.pad_buttons[BACKSPACE].accessibleName() == "Borrar"
-    assert dialog.total_label.text() == "$54.12"
+    assert dialog.total_label.text() == "$ 54,12"
     assert dialog.confirm_button.text().startswith("Confirmar cobro")
     assert dialog.confirm_button.isDefault()
 
@@ -88,8 +88,8 @@ def test_cash_above_total_shows_exact_change(make_dialog):
     dialog = make_dialog()
 
     press(dialog, "1", "00")
-    assert dialog.cash_display.text() == "$100.00"
-    assert dialog.change_value.text() == "$45.88"
+    assert dialog.cash_display.text() == "$ 100,00"
+    assert dialog.change_value.text() == "$ 45,88"
     dialog.confirm_button.click()
 
     payments = dialog.payments
@@ -103,8 +103,8 @@ def test_split_transfer_and_cash_with_reference(make_dialog):
     assert dialog.add_payment("transfer", 3000, "48219")
     assert dialog.remaining_cents == 2412
     press(dialog, "5", "0")
-    assert dialog.cash_display.text() == "$50.00"
-    assert dialog.change_value.text() == "$25.88"
+    assert dialog.cash_display.text() == "$ 50,00"
+    assert dialog.change_value.text() == "$ 25,88"
     assert dialog.confirm_button.isEnabled()
     dialog.confirm_button.click()
 
@@ -163,9 +163,9 @@ def test_confirm_is_disabled_while_the_total_is_uncovered(make_dialog):
     assert not dialog.confirm_button.isEnabled()
 
     press(dialog, "1")
-    assert dialog.cash_display.text() == "$1.00"
+    assert dialog.cash_display.text() == "$ 1,00"
     assert not dialog.confirm_button.isEnabled()
-    assert dialog.change_value.text() == "$0.00"
+    assert dialog.change_value.text() == "$ 0,00"
 
     press(dialog, "00")
     assert dialog.confirm_button.isEnabled()
@@ -175,16 +175,16 @@ def test_pad_and_quick_bills_update_the_display(make_dialog):
     dialog = make_dialog()
 
     press(dialog, "1", "0", "00")
-    assert dialog.cash_display.text() == "$1,000.00"
+    assert dialog.cash_display.text() == "$ 1.000,00"
     press(dialog, BACKSPACE)
-    assert dialog.cash_display.text() == "$100.00"
+    assert dialog.cash_display.text() == "$ 100,00"
 
     labels = [button.text() for button in dialog.quick_bill_buttons]
-    assert labels == ["Exacto", "$60.00", "$100.00", "$200.00"]
+    assert labels == ["Exacto", "$ 60,00", "$ 100,00", "$ 200,00"]
     dialog.quick_bill_buttons[3].click()
-    assert dialog.cash_display.text() == "$200.00"
+    assert dialog.cash_display.text() == "$ 200,00"
     dialog.quick_bill_buttons[0].click()
-    assert dialog.cash_display.text() == "$54.12"
+    assert dialog.cash_display.text() == "$ 54,12"
 
 
 def test_quick_bills_follow_the_remaining_amount(make_dialog):
@@ -194,7 +194,7 @@ def test_quick_bills_follow_the_remaining_amount(make_dialog):
     dialog.add_payment("transfer", 3000, "48219")
 
     labels = [button.text() for button in dialog.quick_bill_buttons]
-    assert labels == ["Exacto", "$30.00", "$50.00", "$100.00"]
+    assert labels == ["Exacto", "$ 30,00", "$ 50,00", "$ 100,00"]
 
 
 def test_keyboard_digits_and_backspace_feed_the_cash_display(make_dialog):
@@ -202,9 +202,9 @@ def test_keyboard_digits_and_backspace_feed_the_cash_display(make_dialog):
 
     QTest.keyClick(dialog, Qt.Key.Key_5)
     QTest.keyClick(dialog, Qt.Key.Key_0)
-    assert dialog.cash_display.text() == "$50.00"
+    assert dialog.cash_display.text() == "$ 50,00"
     QTest.keyClick(dialog, Qt.Key.Key_Backspace)
-    assert dialog.cash_display.text() == "$5.00"
+    assert dialog.cash_display.text() == "$ 5,00"
 
 
 def test_enter_confirms_only_when_enabled(make_dialog):
@@ -270,3 +270,42 @@ def test_only_enabled_methods_can_be_added(make_dialog):
     assert not dialog.add_payment("card", 1000)
     assert dialog.message.text() == "La forma de pago no está habilitada."
     assert dialog.payment_methods == ("transfer",)
+
+
+def test_dialog_formats_money_with_the_comma_separator_by_default(make_dialog):
+    dialog = make_dialog(1_234_567)
+
+    assert dialog.total_label.text() == "$ 12.345,67"
+    press(dialog, "5", "00")
+    assert dialog.cash_display.text() == "$ 500,00"
+    assert dialog.change_value.text() == "$ 0,00"
+
+
+def test_dialog_formats_money_with_the_business_dot_separator(make_dialog):
+    assert make_dialog(1_234_567, decimal_separator=".").total_label.text() == "$ 12,345.67"
+    dialog = make_dialog(TOTAL, decimal_separator=".")
+
+    press(dialog, "5", "00")
+    assert dialog.cash_display.text() == "$ 500.00"
+    assert [button.text() for button in dialog.quick_bill_buttons] == [
+        "Exacto",
+        "$ 60.00",
+        "$ 100.00",
+        "$ 200.00",
+    ]
+    dialog.add_payment("transfer", 3000, "TR-1")
+    assert dialog.payment_rows[0].amount_label.text() == "$ 30.00"
+
+
+def test_dialog_uses_the_business_currency_symbol_and_separator(make_dialog):
+    dialog = make_dialog(250, currency_symbol="US$", decimal_separator=".")
+
+    assert dialog.total_label.text() == "US$ 2.50"
+
+
+def test_manual_payment_amount_is_prefilled_with_the_separator(make_dialog):
+    dialog = make_dialog(5412, decimal_separator=",")
+
+    dialog.add_button.click()
+
+    assert dialog.amount_edit.text() == "54,12"
