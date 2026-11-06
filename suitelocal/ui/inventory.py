@@ -2,6 +2,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -13,9 +14,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from suitelocal.application.categories import CategoryService
 from suitelocal.application.inventory import InventoryService
 from suitelocal.domain.auth import Session
-from suitelocal.infrastructure.repositories import ProductRepository
+from suitelocal.domain.models import Product
+from suitelocal.domain.tax import TAX_RATES_BASIS_POINTS, split_tax_included
+from suitelocal.infrastructure.repositories import CategoryRepository, ProductRepository
+from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.ui.components import (
     DangerButton,
     DataTable,
@@ -27,7 +32,16 @@ from suitelocal.ui.components import (
     confirm_action,
     set_variant,
 )
-from suitelocal.ui.pos import format_money
+from suitelocal.ui.payment_dialog import format_money
+
+NO_VALUE = "—"
+NO_CATEGORY = "Sin categoría"
+TABLE_HEADERS = ["Código", "Nombre", "Categoría", "Precio", "IVA", "Margen", "Stock", "Estado"]
+STATUS_COLUMN = len(TABLE_HEADERS) - 1
+
+
+def rate_label(rate_basis_points: int) -> str:
+    return f"{rate_basis_points // 100} %"
 
 
 class InventoryWidget(QWidget):
@@ -42,6 +56,10 @@ class InventoryWidget(QWidget):
         super().__init__(parent)
         self.inventory = InventoryService(products)
         self.session = session
+        self.settings_repository = BusinessSettingsRepository(products.database)
+        self.category_service = CategoryService(CategoryRepository(products.database))
+        self.business = self.settings_repository.get(session.user.business_id)
+        self.all_categories = self.category_service.list(session, include_inactive=True)
         self.editing_id: int | None = None
         self.visible_products = []
         self.code = QLineEdit()
@@ -49,7 +67,13 @@ class InventoryWidget(QWidget):
         self.name = QLineEdit()
         self.price = QLineEdit()
         self.stock = QLineEdit()
-        for field in (self.code, self.name, self.price, self.stock):
+        self.cost = QLineEdit()
+        self.cost.setPlaceholderText("Opcional")
+        self.category = QComboBox()
+        self.tax_rate = QComboBox()
+        for rate in TAX_RATES_BASIS_POINTS:
+            self.tax_rate.addItem(rate_label(rate), rate)
+        for field in (self.code, self.name, self.price, self.cost, self.stock):
             field.returnPressed.connect(self.save_product)
         save = set_variant(QPushButton("Guardar producto"), "primary")
         save.clicked.connect(self.save_product)
@@ -64,7 +88,10 @@ class InventoryWidget(QWidget):
         form = QFormLayout()
         form.addRow("Código:", self.code)
         form.addRow("Nombre:", self.name)
-        form.addRow("Precio:", self.price)
+        form.addRow("Categoría:", self.category)
+        form.addRow("Precio (con IVA):", self.price)
+        form.addRow("IVA:", self.tax_rate)
+        form.addRow("Costo:", self.cost)
         form.addRow("Stock:", self.stock)
         self.drawer = Drawer("Nuevo producto", self)
         self.drawer.content_layout.addLayout(form)
@@ -74,7 +101,7 @@ class InventoryWidget(QWidget):
         self.drawer.content_layout.addWidget(self.message)
         self.drawer.hide()
 
-        self.table = DataTable(5, ["Código", "Nombre", "Precio", "Stock", "Estado"])
+        self.table = DataTable(len(TABLE_HEADERS), TABLE_HEADERS)
         self.table.itemSelectionChanged.connect(self.load_selected)
         self.empty_state = EmptyState(
             "Tu inventario todavía está vacío",
@@ -117,21 +144,64 @@ class InventoryWidget(QWidget):
         layout.addWidget(table_card)
         layout.addWidget(self.empty_state)
         layout.addWidget(self.drawer)
+        self._fill_categories(None)
+        self._select_rate(self.business.tax_rate_basis_points)
         self.refresh()
+
+    def refresh_profile(self) -> None:
+        """Reload the business settings and categories after they changed elsewhere."""
+        self.business = self.settings_repository.get(self.session.user.business_id)
+        self.all_categories = self.category_service.list(self.session, include_inactive=True)
+        self._fill_categories(self.category.currentData())
+        if self.editing_id is None:
+            self._select_rate(self.business.tax_rate_basis_points)
+        self.refresh()
+
+    def _fill_categories(self, selected_id: int | None) -> None:
+        """List the active categories, plus the selected one when it was deactivated."""
+        self.category.clear()
+        self.category.addItem(NO_CATEGORY, None)
+        for category in self.all_categories:
+            if category.active or category.id == selected_id:
+                label = category.name if category.active else f"{category.name} (inactiva)"
+                self.category.addItem(label, category.id)
+        self.category.setCurrentIndex(max(self.category.findData(selected_id), 0))
+
+    def _select_rate(self, rate_basis_points: int) -> None:
+        self.tax_rate.setCurrentIndex(max(self.tax_rate.findData(rate_basis_points), 0))
 
     def save_product(self) -> None:
         try:
-            values = (
-                self.code.text(),
-                self.name.text(),
-                self._parse_money(self.price.text()),
-                self._parse_integer(self.stock.text(), "El stock"),
-            )
+            code, name = self.code.text(), self.name.text()
+            price = self._parse_money(self.price.text(), "El precio")
+            cost = self._parse_optional_money(self.cost.text(), "El costo")
+            stock = self._parse_integer(self.stock.text(), "El stock")
+            category_id = self.category.currentData()
+            rate = self.tax_rate.currentData()
             if self.editing_id is None:
-                product = self.inventory.create_product(self.session, *values)
+                product = self.inventory.create_product(
+                    self.session,
+                    code,
+                    name,
+                    price,
+                    stock,
+                    category_id=category_id,
+                    cost_cents=cost,
+                    tax_rate_basis_points=rate,
+                )
             else:
-                product = self.inventory.update_product(self.session, self.editing_id, *values)
-        except ValueError as error:
+                product = self.inventory.update_product(
+                    self.session,
+                    self.editing_id,
+                    code,
+                    name,
+                    price,
+                    stock,
+                    tax_rate_basis_points=rate,
+                    category_id=category_id,
+                    cost_cents=cost,
+                )
+        except (ValueError, PermissionError) as error:
             self.message.show_error(str(error))
             return
         self.clear_form()
@@ -141,6 +211,10 @@ class InventoryWidget(QWidget):
     def refresh(self) -> None:
         products = self.inventory.products.find_active(self.search.text())
         self.visible_products = products
+        names = {category.id: category.name for category in self.all_categories}
+        symbol = self.business.currency_symbol
+        separator = self.business.decimal_separator
+        threshold = self.business.low_stock_threshold
         self.table.setRowCount(0)
         for product in products:
             row = self.table.rowCount()
@@ -148,28 +222,40 @@ class InventoryWidget(QWidget):
             values = (
                 product.code,
                 product.name,
-                format_money(product.price_cents),
+                self._category_name(names, product.category_id),
+                format_money(product.price_cents, symbol, separator),
+                rate_label(product.tax_rate_basis_points),
+                self._margin_text(product, symbol, separator),
                 str(product.stock),
             )
             for column, value in enumerate(values):
                 self.table.setItem(row, column, QTableWidgetItem(value))
-            state = (
-                "danger" if product.stock == 0 else "warning" if product.stock <= 3 else "success"
-            )
-            status = (
-                "Agotado"
-                if product.stock == 0
-                else "Stock bajo"
-                if product.stock <= 3
-                else "Activo"
-            )
-            self.table.setCellWidget(
-                row,
-                4,
-                StatusBadge(status, state),
-            )
+            if product.stock == 0:
+                state, status = "danger", "Agotado"
+            elif product.stock <= threshold:
+                state, status = "warning", "Stock bajo"
+            else:
+                state, status = "success", "Activo"
+            self.table.setCellWidget(row, STATUS_COLUMN, StatusBadge(status, state))
         self.empty_state.setVisible(not products)
         self.result_count.setText(f"{len(products)} producto{'s' if len(products) != 1 else ''}")
+
+    @staticmethod
+    def _category_name(names: dict[int, str], category_id: int | None) -> str:
+        return NO_VALUE if category_id is None else names.get(category_id, NO_VALUE)
+
+    @staticmethod
+    def _margin_text(product: Product, symbol: str, separator: str) -> str:
+        """Price base without IVA minus the cost; a dash when the cost is unknown."""
+        if product.cost_cents is None:
+            return NO_VALUE
+        base, _tax = split_tax_included(product.price_cents, product.tax_rate_basis_points)
+        return format_money(base - product.cost_cents, symbol, separator)
+
+    def _plain_amount(self, cents: int) -> str:
+        """Editable amount: no symbol or grouping, with the business decimal separator."""
+        units, remainder = divmod(cents, 100)
+        return f"{units}{self.business.decimal_separator}{remainder:02d}"
 
     def load_selected(self) -> None:
         row = self.table.currentRow()
@@ -182,8 +268,12 @@ class InventoryWidget(QWidget):
         self.drawer.set_title("Editar producto")
         self.code.setText(product.code)
         self.name.setText(product.name)
-        units, cents = divmod(product.price_cents, 100)
-        self.price.setText(f"{units}.{cents:02d}")
+        self.price.setText(self._plain_amount(product.price_cents))
+        self.cost.setText(
+            "" if product.cost_cents is None else self._plain_amount(product.cost_cents)
+        )
+        self._fill_categories(product.category_id)
+        self._select_rate(product.tax_rate_basis_points)
         self.stock.setText(str(product.stock))
         self.message.clear_message()
         self.drawer.open_with_focus(self.name)
@@ -193,7 +283,10 @@ class InventoryWidget(QWidget):
         self.code.clear()
         self.name.clear()
         self.price.clear()
+        self.cost.clear()
         self.stock.clear()
+        self._fill_categories(None)
+        self._select_rate(self.business.tax_rate_basis_points)
         self.table.clearSelection()
         self.message.clear_message()
         self.drawer.hide()
@@ -221,15 +314,19 @@ class InventoryWidget(QWidget):
         self.notification.emit(f"Producto {product.name} desactivado.", "success")
 
     @staticmethod
-    def _parse_money(value: str) -> int:
+    def _parse_money(value: str, label: str) -> int:
         try:
             amount = Decimal(value.strip().replace(",", "."))
             cents = int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        except InvalidOperation as error:
-            raise ValueError("El precio debe ser un número válido.") from error
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError(f"{label} debe ser un número válido.") from error
         if cents < 0:
-            raise ValueError("El precio no puede ser negativo.")
+            raise ValueError(f"{label} no puede ser negativo.")
         return cents
+
+    @classmethod
+    def _parse_optional_money(cls, value: str, label: str) -> int | None:
+        return cls._parse_money(value, label) if value.strip() else None
 
     @staticmethod
     def _parse_integer(value: str, label: str) -> int:

@@ -96,9 +96,7 @@ def test_users_drawer_has_one_primary_action(qapp, owner):
 
 def test_settings_has_one_primary_and_restore_is_danger(qapp, database, owner):
     _, session = owner
-    settings = SettingsWidget(
-        BusinessSettingsRepository(database), session.user.business_id, database
-    )
+    settings = SettingsWidget(BusinessSettingsRepository(database), session, database)
 
     found = variants(settings)
 
@@ -118,7 +116,7 @@ def test_login_uses_svg_icons_instead_of_text_glyphs(qapp, owner):
     assert "Funciona sin internet" in texts
 
 
-@pytest.mark.parametrize(("cents", "expected"), [(250, "2.50"), (1999, "19.99"), (5, "0.05")])
+@pytest.mark.parametrize(("cents", "expected"), [(250, "2,50"), (1999, "19,99"), (5, "0,05")])
 def test_edit_drawer_shows_exact_price(qapp, database, owner, cents, expected):
     _, session = owner
     products = ProductRepository(database)

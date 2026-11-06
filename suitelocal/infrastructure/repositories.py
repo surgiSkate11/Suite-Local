@@ -322,7 +322,7 @@ class CategoryRepository:
             ).fetchone()
             if used is not None:
                 raise ValueError(
-                    "La categoría tiene productos; desactívala en lugar de eliminarla."
+                    "La categoría tiene productos; desactivala en lugar de eliminarla."
                 )
             connection.execute("DELETE FROM categories WHERE id = ?", (category_id,))
 

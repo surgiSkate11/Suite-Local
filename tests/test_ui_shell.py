@@ -455,3 +455,147 @@ def test_a_table_charge_refreshes_the_counter_pos_stock(qapp, env):
 
     assert window.pos_widget.product_list.card_at(0).meta_label.text() == "8 en stock"
     destroy(window)
+
+
+def record_toasts(window) -> list[tuple[str, str]]:
+    toasts: list[tuple[str, str]] = []
+    window.toasts.show_toast = lambda message, state: toasts.append((message, state))  # type: ignore[method-assign]
+    return toasts
+
+
+def test_the_owner_has_the_settings_and_inventory_pages_and_the_cashier_does_not(qapp, env):
+    database, auth, owner = env
+    owner_window = build_shell(database, auth, owner)
+    cashier_window = build_shell(database, auth, cashier_of(env))
+
+    assert owner_window.settings_page is not None
+    assert owner_window.inventory_page is not None
+    assert cashier_window.settings_page is None
+    assert cashier_window.inventory_page is None
+    assert "Ajustes" not in nav_texts(cashier_window)
+    destroy(owner_window)
+    destroy(cashier_window)
+
+
+def test_saving_the_settings_refreshes_the_pos_money_format_without_restarting(qapp, env):
+    database, auth, owner = env
+    ProductRepository(database).add("A-1", "Arroz", 250, 10)
+    window = build_shell(database, auth, owner)
+    assert window.pos_widget.product_list.card_at(0).price_label.text() == "$ 2,50"
+    assert window.settings_page is not None
+    window.settings_page.decimal_separator.setCurrentText("Punto (1,234.56)")
+
+    window.settings_page.save()
+
+    assert window.pos_widget.decimal_separator == "."
+    assert window.pos_widget.product_list.card_at(0).price_label.text() == "$ 2.50"
+    destroy(window)
+
+
+def test_saving_the_settings_refreshes_the_inventory_page(qapp, env):
+    database, auth, owner = env
+    ProductRepository(database).add("A-1", "Arroz", 250, 10)
+    window = build_shell(database, auth, owner)
+    assert window.inventory_page is not None and window.settings_page is not None
+    assert window.inventory_page.table.item(0, 3).text() == "$ 2,50"
+    window.settings_page.decimal_separator.setCurrentText("Punto (1,234.56)")
+
+    window.settings_page.save()
+
+    assert window.inventory_page.table.item(0, 3).text() == "$ 2.50"
+    destroy(window)
+
+
+def test_saving_the_settings_shows_the_new_business_name_in_the_rail(qapp, env):
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    assert window.settings_page is not None
+    window.settings_page.name.setText("Ferretería Luna")
+
+    window.settings_page.save()
+
+    assert window.brand_business.text() == "Ferretería Luna"
+    assert window.top_account.text() == "<b>Ferretería Luna</b>"
+    assert window.windowTitle() == "SuiteLocal — Ferretería Luna"
+    assert window.global_search.placeholderText() == "Buscar en Ferretería Luna..."
+    destroy(window)
+
+
+def test_a_category_added_in_the_settings_reaches_the_pos_and_inventory(qapp, env):
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    assert window.settings_page is not None and window.inventory_page is not None
+    window.settings_page.category_name.setText("Lácteos")
+
+    window.settings_page.add_category()
+
+    assert [category.name for category in window.pos_widget.categories] == ["Lácteos"]
+    assert window.inventory_page.category.findText("Lácteos") >= 0
+    destroy(window)
+
+
+def test_saving_the_settings_refreshes_the_tables_page_when_the_module_is_on(qapp, env):
+    enable_tables(env)
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    assert window.tables_widget is not None and window.settings_page is not None
+    assert window.tables_widget.decimal_separator == ","
+    window.settings_page.decimal_separator.setCurrentText("Punto (1,234.56)")
+    window.settings_page.transfer.setChecked(False)
+
+    window.settings_page.save()
+
+    assert window.tables_widget.decimal_separator == "."
+    assert window.tables_widget.enabled_payment_methods == ("cash",)
+    destroy(window)
+
+
+def test_toggling_the_mesas_module_toasts_that_it_applies_on_the_next_login(qapp, env):
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    toasts = record_toasts(window)
+    assert window.settings_page is not None
+    before = nav_texts(window)
+
+    window.settings_page.module_boxes["mesas"].setChecked(True)
+    window.settings_page.save()
+
+    assert toasts[-1] == (
+        "El módulo de mesas se aplica la próxima vez que inicies sesión.",
+        "info",
+    )
+    assert len([t for t in toasts if "mesas" in t[0]]) == 1
+    assert nav_texts(window) == before
+    destroy(window)
+
+
+def test_saving_without_toggling_mesas_shows_no_mesas_toast(qapp, env):
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    toasts = record_toasts(window)
+    assert window.settings_page is not None
+
+    window.settings_page.save()
+    window.settings_page.module_boxes["mesas"].setChecked(True)
+    window.settings_page.save()
+    window.settings_page.save()
+
+    assert len([t for t in toasts if "mesas" in t[0]]) == 1
+    destroy(window)
+
+
+def test_turning_mesas_off_toasts_too(qapp, env):
+    enable_tables(env)
+    database, auth, owner = env
+    window = build_shell(database, auth, owner)
+    toasts = record_toasts(window)
+    assert window.settings_page is not None
+
+    window.settings_page.module_boxes["mesas"].setChecked(False)
+    window.settings_page.save()
+
+    assert (
+        "El módulo de mesas se aplica la próxima vez que inicies sesión.",
+        "info",
+    ) in toasts
+    destroy(window)

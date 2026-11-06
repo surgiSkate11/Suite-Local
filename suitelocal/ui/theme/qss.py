@@ -249,6 +249,18 @@ def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
         padding: 4px;
     }}
     #pageSubtitle {{ color: {tokens.text_500}; font-size: 13px; }}
+    #moduleHint {{ color: {tokens.text_500}; font-size: 12px; padding-left: 26px; }}
+    #categoryList {{
+        background: {tokens.surface};
+        color: {tokens.text_900};
+        border: 1px solid {tokens.border};
+        border-radius: {tokens.radius_control}px;
+        padding: 4px;
+        outline: 0;
+    }}
+    #categoryList::item {{ padding: 8px 10px; border-radius: 8px; }}
+    #categoryList::item:hover {{ background: {tokens.brand_50}; }}
+    #categoryList::item:selected {{ background: {tokens.brand_100}; color: {tokens.text_900}; }}
     #inlineMessage {{
         color: {tokens.success};
         background: {tokens.success_background};

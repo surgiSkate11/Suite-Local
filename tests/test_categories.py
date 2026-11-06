@@ -121,7 +121,7 @@ def test_delete_removes_unused_categories_only(env):
     products.add("A-1", "Arroz", 250, 5, category_id=used.id)
 
     service.delete(owner, unused.id)
-    with pytest.raises(ValueError, match="desactívala"):
+    with pytest.raises(ValueError, match="desactivala"):
         service.delete(owner, used.id)
 
     assert names(service, owner, include_inactive=True) == ["Con productos"]

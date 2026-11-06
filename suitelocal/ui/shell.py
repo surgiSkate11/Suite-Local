@@ -37,6 +37,7 @@ from suitelocal.ui.components import ElidedLabel, ToastHost
 from suitelocal.ui.dashboard import DashboardWidget
 from suitelocal.ui.inventory import InventoryWidget
 from suitelocal.ui.pos import PosWidget, format_money
+from suitelocal.ui.settings import SettingsWidget
 from suitelocal.ui.tables import TablesWidget
 from suitelocal.ui.theme.icons import icon
 from suitelocal.ui.theme.manager import current_tokens, set_theme, theme_manager
@@ -101,7 +102,12 @@ class AppShell(QMainWindow):
         business = settings.get(session.user.business_id)
         self.setWindowTitle(f"SuiteLocal — {business.name}")
         self._session = session
+        self._settings = settings
         self._currency_symbol = business.currency_symbol
+        # The rail is built once per login, so module changes are compared with what it shows.
+        self._enabled_modules = business.enabled_modules
+        self.inventory_page: InventoryWidget | None = None
+        self.settings_page: SettingsWidget | None = None
         self.cash_register = CashRegisterService(database)
         self.dashboard = DashboardWidget(
             products,
@@ -143,15 +149,17 @@ class AppShell(QMainWindow):
         if session.is_owner:
             inventory = InventoryWidget(products, session)
             inventory.notification.connect(self._show_toast)
+            self.inventory_page = inventory
             inventory_index = self._add_page(inventory)
-            from suitelocal.ui.settings import SettingsWidget
             from suitelocal.ui.users import UsersWidget
 
             users = UsersWidget(auth, session)
             users.notification.connect(self._show_toast)
             users_index = self._add_page(users)
-            settings_page = SettingsWidget(settings, session.user.business_id, database)
+            settings_page = SettingsWidget(settings, session, database)
             settings_page.notification.connect(self._show_toast)
+            settings_page.business_changed.connect(self._on_business_changed)
+            self.settings_page = settings_page
             settings_index = self._add_page(settings_page)
             operation.append(("Inventario", inventory_index, "box"))
             groups.append(
@@ -420,6 +428,36 @@ class AppShell(QMainWindow):
         layout.addStretch()
         layout.addWidget(self.status_cash)
         return self.status_bar
+
+    # -- business profile -------------------------------------------------------------------
+
+    def _on_business_changed(self) -> None:
+        """Adopt saved settings in every open page; only the rail's entries need a new login."""
+        business = self._settings.get(self._session.user.business_id)
+        self._currency_symbol = business.currency_symbol
+        self.setWindowTitle(f"SuiteLocal — {business.name}")
+        self.brand_business.setText(business.name)
+        self.top_account.setText(f"<b>{business.name}</b>")
+        self.global_search.setPlaceholderText(f"Buscar en {business.name}...")
+        self.dashboard.currency_symbol = business.currency_symbol
+        self.dashboard.low_stock_threshold = business.low_stock_threshold
+        self.dashboard.refresh()
+        self.pos_widget.apply_business(business, self.categories.list(self._session))
+        if self.tables_widget is not None:
+            self.tables_widget.currency_symbol = business.currency_symbol
+            self.tables_widget.decimal_separator = business.decimal_separator
+            self.tables_widget.enabled_payment_methods = business.enabled_payment_methods or (
+                "cash",
+            )
+            self.tables_widget.refresh()
+        if self.inventory_page is not None:
+            self.inventory_page.refresh_profile()
+        self.refresh_register()
+        if ("mesas" in business.enabled_modules) != ("mesas" in self._enabled_modules):
+            self._show_toast(
+                "El módulo de mesas se aplica la próxima vez que inicies sesión.", "info"
+            )
+        self._enabled_modules = business.enabled_modules
 
     # -- cash register ----------------------------------------------------------------------
 

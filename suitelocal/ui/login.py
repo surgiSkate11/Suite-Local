@@ -1,5 +1,6 @@
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QFormLayout,
     QHBoxLayout,
@@ -12,6 +13,13 @@ from PySide6.QtWidgets import (
 
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session
+from suitelocal.domain.business import (
+    BUSINESS_TYPES,
+    DEFAULT_BUSINESS_TYPE,
+    DEFAULT_TAX_REGIME,
+    TAX_REGIMES,
+    requires_ruc,
+)
 from suitelocal.ui.components import InlineMessage
 from suitelocal.ui.theme.icons import icon
 from suitelocal.ui.theme.tokens import TOKENS
@@ -55,9 +63,9 @@ def build_brand_panel() -> QWidget:
     return panel
 
 
-def configure_dialog(dialog: QDialog, title: str, subtitle: str) -> QVBoxLayout:
+def configure_dialog(dialog: QDialog, title: str, subtitle: str, height: int = 520) -> QVBoxLayout:
     dialog.setWindowTitle(title)
-    dialog.setFixedSize(820, 520)
+    dialog.setFixedSize(820, height)
     dialog.setObjectName("authDialog")
     root = QHBoxLayout(dialog)
     root.setContentsMargins(0, 0, 0, 0)
@@ -85,9 +93,23 @@ class SetupDialog(QDialog):
             self,
             "Configura tu negocio",
             "Crea el acceso principal para comenzar a usar SuiteLocal.",
+            height=700,
         )
         self.business = QLineEdit()
         self.business.setPlaceholderText("Nombre del negocio")
+        self.business_type = QComboBox()
+        for code, label in BUSINESS_TYPES.items():
+            self.business_type.addItem(label, code)
+        self.business_type.setCurrentIndex(self.business_type.findData(DEFAULT_BUSINESS_TYPE))
+        self.regime = QComboBox()
+        for code, label in TAX_REGIMES.items():
+            self.regime.addItem(label, code)
+        self.regime.setCurrentIndex(self.regime.findData(DEFAULT_TAX_REGIME))
+        self.ruc = QLineEdit()
+        self.ruc.setMaxLength(13)
+        self.ruc.setPlaceholderText("13 dígitos")
+        for combo in (self.business_type, self.regime):
+            combo.setMinimumHeight(40)
         self.username = QLineEdit()
         self.username.setPlaceholderText("Usuario dueño")
         self.password = QLineEdit()
@@ -103,6 +125,12 @@ class SetupDialog(QDialog):
         form = QFormLayout()
         form.setVerticalSpacing(12)
         add_field(form, "Negocio", self.business)
+        form.addRow(QLabel("Tipo de negocio"), self.business_type)
+        form.addRow(QLabel("Régimen"), self.regime)
+        self.ruc_label = QLabel("RUC")
+        self.ruc.setMinimumHeight(40)
+        self.ruc.setObjectName("authField")
+        form.addRow(self.ruc_label, self.ruc)
         add_field(form, "Usuario dueño", self.username)
         add_field(form, "Contraseña", self.password)
         add_field(form, "Confirmar contraseña", self.password_confirmation)
@@ -111,6 +139,14 @@ class SetupDialog(QDialog):
         layout.addWidget(self.message)
         layout.addWidget(save)
         layout.addStretch()
+        self.regime.currentIndexChanged.connect(self._update_ruc_visibility)
+        self._update_ruc_visibility()
+
+    def _update_ruc_visibility(self) -> None:
+        """Ask for the RUC only in the regimes that must issue electronic invoices."""
+        required = requires_ruc(self.regime.currentData())
+        self.ruc_label.setVisible(required)
+        self.ruc.setVisible(required)
 
     def create_owner(self) -> None:
         try:
@@ -119,6 +155,9 @@ class SetupDialog(QDialog):
                 self.username.text(),
                 self.password.text(),
                 self.password_confirmation.text(),
+                business_type=self.business_type.currentData(),
+                tax_regime=self.regime.currentData(),
+                ruc=self.ruc.text() if requires_ruc(self.regime.currentData()) else "",
             )
         except ValueError as error:
             self.message.show_error(str(error))
