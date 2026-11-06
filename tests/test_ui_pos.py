@@ -1,5 +1,6 @@
 import inspect
 import os
+import sqlite3
 import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -10,6 +11,9 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
 
+from suitelocal.application.auth import AuthService
+from suitelocal.application.receipts import ReceiptService
+from suitelocal.domain.auth import Session
 from suitelocal.domain.business import BusinessSettings
 from suitelocal.domain.models import Payment
 from suitelocal.infrastructure.database import Database
@@ -18,6 +22,7 @@ from suitelocal.infrastructure.repositories import (
     ProductRepository,
     SaleRepository,
 )
+from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.ui.components import ElidedLabel, KeyHint
 from suitelocal.ui.components.product import ProductCard
 from suitelocal.ui.pos import PosWidget, format_money
@@ -767,3 +772,288 @@ def test_split_payment_dialog_receives_the_decimal_separator(pos):
 
     assert calls[0]["decimal_separator"] == "."
     assert calls[0]["total_note"] == "IVA incluido $ 0.33"
+
+
+# -- ticket printing -----------------------------------------------------------------------
+
+
+class FakeReceiptOutput:
+    """Records the receipts it is asked to print; nothing reaches a printer."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.printed: list = []
+        self.error = error
+
+    def print_receipt(self, receipt) -> None:
+        if self.error is not None:
+            raise self.error
+        self.printed.append(receipt)
+
+
+class Wired:
+    """A POS with a signed-in user and a fake printer, plus what it announced."""
+
+    def __init__(self, tmp_path, regime: str = "sin_registro", error: Exception | None = None):
+        self.database = Database(tmp_path / "wired.db")
+        self.database.initialize()
+        auth = AuthService(self.database)
+        self.owner = Session(
+            auth.setup_owner("Tienda Sol", "owner", "clave-segura", "clave-segura")
+        )
+        self.cashier = Session(
+            auth.create_cashier(self.owner, "cajero", "clave-cajero", "clave-cajero")
+        )
+        if regime != "sin_registro":
+            BusinessSettingsRepository(self.database).update_profile(
+                self.owner.user.business_id, tax_regime=regime, ruc="1790012345001"
+            )
+        self.products = ProductRepository(self.database)
+        self.rice = self.products.add("A-1", "Arroz", 250, 10)
+        self.output = FakeReceiptOutput(error)
+        self.pos = PosWidget(
+            self.products,
+            SaleRepository(self.database),
+            ("cash", "transfer", "card"),
+            tax_regime=regime,
+            session=self.cashier,
+            receipts=ReceiptService(self.database),
+            receipt_output=self.output,
+        )
+        self.notifications: list[tuple[str, str]] = []
+        self.registered = 0
+        self.pos.notification.connect(lambda text, state: self.notifications.append((text, state)))
+        self.pos.sale_registered.connect(self._count)
+
+    def _count(self) -> None:
+        self.registered += 1
+
+    def add_rice(self) -> None:
+        self.pos._add_product(self.products.find_active("A-1")[0])
+
+    def sale_row(self) -> sqlite3.Row:
+        with self.database.connect() as connection:
+            return connection.execute("SELECT * FROM sales ORDER BY id DESC LIMIT 1").fetchone()
+
+
+@pytest.fixture
+def wired(qapp, tmp_path):
+    return Wired(tmp_path)
+
+
+def test_a_wired_pos_offers_the_print_switch_on_by_default(wired):
+    assert wired.pos.can_print_ticket is True
+    assert wired.pos.print_switch.isChecked() is True
+    assert wired.pos.print_switch.isVisibleTo(wired.pos)
+    assert wired.pos.charge_button.text() == "Cobrar e imprimir"
+
+
+def test_toggling_the_switch_changes_the_charge_label(wired):
+    wired.pos.print_switch.setChecked(False)
+    assert wired.pos.charge_button.text() == "Cobrar"
+
+    wired.pos.print_switch.setChecked(True)
+    assert wired.pos.charge_button.text() == "Cobrar e imprimir"
+
+
+def test_a_pos_without_a_printer_has_no_switch_and_never_prints(pos):
+    assert pos.can_print_ticket is False
+    assert not pos.print_switch.isVisibleTo(pos)
+    assert not pos.reprint_button.isVisibleTo(pos)
+    assert pos.charge_button.text() == "Cobrar"
+
+
+def test_inline_sale_prints_the_stored_receipt_once(wired):
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+
+    wired.pos.confirm_sale()
+
+    assert wired.registered == 1
+    assert len(wired.output.printed) == 1
+    receipt = wired.output.printed[0]
+    assert (receipt.number, receipt.total_cents, receipt.change_cents) == ("000001", 250, 250)
+    assert receipt.cashier == "cajero"
+    assert [(line.name, line.quantity) for line in receipt.lines] == [("Arroz", 1)]
+
+
+def test_inline_sale_does_not_print_when_the_switch_is_off(wired):
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+    wired.pos.print_switch.setChecked(False)
+
+    wired.pos.confirm_sale()
+
+    assert wired.output.printed == []
+    assert wired.registered == 1
+
+
+def test_split_sale_follows_the_dialog_switch(wired):
+    wired.pos.payment_dialog_factory = lambda **_kwargs: dialog
+    for wanted in (True, False):
+        wired.add_rice()
+        dialog = FakeDialog((Payment("cash", 250),))
+        dialog.print_ticket = wanted
+
+        wired.pos.open_split_payment()
+
+    assert wired.registered == 2
+    assert len(wired.output.printed) == 1
+
+
+def test_a_failed_sale_does_not_print(wired):
+    wired.add_rice()
+    wired.pos.received_edit.setText("1.00")
+
+    wired.pos.confirm_sale()
+
+    assert wired.registered == 0
+    assert wired.output.printed == []
+
+
+def test_a_printer_failure_warns_and_keeps_the_sale(qapp, tmp_path):
+    wired = Wired(tmp_path, error=RuntimeError("La impresora no está disponible."))
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+
+    wired.pos.confirm_sale()
+
+    assert wired.notifications[-1] == (
+        "No se pudo imprimir el ticket: La impresora no está disponible.",
+        "warning",
+    )
+    assert wired.registered == 1
+    assert wired.pos.sales.today_summary() == (1, 250)
+    assert stock_of(wired.pos, "A-1") == 9
+    assert wired.pos.cart.lines == ()
+
+
+def test_the_sale_stores_the_business_and_the_seller(wired):
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+
+    wired.pos.confirm_sale()
+
+    row = wired.sale_row()
+    assert (row["business_id"], row["user_id"]) == (
+        wired.cashier.user.business_id,
+        wired.cashier.user.id,
+    )
+
+
+def test_ctrl_p_reprints_the_last_ticket(wired):
+    assert len(shortcuts_for(wired.pos, "Ctrl+P")) == 1
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+    wired.pos.confirm_sale()
+    wired.output.printed.clear()
+
+    show_active(wired.pos)
+    QTest.keyClick(wired.pos, Qt.Key.Key_P, Qt.KeyboardModifier.ControlModifier)
+
+    assert [receipt.number for receipt in wired.output.printed] == ["000001"]
+
+
+def test_reprint_button_prints_the_last_ticket_even_when_it_was_not_printed_before(wired):
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+    wired.pos.print_switch.setChecked(False)
+    wired.pos.confirm_sale()
+    assert wired.output.printed == []
+
+    wired.pos.reprint_button.click()
+
+    assert [receipt.number for receipt in wired.output.printed] == ["000001"]
+
+
+def test_reprint_without_any_sale_explains_itself(wired):
+    wired.pos.reprint_button.click()
+
+    assert wired.output.printed == []
+    assert wired.notifications[-1] == ("Todavía no hay un ticket para reimprimir.", "info")
+
+
+def test_reprint_failure_warns(qapp, tmp_path):
+    wired = Wired(tmp_path)
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+    wired.pos.confirm_sale()
+    wired.output.error = RuntimeError("sin papel")
+
+    wired.pos.reprint_last_ticket()
+
+    assert wired.notifications[-1] == ("No se pudo imprimir el ticket: sin papel", "warning")
+
+
+def test_ctrl_p_does_nothing_without_a_printer(pos):
+    notifications: list[tuple[str, str]] = []
+    pos.notification.connect(lambda text, state: notifications.append((text, state)))
+
+    assert pos.reprint_last_ticket() is False
+
+    assert notifications == []
+
+
+# -- sales note number (RIMPE popular) -----------------------------------------------------
+
+
+def test_the_sales_note_field_exists_only_for_rimpe_popular(qapp, tmp_path):
+    popular = Wired(tmp_path / "a", "rimpe_popular")
+    general = Wired(tmp_path / "b", "general")
+    unregistered = Wired(tmp_path / "c")
+
+    assert popular.pos.sales_note_edit.isVisibleTo(popular.pos)
+    assert not general.pos.sales_note_edit.isVisibleTo(general.pos)
+    assert not unregistered.pos.sales_note_edit.isVisibleTo(unregistered.pos)
+    assert popular.pos.sales_note_edit.placeholderText() == "N.º de nota de venta (opcional)"
+
+
+def test_the_sales_note_field_follows_the_saved_regime(wired):
+    repo = BusinessSettingsRepository(wired.database)
+    business_id = wired.owner.user.business_id
+
+    wired.pos.apply_business(repo.update_profile(business_id, tax_regime="rimpe_popular"), ())
+    assert wired.pos.sales_note_edit.isVisibleTo(wired.pos)
+
+    wired.pos.apply_business(repo.update_profile(business_id, tax_regime="sin_registro"), ())
+    assert not wired.pos.sales_note_edit.isVisibleTo(wired.pos)
+
+
+def test_popular_sale_stores_the_note_shows_it_on_the_receipt_and_clears_the_field(qapp, tmp_path):
+    wired = Wired(tmp_path, "rimpe_popular")
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+    wired.pos.sales_note_edit.setText("  001-001-000123 ")
+
+    wired.pos.confirm_sale()
+
+    assert wired.sale_row()["sales_note_number"] == "001-001-000123"
+    assert wired.output.printed[0].sales_note_number == "001-001-000123"
+    assert wired.pos.sales_note_edit.text() == ""
+
+
+def test_popular_sale_without_a_note_stores_none(qapp, tmp_path):
+    wired = Wired(tmp_path, "rimpe_popular")
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+
+    wired.pos.confirm_sale()
+
+    assert wired.sale_row()["sales_note_number"] is None
+    assert wired.output.printed[0].sales_note_number is None
+
+
+def test_a_hidden_sales_note_is_never_stored_for_other_regimes(wired):
+    wired.add_rice()
+    wired.pos.received_edit.setText("5.00")
+    wired.pos.sales_note_edit.setText("001-001-000123")
+
+    wired.pos.confirm_sale()
+
+    assert wired.sale_row()["sales_note_number"] is None
+    assert wired.output.printed[0].sales_note_number is None
+
+
+def test_sales_note_input_is_limited_to_the_stored_length(qapp, tmp_path):
+    wired = Wired(tmp_path, "rimpe_popular")
+
+    assert wired.pos.sales_note_edit.maxLength() == 30

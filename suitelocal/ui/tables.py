@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.catalog import CatalogService
+from suitelocal.application.receipts import ReceiptService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
 from suitelocal.domain.models import Payment, Sale
@@ -39,6 +40,7 @@ from suitelocal.ui.components import (
     set_variant,
 )
 from suitelocal.ui.payment_dialog import PaymentDialog, format_money
+from suitelocal.ui.receipt import ReceiptOutput
 from suitelocal.ui.theme.manager import current_tokens, theme_manager
 
 __all__ = ["TablesWidget"]
@@ -251,6 +253,8 @@ class TablesWidget(QWidget):
         table_chooser: TableChooser | None = None,
         confirmer: Confirmer | None = None,
         parent: QWidget | None = None,
+        receipts: ReceiptService | None = None,
+        receipt_output: ReceiptOutput | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -263,6 +267,9 @@ class TablesWidget(QWidget):
         self.now = now
         self.table_chooser: TableChooser = table_chooser or choose_free_table
         self.confirmer: Confirmer = confirmer or confirm_action
+        self.receipts = receipts
+        self.receipt_output = receipt_output
+        self.last_print_ticket = False
         self.cards: list[TableCard] = []
         self.statuses: list[TableStatus] = []
         self.selected_table_id: int | None = None
@@ -666,6 +673,17 @@ class TablesWidget(QWidget):
             f"{status.table.name} cobrada · Venta N.º {sale_id} · Total {total}", "success"
         )
         self.sale_registered.emit()
+        if self.last_print_ticket:
+            self._print_receipt(sale_id)
+
+    def _print_receipt(self, sale_id: int) -> None:
+        """Print the stored sale; the charge is already saved, so a failure only warns."""
+        if self.receipts is None or self.receipt_output is None:
+            return
+        try:
+            self.receipt_output.print_receipt(self.receipts.build(self.session, sale_id))
+        except Exception as error:  # printer drivers raise anything
+            self.notification.emit(f"No se pudo imprimir el ticket: {error}", "warning")
 
     def _collect_payments(self, table_name: str, order: OpenOrder) -> tuple[Payment, ...] | None:
         """Open the payment dialog; return its payments, or None when the cashier cancels."""
@@ -685,5 +703,6 @@ class TablesWidget(QWidget):
         )
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         payments = dialog.payments
+        self.last_print_ticket = accepted and dialog.print_ticket
         dialog.deleteLater()
         return payments if accepted and payments else None

@@ -249,7 +249,7 @@ def test_register_card_shows_exact_base_and_expected_cash(qapp, env):
 
 def test_status_bar_without_open_register(shell):
     assert shell.status_offline.text() == "Funcionando sin internet"
-    assert shell.status_printer.text() == "Impresora: sin configurar"
+    assert shell.status_printer.text() == "Impresora: predeterminada"
     assert shell.status_cash.isHidden()
     texts = [label.text().lower() for label in shell.status_bar.findChildren(QLabel)]
     assert not any("respaldo" in text for text in texts)
@@ -398,6 +398,7 @@ class ChargeDialog:
 
     def __init__(self, payments: tuple[Payment, ...]) -> None:
         self.payments = payments
+        self.print_ticket = False
 
     def exec(self):
         return QDialog.DialogCode.Accepted
@@ -598,4 +599,136 @@ def test_turning_mesas_off_toasts_too(qapp, env):
         "El módulo de mesas se aplica la próxima vez que inicies sesión.",
         "info",
     ) in toasts
+    destroy(window)
+
+
+# -- tickets and printer -------------------------------------------------------------------
+
+
+class FakeReceiptOutput:
+    """Records the receipts it is asked to print; nothing reaches a printer."""
+
+    def __init__(self) -> None:
+        self.printed: list = []
+
+    def print_receipt(self, receipt) -> None:
+        self.printed.append(receipt)
+
+
+def test_status_bar_names_the_chosen_printer_or_the_default_one(qapp, env):
+    database, auth, owner = env
+    default_shell = build_shell(database, auth, owner)
+    BusinessSettingsRepository(database).update_profile(owner.business_id, printer_name="XP-58")
+    named_shell = build_shell(database, auth, owner)
+
+    assert default_shell.status_printer.text() == "Impresora: predeterminada"
+    assert named_shell.status_printer.text() == "Impresora: XP-58"
+    destroy(default_shell)
+    destroy(named_shell)
+
+
+def test_status_bar_follows_the_printer_saved_in_settings(shell, env):
+    database, _, owner = env
+    assert shell.settings_page is not None
+
+    BusinessSettingsRepository(database).update_profile(
+        owner.business_id, printer_name="EPSON TM-T20"
+    )
+    shell.settings_page.business_changed.emit()
+    assert shell.status_printer.text() == "Impresora: EPSON TM-T20"
+
+    BusinessSettingsRepository(database).update_profile(owner.business_id, printer_name="")
+    shell.settings_page.business_changed.emit()
+    assert shell.status_printer.text() == "Impresora: predeterminada"
+
+
+def sell_rice_from_the_pos(shell, database) -> None:
+    ProductRepository(database).add("A-1", "Arroz", 250, 100)
+    shell.pos_widget.refresh_products()
+    shell.pos_widget._add_product(ProductRepository(database).find_active("A-1")[0])
+    shell.pos_widget.received_edit.setText("5.00")
+    shell.pos_widget.confirm_sale()
+
+
+def test_a_sale_from_the_shell_prints_through_the_injected_output(qapp, env):
+    database, auth, owner = env
+    output = FakeReceiptOutput()
+    window = AppShell(
+        ProductRepository(database),
+        SaleRepository(database),
+        Session(owner),
+        BusinessSettingsRepository(database),
+        auth,
+        database,
+        receipt_output=output,
+    )
+
+    sell_rice_from_the_pos(window, database)
+
+    assert [(r.number, r.total_cents, r.cashier) for r in output.printed] == [
+        ("000001", 250, "owner")
+    ]
+    assert window.pos_widget.receipt_output is output
+    destroy(window)
+
+
+def test_ctrl_p_in_the_shell_reprints_the_last_ticket(qapp, env):
+    database, auth, owner = env
+    output = FakeReceiptOutput()
+    window = AppShell(
+        ProductRepository(database),
+        SaleRepository(database),
+        Session(owner),
+        BusinessSettingsRepository(database),
+        auth,
+        database,
+        receipt_output=output,
+    )
+    sell_rice_from_the_pos(window, database)
+    output.printed.clear()
+    window.resize(1250, 760)
+    window.show()
+    window.activateWindow()
+    QTest.qWaitForWindowActive(window)
+    window.pages.setCurrentIndex(1)
+    window.pos_widget.search_input.setFocus()
+
+    QTest.keyClick(
+        window.pos_widget.search_input, Qt.Key.Key_P, Qt.KeyboardModifier.ControlModifier
+    )
+
+    assert [r.number for r in output.printed] == ["000001"]
+    destroy(window)
+
+
+def test_the_tables_screen_shares_the_same_printer_output(qapp, env):
+    enable_tables(env)
+    database, auth, owner = env
+    output = FakeReceiptOutput()
+    window = AppShell(
+        ProductRepository(database),
+        SaleRepository(database),
+        Session(owner),
+        BusinessSettingsRepository(database),
+        auth,
+        database,
+        receipt_output=output,
+    )
+
+    assert window.tables_widget is not None
+    assert window.tables_widget.receipt_output is output
+    assert window.tables_widget.receipts is not None
+    destroy(window)
+
+
+def test_the_shell_wires_the_popular_regime_into_the_pos(qapp, env):
+    database, auth, owner = env
+    BusinessSettingsRepository(database).update_profile(
+        owner.business_id, tax_regime="rimpe_popular"
+    )
+
+    window = build_shell(database, auth, owner)
+
+    assert window.pos_widget.tax_regime == "rimpe_popular"
+    assert window.pos_widget.sales_note_edit.isVisibleTo(window.pos_widget)
     destroy(window)

@@ -24,6 +24,7 @@ from suitelocal.application.auth import AuthService
 from suitelocal.application.cash_register import CashRegisterService
 from suitelocal.application.catalog import CatalogService
 from suitelocal.application.categories import CategoryService
+from suitelocal.application.receipts import ReceiptService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.database import Database
@@ -37,6 +38,7 @@ from suitelocal.ui.components import ElidedLabel, ToastHost
 from suitelocal.ui.dashboard import DashboardWidget
 from suitelocal.ui.inventory import InventoryWidget
 from suitelocal.ui.pos import PosWidget, format_money
+from suitelocal.ui.receipt import ReceiptOutput, ReceiptPrinter, printer_status_text
 from suitelocal.ui.settings import SettingsWidget
 from suitelocal.ui.tables import TablesWidget
 from suitelocal.ui.theme.icons import icon
@@ -95,6 +97,7 @@ class AppShell(QMainWindow):
         settings: BusinessSettingsRepository,
         auth: AuthService,
         database: Database,
+        receipt_output: ReceiptOutput | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("SuiteLocal")
@@ -104,11 +107,18 @@ class AppShell(QMainWindow):
         self._session = session
         self._settings = settings
         self._currency_symbol = business.currency_symbol
+        self._printer_name = business.printer_name
         # The rail is built once per login, so module changes are compared with what it shows.
         self._enabled_modules = business.enabled_modules
         self.inventory_page: InventoryWidget | None = None
         self.settings_page: SettingsWidget | None = None
         self.cash_register = CashRegisterService(database)
+        business_id = session.user.business_id
+        # The printer reads paper and printer from the saved settings on every ticket.
+        self.receipt_output: ReceiptOutput = receipt_output or ReceiptPrinter(
+            lambda: settings.get(business_id)
+        )
+        receipts = ReceiptService(database)
         self.dashboard = DashboardWidget(
             products,
             sales,
@@ -128,6 +138,10 @@ class AppShell(QMainWindow):
             decimal_separator=business.decimal_separator,
             enabled_modules=business.enabled_modules,
             categories=self.categories.list(session),
+            tax_regime=business.tax_regime,
+            session=session,
+            receipts=receipts,
+            receipt_output=self.receipt_output,
         )
         self.pages = QStackedWidget()
         self._add_page(self.dashboard)
@@ -144,6 +158,8 @@ class AppShell(QMainWindow):
                 currency_symbol=business.currency_symbol,
                 decimal_separator=business.decimal_separator,
                 enabled_payment_methods=tuple(business.enabled_payment_methods),
+                receipts=receipts,
+                receipt_output=self.receipt_output,
             )
             operation.append(("Mesas", self._add_page(self.tables_widget), "table"))
         if session.is_owner:
@@ -399,9 +415,8 @@ class AppShell(QMainWindow):
             return holder, label
 
         offline, self.status_offline = item("Funcionando sin internet", "ok")
-        # Ticket printing arrives with T7 and the backups module records no last-backup time,
-        # so only what is true today is shown.
-        printer, self.status_printer = item("Impresora: sin configurar", "idle")
+        # The backups module records no last-backup time, so only what is true today is shown.
+        printer, self.status_printer = item(printer_status_text(self._printer_name), "idle")
         self.status_cash_base = QLabel()
         self.status_cash_expected = QLabel()
         for value in (self.status_cash_base, self.status_cash_expected):
@@ -443,6 +458,8 @@ class AppShell(QMainWindow):
         self.dashboard.low_stock_threshold = business.low_stock_threshold
         self.dashboard.refresh()
         self.pos_widget.apply_business(business, self.categories.list(self._session))
+        self._printer_name = business.printer_name
+        self.status_printer.setText(printer_status_text(business.printer_name))
         if self.tables_widget is not None:
             self.tables_widget.currency_symbol = business.currency_symbol
             self.tables_widget.decimal_separator = business.decimal_separator

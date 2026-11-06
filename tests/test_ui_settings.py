@@ -49,6 +49,9 @@ def env(qapp, tmp_path):
     return database, owner, cashier
 
 
+INSTALLED_PRINTERS = ("EPSON TM-T20", "XP-58")
+
+
 def build(env, session=None, confirm=None) -> SettingsWidget:
     database, owner, _ = env
     return SettingsWidget(
@@ -56,6 +59,7 @@ def build(env, session=None, confirm=None) -> SettingsWidget:
         session or owner,
         database,
         confirm=confirm or Confirmations(),
+        printer_names=lambda: INSTALLED_PRINTERS,
     )
 
 
@@ -464,3 +468,90 @@ def test_the_backup_section_is_kept(env):
     labels = {button.text() for button in settings.findChildren(type(settings.save_button))}
 
     assert {"Crear respaldo", "Restaurar respaldo", "Guardar configuración"} <= labels
+
+
+# -- ticket paper and printer --------------------------------------------------------------
+
+
+def test_checkout_card_offers_the_paper_widths_and_the_installed_printers(env):
+    settings = build(env)
+
+    assert combo_texts(settings.receipt_paper) == ["58 mm", "80 mm"]
+    assert settings.receipt_paper.currentText() == "80 mm"
+    assert combo_texts(settings.printer) == [
+        "Predeterminada del sistema",
+        "EPSON TM-T20",
+        "XP-58",
+    ]
+    assert settings.printer.currentText() == "Predeterminada del sistema"
+    assert settings.printer.currentData() == ""
+
+
+def test_saving_stores_the_paper_width_and_the_chosen_printer(env):
+    settings = build(env)
+    settings.receipt_paper.setCurrentText("58 mm")
+    settings.printer.setCurrentText("XP-58")
+
+    settings.save()
+
+    saved = stored(env)
+    assert (saved.receipt_paper_mm, saved.printer_name) == (58, "XP-58")
+    reopened = build(env)
+    assert reopened.receipt_paper.currentText() == "58 mm"
+    assert reopened.printer.currentText() == "XP-58"
+
+
+def test_going_back_to_the_system_default_stores_an_empty_printer(env):
+    settings = build(env)
+    settings.printer.setCurrentText("XP-58")
+    settings.save()
+
+    settings.printer.setCurrentIndex(0)
+    settings.save()
+
+    assert stored(env).printer_name == ""
+
+
+def test_a_saved_printer_that_is_no_longer_installed_stays_selected_and_flagged(env):
+    database, owner, _ = env
+    BusinessSettingsRepository(database).update_profile(
+        owner.user.business_id, printer_name="Vieja-80"
+    )
+
+    settings = build(env)
+
+    assert combo_texts(settings.printer)[-1] == "Vieja-80 (no instalada)"
+    assert settings.printer.currentData() == "Vieja-80"
+    settings.name.setText("Tienda Sol 2")
+    settings.save()
+    assert stored(env).printer_name == "Vieja-80"
+
+
+def test_a_cashier_cannot_change_the_paper_or_the_printer(env):
+    _, _, cashier = env
+    settings = build(env, cashier)
+    settings.receipt_paper.setCurrentText("58 mm")
+    settings.printer.setCurrentText("XP-58")
+
+    settings.save()
+
+    assert settings.message.text() == "Solo el dueño puede realizar esta acción."
+    assert (stored(env).receipt_paper_mm, stored(env).printer_name) == (80, "")
+
+
+def test_a_failure_after_the_profile_step_also_restores_the_paper_and_printer(env):
+    settings = build(env)
+    settings.receipt_paper.setCurrentText("58 mm")
+    settings.printer.setCurrentText("XP-58")
+    settings.threshold.setValue(5)
+    original = settings.profile.update_settings
+
+    def failing(*_args, **_kwargs):
+        raise ValueError("boom")
+
+    settings.profile.update_settings = failing
+    settings.save()
+    settings.profile.update_settings = original
+
+    assert settings.message.text() == "boom"
+    assert (stored(env).receipt_paper_mm, stored(env).printer_name) == (80, "")

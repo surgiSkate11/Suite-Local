@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -23,15 +23,23 @@ from PySide6.QtWidgets import (
 from suitelocal.application.business_profile import BusinessProfileService
 from suitelocal.application.categories import CategoryService
 from suitelocal.domain.auth import Session
-from suitelocal.domain.business import BUSINESS_TYPES, TAX_REGIMES, BusinessSettings, requires_ruc
+from suitelocal.domain.business import (
+    BUSINESS_TYPES,
+    RECEIPT_PAPER_WIDTHS_MM,
+    TAX_REGIMES,
+    BusinessSettings,
+    requires_ruc,
+)
 from suitelocal.domain.tax import TAX_RATES_BASIS_POINTS
 from suitelocal.infrastructure.backups import BackupError, create_backup, restore_backup
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import Category, CategoryRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.ui.components import DangerButton, InlineMessage, confirm_action, set_variant
+from suitelocal.ui.receipt import DEFAULT_PRINTER_LABEL, installed_printer_names
 
 Confirmer = Callable[[QWidget | None, str, str], bool]
+PrinterNames = Callable[[], Sequence[str]]
 
 FIELD_MAX_WIDTH = 460
 NO_SELECTION = "Elegí una categoría de la lista."
@@ -105,9 +113,11 @@ class SettingsWidget(QWidget):
         database: Database,
         confirm: Confirmer = confirm_action,
         parent: QWidget | None = None,
+        printer_names: PrinterNames = installed_printer_names,
     ) -> None:
         super().__init__(parent)
         self.settings = settings
+        self.printer_names = printer_names
         self.session = session
         self.database = database
         self.confirm = confirm
@@ -144,6 +154,10 @@ class SettingsWidget(QWidget):
         self.decimal_separator = _limited(QComboBox())
         for separator, label in DECIMAL_SEPARATOR_LABELS.items():
             self.decimal_separator.addItem(label, separator)
+        self.receipt_paper = _limited(QComboBox())
+        for width in RECEIPT_PAPER_WIDTHS_MM:
+            self.receipt_paper.addItem(f"{width} mm", width)
+        self.printer = _limited(QComboBox())
         self.regime.currentIndexChanged.connect(self._update_ruc_hint)
         for field in (self.name, self.ruc, self.address, self.phone, self.receipt_footer):
             field.returnPressed.connect(self.save)
@@ -232,6 +246,8 @@ class SettingsWidget(QWidget):
         form.addRow("IVA para productos nuevos:", self.tax_rate)
         form.addRow("Avisar stock bajo en:", self.threshold)
         form.addRow("Separador decimal:", self.decimal_separator)
+        form.addRow("Ancho del papel del ticket:", self.receipt_paper)
+        form.addRow("Impresora de tickets:", self.printer)
         layout.addLayout(form)
         return card
 
@@ -307,7 +323,22 @@ class SettingsWidget(QWidget):
         self.decimal_separator.setCurrentIndex(
             max(self.decimal_separator.findData(current.decimal_separator), 0)
         )
+        self.receipt_paper.setCurrentIndex(
+            max(self.receipt_paper.findData(current.receipt_paper_mm), 0)
+        )
+        self._load_printers(current.printer_name)
         self._update_ruc_hint()
+
+    def _load_printers(self, selected: str) -> None:
+        """List the installed printers; a saved one that is gone stays selectable, flagged."""
+        self.printer.clear()
+        self.printer.addItem(DEFAULT_PRINTER_LABEL, "")
+        installed = list(self.printer_names())
+        for name in installed:
+            self.printer.addItem(name, name)
+        if selected and selected not in installed:
+            self.printer.addItem(f"{selected} (no instalada)", selected)
+        self.printer.setCurrentIndex(max(self.printer.findData(selected), 0))
 
     def _load_modules(self, enabled: Iterable[str]) -> None:
         enabled = set(enabled)
@@ -343,6 +374,8 @@ class SettingsWidget(QWidget):
                 address=self.address.text(),
                 phone=self.phone.text(),
                 receipt_footer=self.receipt_footer.text(),
+                receipt_paper_mm=self.receipt_paper.currentData(),
+                printer_name=self.printer.currentData(),
             )
         except (ValueError, PermissionError) as error:
             self.message.show_error(str(error))
@@ -377,6 +410,8 @@ class SettingsWidget(QWidget):
             address=before.address,
             phone=before.phone,
             receipt_footer=before.receipt_footer,
+            receipt_paper_mm=before.receipt_paper_mm,
+            printer_name=before.printer_name,
         )
 
     def apply_template(self) -> None:

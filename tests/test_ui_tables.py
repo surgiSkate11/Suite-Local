@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QPushButton
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.catalog import CatalogService
+from suitelocal.application.receipts import ReceiptService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
 from suitelocal.domain.models import Payment
@@ -33,8 +34,11 @@ def qapp():
 class FakeDialog:
     """Stands in for the modal PaymentDialog so no test ever blocks on ``exec``."""
 
-    def __init__(self, payments: tuple[Payment, ...], accepted: bool = True) -> None:
+    def __init__(
+        self, payments: tuple[Payment, ...], accepted: bool = True, print_ticket: bool = False
+    ) -> None:
         self.payments = payments if accepted else ()
+        self.print_ticket = print_ticket
         self._accepted = accepted
 
     def exec(self) -> QDialog.DialogCode:
@@ -65,18 +69,20 @@ class Env:
         self.dialog_calls: list[dict] = []
         self.dialog_payments: tuple[Payment, ...] = ()
         self.dialog_accepted = True
+        self.dialog_print_ticket = False
         self.confirm_answer = False
         self.chosen_table: int | None = None
 
     def dialog_factory(self, **kwargs) -> FakeDialog:
         self.dialog_calls.append(kwargs)
-        return FakeDialog(self.dialog_payments, self.dialog_accepted)
+        return FakeDialog(self.dialog_payments, self.dialog_accepted, self.dialog_print_ticket)
 
     def build(
         self,
         session: Session | None = None,
         catalog: CatalogService | None = None,
         decimal_separator: str = ",",
+        receipt_output: object | None = None,
     ) -> TablesWidget:
         widget = TablesWidget(
             self.service,
@@ -89,6 +95,8 @@ class Env:
             now=lambda: NOW,
             table_chooser=lambda _parent, free: self.chosen_table,
             confirmer=lambda _parent, _title, _text: self.confirm_answer,
+            receipts=None if receipt_output is None else ReceiptService(self.database),
+            receipt_output=receipt_output,
         )
         widget.notification.connect(lambda text, state: self.notifications.append((text, state)))
         return widget
@@ -473,3 +481,88 @@ def test_amounts_and_the_payment_dialog_use_the_business_decimal_separator(env):
     env.dialog_payments = (Payment("cash", 300),)
     widget.charge_order()
     assert env.dialog_calls[0]["decimal_separator"] == "."
+
+
+# -- ticket printing -----------------------------------------------------------------------
+
+
+class FakeReceiptOutput:
+    """Records the receipts it is asked to print; nothing reaches a printer."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.printed: list = []
+        self.error = error
+
+    def print_receipt(self, receipt) -> None:
+        if self.error is not None:
+            raise self.error
+        self.printed.append(receipt)
+
+
+def test_charging_a_table_prints_the_stored_receipt_once_when_the_switch_is_on(env):
+    output = FakeReceiptOutput()
+    widget = env.build(session=env.cashier, receipt_output=output)
+    open_with_coffee(env, widget, 2)
+    env.dialog_payments = (Payment("cash", 500),)
+    env.dialog_print_ticket = True
+
+    widget.charge_button.click()
+
+    assert len(output.printed) == 1
+    receipt = output.printed[0]
+    assert (receipt.number, receipt.total_cents, receipt.cashier) == ("000001", 300, "cajero")
+    assert [line.name for line in receipt.lines] == ["Café"]
+    assert env.notifications[-1][1] == "success"
+
+
+def test_charging_a_table_does_not_print_when_the_switch_is_off(env):
+    output = FakeReceiptOutput()
+    widget = env.build(receipt_output=output)
+    open_with_coffee(env, widget, 1)
+    env.dialog_payments = (Payment("cash", 500),)
+    env.dialog_print_ticket = False
+
+    widget.charge_button.click()
+
+    assert output.printed == []
+    assert env.count("sales") == 1
+
+
+def test_a_cancelled_dialog_neither_charges_nor_prints(env):
+    output = FakeReceiptOutput()
+    widget = env.build(receipt_output=output)
+    open_with_coffee(env, widget, 1)
+    env.dialog_accepted = False
+    env.dialog_print_ticket = True
+
+    widget.charge_button.click()
+
+    assert output.printed == []
+    assert env.count("sales") == 0
+
+
+def test_a_printer_failure_warns_and_keeps_the_table_charge(env):
+    output = FakeReceiptOutput(RuntimeError("sin papel"))
+    widget = env.build(receipt_output=output)
+    open_with_coffee(env, widget, 2)
+    env.dialog_payments = (Payment("cash", 500),)
+    env.dialog_print_ticket = True
+
+    widget.charge_button.click()
+
+    assert env.notifications[-1] == ("No se pudo imprimir el ticket: sin papel", "warning")
+    assert env.count("sales") == 1
+    assert env.stock(env.coffee) == 8
+    assert env.service.get_order(env.owner, env.table_1.id) is None
+
+
+def test_without_a_printer_wired_in_a_table_charge_never_tries_to_print(env):
+    widget = env.build()
+    open_with_coffee(env, widget, 1)
+    env.dialog_payments = (Payment("cash", 500),)
+    env.dialog_print_ticket = True
+
+    widget.charge_button.click()
+
+    assert env.notifications[-1][1] == "success"
+    assert env.count("sales") == 1

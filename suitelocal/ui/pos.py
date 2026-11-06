@@ -20,7 +20,14 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.cart import Cart
-from suitelocal.domain.business import BusinessSettings
+from suitelocal.application.receipts import ReceiptService
+from suitelocal.domain.auth import Session
+from suitelocal.domain.business import (
+    DEFAULT_TAX_REGIME,
+    SALES_NOTE_MAX_LENGTH,
+    SALES_NOTE_REGIME,
+    BusinessSettings,
+)
 from suitelocal.domain.models import Payment, Product, SaleError
 from suitelocal.infrastructure.repositories import Category, ProductRepository, SaleRepository
 from suitelocal.ui.components import (
@@ -30,6 +37,7 @@ from suitelocal.ui.components import (
     KeyHint,
     ProductGrid,
     SegmentedControl,
+    SwitchButton,
     TicketLine,
     set_variant,
 )
@@ -41,6 +49,7 @@ from suitelocal.ui.payment_dialog import (
     parse_money,
     quick_bill_amounts,
 )
+from suitelocal.ui.receipt import ReceiptOutput
 from suitelocal.ui.theme.effects import apply_elevation
 from suitelocal.ui.theme.icons import ICONS, icon
 from suitelocal.ui.theme.manager import current_tokens, theme_manager
@@ -135,10 +144,20 @@ class PosWidget(QWidget):
         decimal_separator: str = ",",
         enabled_modules: frozenset[str] = frozenset(),
         categories: Sequence[Category] = (),
+        tax_regime: str = DEFAULT_TAX_REGIME,
+        session: Session | None = None,
+        receipts: ReceiptService | None = None,
+        receipt_output: ReceiptOutput | None = None,
     ) -> None:
         super().__init__(parent)
         self.products = products
         self.sales = sales
+        # Who sells decides the business and cashier stored on the sale and printed on the ticket.
+        self.session = session
+        self.receipts = receipts
+        self.receipt_output = receipt_output
+        self.tax_regime = tax_regime
+        self.last_sale_id: int | None = None
         self.currency_symbol = currency_symbol
         self.decimal_separator = decimal_separator
         self.enabled_modules = enabled_modules
@@ -149,8 +168,10 @@ class PosWidget(QWidget):
         self.sale_label = business_name or "Venta actual"
         self.payment_dialog_factory: PaymentDialogFactory = PaymentDialog
         self.last_print_ticket = False
-        # Ticket printing arrives with T7; until then the primary action only charges.
-        self.can_print_ticket = False
+        # Without a session and a printer wired in, the primary action only charges.
+        self.can_print_ticket = (
+            session is not None and receipts is not None and receipt_output is not None
+        )
         self.cart = Cart()
         self.quick_key_delay_ms = 400
         self.ticket_lines: list[TicketLine] = []
@@ -454,6 +475,19 @@ class PosWidget(QWidget):
         self.reference_edit.setPlaceholderText("Referencia de la transferencia")
         self.reference_edit.textChanged.connect(self._on_reference_edited)
         layout.addWidget(self.reference_edit)
+        self.sales_note_edit = QLineEdit()
+        self.sales_note_edit.setObjectName("salesNoteEdit")
+        self.sales_note_edit.setAccessibleName("N.º de nota de venta")
+        self.sales_note_edit.setPlaceholderText("N.º de nota de venta (opcional)")
+        self.sales_note_edit.setMaxLength(SALES_NOTE_MAX_LENGTH)
+        self.sales_note_edit.setVisible(self.tax_regime == SALES_NOTE_REGIME)
+        layout.addWidget(self.sales_note_edit)
+        self.print_switch = SwitchButton("Imprimir ticket")
+        self.print_switch.setObjectName("printSwitch")
+        self.print_switch.setChecked(True)
+        self.print_switch.setVisible(self.can_print_ticket)
+        self.print_switch.toggled.connect(self._refresh_charge_label)
+        layout.addWidget(self.print_switch)
         self.checkout_message = InlineMessage()
         layout.addWidget(self.checkout_message)
         self._on_method_selected(self.method_control.current or "")
@@ -464,7 +498,7 @@ class PosWidget(QWidget):
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(12, 10, 12, 12)
         layout.setSpacing(6)
-        self.charge_button = QPushButton("Cobrar e imprimir" if self.can_print_ticket else "Cobrar")
+        self.charge_button = QPushButton()
         self.charge_button.setObjectName("chargeButton")
         set_variant(self.charge_button, "champagne")
         self.charge_button.setToolTip("Cobrar la venta (F4)")
@@ -479,9 +513,22 @@ class PosWidget(QWidget):
         self.split_button.clicked.connect(lambda: self.open_split_payment())
         self.split_hint = KeyHint("F9")
         _overlay_row(self.split_button, self.split_hint)
+        self.reprint_button = QPushButton("Reimprimir último ticket")
+        self.reprint_button.setObjectName("reprintButton")
+        set_variant(self.reprint_button, "ghost")
+        self.reprint_button.setToolTip("Reimprimir el último ticket (Ctrl+P)")
+        self.reprint_button.clicked.connect(lambda: self.reprint_last_ticket())
+        _overlay_row(self.reprint_button, KeyHint("Ctrl+P"))
+        self.reprint_button.setVisible(self.can_print_ticket)
         layout.addWidget(self.charge_button)
         layout.addWidget(self.split_button)
+        layout.addWidget(self.reprint_button)
+        self._refresh_charge_label()
         return wrapper
+
+    def _refresh_charge_label(self, _checked: bool = False) -> None:
+        prints = self.can_print_ticket and self.print_switch.isChecked()
+        self.charge_button.setText("Cobrar e imprimir" if prints else "Cobrar")
 
     def _install_shortcuts(self) -> None:
         scope = Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -490,6 +537,7 @@ class PosWidget(QWidget):
             ("Ctrl+Enter", self.charge_button.click),
             ("F4", self.charge_button.click),
             ("F9", self.split_button.click),
+            ("Ctrl+P", self.reprint_button.click),
             ("Delete", self.remove_selected_line),
             ("F2", self._on_f2),
         ]
@@ -611,6 +659,8 @@ class PosWidget(QWidget):
         self.low_stock_threshold = business.low_stock_threshold
         self.enabled_modules = business.enabled_modules
         self.categories = tuple(categories)
+        self.tax_regime = business.tax_regime
+        self.sales_note_edit.setVisible(self.tax_regime == SALES_NOTE_REGIME)
         if methods_changed:
             self.enabled_payment_methods = business.enabled_payment_methods or ("cash",)
             old = self.method_control
@@ -959,8 +1009,17 @@ class PosWidget(QWidget):
             return (Payment("transfer", total, reference),)
         return (Payment(self._method, total),)
 
-    def confirm_sale(self, payments: tuple[Payment, ...] | None = None) -> None:
-        """Register the sale; without ``payments`` the inline checkout supplies the payment."""
+    def confirm_sale(
+        self, payments: tuple[Payment, ...] | None = None, print_ticket: bool | None = None
+    ) -> None:
+        """Register the sale; without ``payments`` the inline checkout supplies the payment.
+
+        The ticket is printed after the sale is saved when ``print_ticket`` (the dialog's switch)
+        or, by default, the inline "Imprimir ticket" switch says so. A printing failure only
+        warns: the sale stays registered.
+        """
+        if print_ticket is None:
+            print_ticket = self.print_switch.isChecked()
         if payments is None:
             if not self.cart.lines:
                 self.notification.emit("No se puede cobrar. Agrega al menos un producto.", "danger")
@@ -970,7 +1029,12 @@ class PosWidget(QWidget):
                 return
         try:
             sale = self.cart.to_sale(payments)
-            sale_id = self.sales.register(sale)
+            sale_id = self.sales.register(
+                sale,
+                business_id=None if self.session is None else self.session.user.business_id,
+                user_id=None if self.session is None else self.session.user.id,
+                sales_note_number=self._sales_note_number(),
+            )
         except (ValueError, SaleError) as error:
             self.notification.emit(f"No se puede confirmar. {error}", "danger")
             return
@@ -981,8 +1045,35 @@ class PosWidget(QWidget):
             f"Vuelto: {change}",
             "success",
         )
+        self.last_sale_id = sale_id
         self._reset_after_sale()
         self.sale_registered.emit()
+        if print_ticket:
+            self._print_receipt(sale_id)
+
+    def _sales_note_number(self) -> str | None:
+        """What the cashier typed, only for the regime that keeps handwritten sales notes."""
+        return self.sales_note_edit.text() if self.tax_regime == SALES_NOTE_REGIME else None
+
+    def _print_receipt(self, sale_id: int) -> bool:
+        """Print the stored sale; on any failure warn and leave the sale untouched."""
+        if self.session is None or self.receipts is None or self.receipt_output is None:
+            return False
+        try:
+            self.receipt_output.print_receipt(self.receipts.build(self.session, sale_id))
+        except Exception as error:  # printer drivers raise anything
+            self.notification.emit(f"No se pudo imprimir el ticket: {error}", "warning")
+            return False
+        return True
+
+    def reprint_last_ticket(self) -> bool:
+        """Print again the last sale registered on this screen (Ctrl+P)."""
+        if not self.can_print_ticket:
+            return False
+        if self.last_sale_id is None:
+            self.notification.emit("Todavía no hay un ticket para reimprimir.", "info")
+            return False
+        return self._print_receipt(self.last_sale_id)
 
     def _reset_after_sale(self) -> None:
         self.cart.clear()
@@ -990,6 +1081,7 @@ class PosWidget(QWidget):
         self._armed_quantity = 1
         self.received_edit.clear()
         self.reference_edit.clear()
+        self.sales_note_edit.clear()
         self.checkout_message.clear_message()
         self.search_input.clear()
         self.refresh_cart()
@@ -1002,7 +1094,7 @@ class PosWidget(QWidget):
         """Collect several payments in the dialog and, when accepted, charge with them."""
         payments = self._collect_payments()
         if payments is not None:
-            self.confirm_sale(payments)
+            self.confirm_sale(payments, self.last_print_ticket)
 
     def _collect_payments(self) -> tuple[Payment, ...] | None:
         """Open the payment dialog; return its payments, or None when the cashier cancels."""
