@@ -790,3 +790,19 @@ def test_close_in_with_another_business_does_not_close_and_rolls_the_sale_back(e
         )
 
     _assert_nothing_charged(database, products, coffee, cake, order.id)
+
+
+def test_charged_table_sale_stores_the_business_and_the_seller(env):
+    database, service, owner, cashier, products, coffee, _ = env
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(cashier, table.id)
+    service.add_product(cashier, order.id, coffee.id, 1)
+
+    sale_id = service.charge(cashier, order.id, [Payment("cash", 200)])
+
+    with database.connect() as connection:
+        sale = connection.execute(
+            "SELECT business_id, user_id FROM sales WHERE id = ?", (sale_id,)
+        ).fetchone()
+    assert (sale["business_id"], sale["user_id"]) == (cashier.user.business_id, cashier.user.id)
+    assert sale["user_id"] != owner.user.id

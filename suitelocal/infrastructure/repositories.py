@@ -2,6 +2,7 @@ import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from suitelocal.domain.business import normalize_sales_note_number
 from suitelocal.domain.models import KEEP, Keep, Product, Sale, validate_sale
 from suitelocal.domain.tax import DEFAULT_TAX_RATE_BASIS_POINTS, validate_tax_rate
 from suitelocal.infrastructure.database import Database
@@ -349,8 +350,20 @@ class SaleRepository:
         self,
         sale: Sale,
         on_registered: Callable[[sqlite3.Connection, int], None] | None = None,
+        *,
+        business_id: int | None = None,
+        user_id: int | None = None,
+        sales_note_number: str | None = None,
     ) -> int:
+        """Register the sale and return its id.
+
+        Every caller that knows who sells passes ``business_id`` and ``user_id``: they decide
+        which business may read the receipt and who the cashier on it is. A sale stored without
+        a business belongs to nobody. ``sales_note_number`` is the number of the handwritten
+        sales note of a RIMPE popular business.
+        """
         validate_sale(sale)
+        sales_note_number = normalize_sales_note_number(sales_note_number)
         with self.database.connect() as connection:
             # Take the write lock up front so concurrent sales cannot oversell.
             connection.execute("BEGIN IMMEDIATE")
@@ -372,9 +385,10 @@ class SaleRepository:
                 """
                 INSERT INTO sales (
                     total_cents, payment_cents, change_cents,
-                    subtotal_cents, tax_cents, tax_rate_basis_points, cash_session_id
+                    subtotal_cents, tax_cents, tax_rate_basis_points, cash_session_id,
+                    business_id, user_id, sales_note_number
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sale.total_cents,
@@ -386,6 +400,9 @@ class SaleRepository:
                     # per-line rate and IVA in sale_items are the source of truth.
                     0,
                     None if open_session is None else open_session["id"],
+                    business_id,
+                    user_id,
+                    sales_note_number,
                 ),
             )
             sale_id = cursor.lastrowid

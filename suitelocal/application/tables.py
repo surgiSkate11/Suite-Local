@@ -96,4 +96,9 @@ class TablesService:
             if _billable_lines(current.sale_items()) != charged:
                 raise TableError(_ORDER_CHANGED)
 
-        return self.sales.register(sale, on_registered=close_order)
+        return self.sales.register(
+            sale,
+            on_registered=close_order,
+            business_id=business_id,
+            user_id=session.user.id,
+        )

@@ -531,3 +531,85 @@ def test_invalid_setup_creates_nothing(fresh, regime, ruc, message):
     with database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM businesses").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0
+
+
+# -- receipt paper and printer ------------------------------------------------------------
+
+
+def test_new_business_prints_on_80_mm_paper_on_the_default_printer(env):
+    _, owner, _, settings, _, _ = env
+
+    current = settings.get(owner.user.business_id)
+
+    assert (current.receipt_paper_mm, current.printer_name) == (80, "")
+
+
+def test_owner_saves_the_paper_width_and_the_printer(env):
+    _, owner, _, settings, _, service = env
+
+    saved = service.update_profile(owner, receipt_paper_mm=58, printer_name="  XP-58  ")
+
+    assert (saved.receipt_paper_mm, saved.printer_name) == (58, "XP-58")
+    assert settings.get(owner.user.business_id) == saved
+    # Leaving both out keeps what is stored; an empty printer goes back to the default one.
+    assert service.update_profile(owner, address="Calle 1").receipt_paper_mm == 58
+    assert service.update_profile(owner, printer_name="").printer_name == ""
+
+
+@pytest.mark.parametrize("paper", [0, 57, 59, 100, -80, True])
+def test_invalid_paper_widths_are_rejected_and_nothing_changes(env, paper):
+    _, owner, _, settings, _, service = env
+    before = settings.get(owner.user.business_id)
+
+    with pytest.raises(ValueError, match="El ancho del papel debe ser 58 mm u 80 mm."):
+        service.update_profile(owner, receipt_paper_mm=paper, address="Cambiada")
+
+    assert settings.get(owner.user.business_id) == before
+
+
+def test_an_overlong_printer_name_is_rejected(env):
+    _, owner, _, settings, _, service = env
+    before = settings.get(owner.user.business_id)
+
+    with pytest.raises(ValueError, match="no puede superar 200 caracteres"):
+        service.update_profile(owner, printer_name="P" * 201)
+
+    assert settings.get(owner.user.business_id) == before
+
+
+def test_only_the_owner_changes_the_paper_and_the_printer(env):
+    _, owner, cashier, settings, _, service = env
+
+    with pytest.raises(PermissionError):
+        service.update_profile(cashier, receipt_paper_mm=58, printer_name="XP-58")
+
+    current = settings.get(owner.user.business_id)
+    assert (current.receipt_paper_mm, current.printer_name) == (80, "")
+
+
+def test_the_database_itself_refuses_a_paper_width_that_is_not_58_or_80(env):
+    database, owner, *_ = env
+
+    with pytest.raises(sqlite3.IntegrityError), database.connect() as connection:
+        connection.execute(
+            "UPDATE business_settings SET receipt_paper_mm = 70 WHERE business_id = ?",
+            (owner.user.business_id,),
+        )
+
+
+def test_migrated_business_gets_80_mm_and_the_default_printer_once(tmp_path):
+    database = old_settings_database(tmp_path / "old.db")
+
+    database.initialize()
+    BusinessSettingsRepository(database).update_profile(
+        1, receipt_paper_mm=58, printer_name="XP-58"
+    )
+    database.initialize()
+
+    current = BusinessSettingsRepository(database).get(1)
+    assert (current.receipt_paper_mm, current.printer_name) == (58, "XP-58")
+    fresh = old_settings_database(tmp_path / "old2.db")
+    fresh.initialize()
+    assert BusinessSettingsRepository(fresh).get(1).receipt_paper_mm == 80
+    with fresh.connect() as connection, pytest.raises(sqlite3.IntegrityError):
+        connection.execute("UPDATE business_settings SET receipt_paper_mm = 70")

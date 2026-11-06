@@ -29,6 +29,14 @@ MODULES = frozenset({"mesas", "venta_por_peso", "codigo_barras", "categorias"})
 ADDRESS_MAX_LENGTH = 200
 PHONE_MAX_LENGTH = 30
 RECEIPT_FOOTER_MAX_LENGTH = 300
+PRINTER_NAME_MAX_LENGTH = 200
+SALES_NOTE_MAX_LENGTH = 30
+
+# Paper roll widths (mm) of the thermal printers the receipt is laid out for.
+RECEIPT_PAPER_WIDTHS_MM = (58, 80)
+DEFAULT_RECEIPT_PAPER_MM = 80
+# Only these businesses jot down the number of their handwritten sales note on the receipt.
+SALES_NOTE_REGIME = "rimpe_popular"
 
 _RUC_PATTERN = re.compile(r"[0-9]{13}")
 
@@ -50,6 +58,9 @@ class BusinessSettings:
     address: str = ""
     phone: str = ""
     receipt_footer: str = ""
+    receipt_paper_mm: int = DEFAULT_RECEIPT_PAPER_MM
+    # Empty means the Windows default printer.
+    printer_name: str = ""
 
     @property
     def tax_rate_percent(self) -> float:
@@ -154,3 +165,18 @@ def normalize_text(value: str, label: str, max_length: int) -> str:
     if len(value) > max_length:
         raise ValueError(f"{label} no puede superar {max_length} caracteres.")
     return value
+
+
+def validate_receipt_paper_mm(paper_mm: int) -> int:
+    # bool is an int subclass, and True == 1 would never match anyway; reject non-ints early.
+    if isinstance(paper_mm, bool) or paper_mm not in RECEIPT_PAPER_WIDTHS_MM:
+        raise ValueError("El ancho del papel debe ser 58 mm u 80 mm.")
+    return paper_mm
+
+
+def normalize_sales_note_number(number: str | None) -> str | None:
+    """Trim the number of a handwritten sales note; empty means "none"."""
+    if number is None:
+        return None
+    number = normalize_text(number, "El número de la nota de venta", SALES_NOTE_MAX_LENGTH)
+    return number or None

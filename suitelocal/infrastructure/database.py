@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS business_settings (
     ,address TEXT NOT NULL DEFAULT ''
     ,phone TEXT NOT NULL DEFAULT ''
     ,receipt_footer TEXT NOT NULL DEFAULT ''
+    ,receipt_paper_mm INTEGER NOT NULL DEFAULT 80 CHECK (receipt_paper_mm IN (58, 80))
+    ,printer_name TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -139,16 +141,7 @@ class Database:
             connection.execute("BEGIN IMMEDIATE")
             _migrate_settings(connection)
             _migrate_products(connection)
-            add_missing_columns(
-                connection,
-                "sales",
-                (
-                    "subtotal_cents INTEGER NOT NULL DEFAULT 0",
-                    "tax_cents INTEGER NOT NULL DEFAULT 0",
-                    "tax_rate_basis_points INTEGER NOT NULL DEFAULT 0",
-                    "cash_session_id INTEGER REFERENCES cash_sessions(id)",
-                ),
-            )
+            _migrate_sales(connection)
             # Left NULL on old sales: they were priced with the tax added on top, so a
             # per-line IVA cannot be derived from them and they are never rewritten.
             add_missing_columns(
@@ -178,6 +171,40 @@ def add_missing_columns(
     return added
 
 
+def _migrate_sales(connection: sqlite3.Connection) -> None:
+    added = add_missing_columns(
+        connection,
+        "sales",
+        (
+            "subtotal_cents INTEGER NOT NULL DEFAULT 0",
+            "tax_cents INTEGER NOT NULL DEFAULT 0",
+            "tax_rate_basis_points INTEGER NOT NULL DEFAULT 0",
+            "cash_session_id INTEGER REFERENCES cash_sessions(id)",
+            "business_id INTEGER REFERENCES businesses(id)",
+            "user_id INTEGER REFERENCES users(id)",
+            "sales_note_number TEXT",
+        ),
+    )
+    if "business_id" not in added:
+        return
+    # Old sales never recorded their business. The cash session knows it; what is left belongs
+    # to the only business of the installation. Runs only when the column is created, so a
+    # sale registered later without a business stays NULL and is never claimed by anyone.
+    # user_id stays NULL on old sales: nobody recorded who sold them.
+    connection.execute(
+        """
+        UPDATE sales
+        SET business_id = (SELECT business_id FROM cash_sessions WHERE id = sales.cash_session_id)
+        WHERE cash_session_id IS NOT NULL
+        """
+    )
+    businesses = connection.execute("SELECT id FROM businesses LIMIT 2").fetchall()
+    if len(businesses) == 1:
+        connection.execute(
+            "UPDATE sales SET business_id = ? WHERE business_id IS NULL", (businesses[0]["id"],)
+        )
+
+
 def _migrate_settings(connection: sqlite3.Connection) -> None:
     add_missing_columns(
         connection,
@@ -195,6 +222,8 @@ def _migrate_settings(connection: sqlite3.Connection) -> None:
             "address TEXT NOT NULL DEFAULT ''",
             "phone TEXT NOT NULL DEFAULT ''",
             "receipt_footer TEXT NOT NULL DEFAULT ''",
+            "receipt_paper_mm INTEGER NOT NULL DEFAULT 80 CHECK (receipt_paper_mm IN (58, 80))",
+            "printer_name TEXT NOT NULL DEFAULT ''",
         ),
     )
     if "tax_regime" in added:

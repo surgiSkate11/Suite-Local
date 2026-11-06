@@ -51,6 +51,8 @@ class BusinessProfileService:
         address: str | None = None,
         phone: str | None = None,
         receipt_footer: str | None = None,
+        receipt_paper_mm: int | None = None,
+        printer_name: str | None = None,
     ) -> BusinessSettings:
         """Change only the given profile fields; changing the type never applies its template."""
         require_owner(session)
@@ -64,6 +66,8 @@ class BusinessProfileService:
             address=address,
             phone=phone,
             receipt_footer=receipt_footer,
+            receipt_paper_mm=receipt_paper_mm,
+            printer_name=printer_name,
         )
 
     def apply_template(self, session: Session, business_type: str) -> BusinessSettings:

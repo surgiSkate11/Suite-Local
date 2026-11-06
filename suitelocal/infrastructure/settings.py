@@ -5,8 +5,10 @@ from decimal import Decimal, InvalidOperation
 from suitelocal.domain.business import (
     ADDRESS_MAX_LENGTH,
     DEFAULT_BUSINESS_TYPE,
+    DEFAULT_RECEIPT_PAPER_MM,
     DEFAULT_TAX_REGIME,
     PHONE_MAX_LENGTH,
+    PRINTER_NAME_MAX_LENGTH,
     RECEIPT_FOOTER_MAX_LENGTH,
     BusinessSettings,
     format_modules,
@@ -15,6 +17,7 @@ from suitelocal.domain.business import (
     parse_modules,
     validate_business_type,
     validate_decimal_separator,
+    validate_receipt_paper_mm,
     validate_ruc_for_regime,
     validate_tax_regime,
 )
@@ -58,7 +61,7 @@ class BusinessSettingsRepository:
                 SELECT b.name, s.currency_symbol, s.low_stock_threshold,
                 s.enabled_payment_methods, s.tax_rate_basis_points, s.ruc, s.tax_regime,
                 s.business_type, s.enabled_modules, s.decimal_separator, s.address, s.phone,
-                s.receipt_footer
+                s.receipt_footer, s.receipt_paper_mm, s.printer_name
                 FROM businesses b
                 LEFT JOIN business_settings s ON s.business_id = b.id
                 WHERE b.id = ?
@@ -85,6 +88,8 @@ class BusinessSettingsRepository:
             row["address"] or "",
             row["phone"] or "",
             row["receipt_footer"] or "",
+            row["receipt_paper_mm"] or DEFAULT_RECEIPT_PAPER_MM,
+            row["printer_name"] or "",
         )
 
     def update(
@@ -150,6 +155,8 @@ class BusinessSettingsRepository:
         address: str | None = None,
         phone: str | None = None,
         receipt_footer: str | None = None,
+        receipt_paper_mm: int | None = None,
+        printer_name: str | None = None,
     ) -> BusinessSettings:
         """Change the given profile fields (None keeps the current value) in one transaction.
 
@@ -167,6 +174,8 @@ class BusinessSettingsRepository:
                 address=address,
                 phone=phone,
                 receipt_footer=receipt_footer,
+                receipt_paper_mm=receipt_paper_mm,
+                printer_name=printer_name,
             )
         return self.get(business_id)
 
@@ -183,6 +192,8 @@ class BusinessSettingsRepository:
         address: str | None = None,
         phone: str | None = None,
         receipt_footer: str | None = None,
+        receipt_paper_mm: int | None = None,
+        printer_name: str | None = None,
     ) -> None:
         """Validate and write profile fields on the caller's connection and transaction."""
         current = self._load(connection, business_id)
@@ -214,6 +225,16 @@ class BusinessSettingsRepository:
             if receipt_footer is None
             else normalize_text(receipt_footer, "El pie del comprobante", RECEIPT_FOOTER_MAX_LENGTH)
         )
+        new_paper = (
+            current.receipt_paper_mm
+            if receipt_paper_mm is None
+            else validate_receipt_paper_mm(receipt_paper_mm)
+        )
+        new_printer = (
+            current.printer_name
+            if printer_name is None
+            else normalize_text(printer_name, "El nombre de la impresora", PRINTER_NAME_MAX_LENGTH)
+        )
         connection.execute(
             "INSERT OR IGNORE INTO business_settings (business_id) VALUES (?)", (business_id,)
         )
@@ -221,7 +242,8 @@ class BusinessSettingsRepository:
             """
             UPDATE business_settings
             SET ruc = ?, tax_regime = ?, business_type = ?, enabled_modules = ?,
-                decimal_separator = ?, address = ?, phone = ?, receipt_footer = ?
+                decimal_separator = ?, address = ?, phone = ?, receipt_footer = ?,
+                receipt_paper_mm = ?, printer_name = ?
             WHERE business_id = ?
             """,
             (
@@ -233,6 +255,8 @@ class BusinessSettingsRepository:
                 new_address,
                 new_phone,
                 new_footer,
+                new_paper,
+                new_printer,
                 business_id,
             ),
         )
