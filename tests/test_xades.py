@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import re
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
@@ -19,8 +20,14 @@ from suitelocal.domain.einvoice import (
     InvoiceLine,
     InvoicePayment,
 )
+from suitelocal.infrastructure.sri import xades
 from suitelocal.infrastructure.sri.invoice_xml import build_invoice_xml, validate_against_xsd
-from suitelocal.infrastructure.sri.xades import SigningError, sign_invoice, verify_invoice_signature
+from suitelocal.infrastructure.sri.xades import (
+    SigningError,
+    load_certificate,
+    sign_invoice,
+    verify_invoice_signature,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "sri"
 DS = "http://www.w3.org/2000/09/xmldsig#"
@@ -231,7 +238,7 @@ def test_verifier_rejects_a_signature_that_references_something_other_than_the_r
 def test_signing_the_reference_invoice_produces_a_document_our_verifier_accepts(
     reference_original, reference_p12
 ):
-    signed = sign_invoice(reference_original, reference_p12, "")
+    signed = sign_invoice(reference_original, reference_p12, "", now=REFERENCE_TIME)
 
     assert verify_invoice_signature(signed) is True
 
@@ -255,7 +262,7 @@ def test_signing_with_the_reference_inputs_reproduces_the_reference_signed_invoi
 def test_signed_document_has_the_same_structure_as_the_reference(
     reference_original, reference_p12, reference_signed
 ):
-    signed = sign_invoice(reference_original, reference_p12, "")
+    signed = sign_invoice(reference_original, reference_p12, "", now=REFERENCE_TIME)
 
     assert outline(signed) == outline(reference_signed)
 
@@ -263,14 +270,14 @@ def test_signed_document_has_the_same_structure_as_the_reference(
 def test_comprobante_digest_equals_the_reference_for_the_same_input(
     reference_original, reference_p12, reference_signed
 ):
-    signed = sign_invoice(reference_original, reference_p12, "")
+    signed = sign_invoice(reference_original, reference_p12, "", now=REFERENCE_TIME)
 
     assert comprobante_digest(signed) == comprobante_digest(reference_signed)
     assert comprobante_digest(signed) == "atMB7w7TZedotqKWGtb/0eoC/1k="
 
 
 def test_reference_uris_and_id_patterns_match_the_reference(reference_original, reference_p12):
-    signed = sign_invoice(reference_original, reference_p12, "")
+    signed = sign_invoice(reference_original, reference_p12, "", now=REFERENCE_TIME)
 
     root = etree.fromstring(signed)
     uuid_pattern = r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"
@@ -297,11 +304,12 @@ def test_reference_uris_and_id_patterns_match_the_reference(reference_original, 
         assert re.fullmatch(f"{prefix}-{uuid_pattern}", node.get("Id") or "")
 
 
-def test_each_signing_uses_fresh_random_ids_and_a_current_signing_time(
-    reference_original, reference_p12
-):
-    first = sign_invoice(reference_original, reference_p12, "")
-    second = sign_invoice(reference_original, reference_p12, "")
+def test_each_signing_uses_fresh_random_ids_and_a_current_signing_time(reference_original, rsa_key):
+    # A certificate generated now: this test reads the real clock, so the long-lived reference
+    # certificate would make it fail once that certificate expires.
+    p12 = make_p12(rsa_key, b"")
+    first = sign_invoice(reference_original, p12, "")
+    second = sign_invoice(reference_original, p12, "")
 
     first_ids = re.findall(rb'Id="([^"]+)"', first)
     second_ids = re.findall(rb'Id="([^"]+)"', second)
@@ -317,7 +325,7 @@ def test_each_signing_uses_fresh_random_ids_and_a_current_signing_time(
 
 
 def test_signature_is_inserted_right_before_the_closing_root_tag(reference_original, reference_p12):
-    signed = sign_invoice(reference_original, reference_p12, "")
+    signed = sign_invoice(reference_original, reference_p12, "", now=REFERENCE_TIME)
 
     cut = reference_original.rfind(b"</factura>")
     assert signed.startswith(reference_original[:cut] + b"<ds:Signature ")
@@ -327,7 +335,7 @@ def test_signature_is_inserted_right_before_the_closing_root_tag(reference_origi
 def test_tampering_one_byte_of_the_signed_comprobante_fails_verification(
     reference_original, reference_p12
 ):
-    signed = sign_invoice(reference_original, reference_p12, "")
+    signed = sign_invoice(reference_original, reference_p12, "", now=REFERENCE_TIME)
     position = signed.index(b"<totalDescuento>3.00") + len(b"<totalDescuento>3.0")
     tampered = signed[:position] + b"1" + signed[position + 1 :]
 
@@ -391,7 +399,7 @@ def test_signature_carries_the_certificate_digest_issuer_and_serial(rsa_key):
 
 def test_signing_rejects_a_document_that_is_already_signed(reference_p12, reference_signed):
     with pytest.raises(SigningError) as error:
-        sign_invoice(reference_signed, reference_p12, "")
+        sign_invoice(reference_signed, reference_p12, "", now=REFERENCE_TIME)
 
     assert str(error.value) == "La factura ya está firmada."
 
@@ -406,7 +414,7 @@ def test_signing_rejects_a_document_that_is_already_signed(reference_p12, refere
 )
 def test_signing_rejects_documents_that_are_not_an_invoice(reference_p12, xml):
     with pytest.raises(SigningError) as error:
-        sign_invoice(xml, reference_p12, "")
+        sign_invoice(xml, reference_p12, "", now=REFERENCE_TIME)
 
     assert str(error.value) == "El documento no es una factura válida para firmar."
 
@@ -415,7 +423,7 @@ def test_signing_rejects_documents_with_a_doctype(reference_p12):
     xml = b'<!DOCTYPE factura [<!ENTITY x "y">]><factura id="comprobante">&x;</factura>'
 
     with pytest.raises(SigningError) as error:
-        sign_invoice(xml, reference_p12, "")
+        sign_invoice(xml, reference_p12, "", now=REFERENCE_TIME)
 
     assert str(error.value) == "El documento no es una factura válida para firmar."
 
@@ -501,6 +509,66 @@ def test_a_certificate_that_is_not_valid_yet_is_rejected(rsa_key):
         sign_invoice(build_invoice_xml(sample_invoice()), p12, "clave")
 
     assert str(error.value) == "El certificado de firma todavía no es válido."
+
+
+def test_the_reference_certificate_is_checked_at_the_given_date_not_at_the_real_clock(
+    reference_original, reference_p12
+):
+    # The reference certificate is valid 2023-07-15 .. 2033-07-12: pinned dates keep every
+    # test that uses it independent of the day the suite runs.
+    assert verify_invoice_signature(
+        sign_invoice(reference_original, reference_p12, "", now=REFERENCE_TIME)
+    )
+    with pytest.raises(SigningError) as expired:
+        sign_invoice(reference_original, reference_p12, "", now=datetime(2033, 7, 13, tzinfo=UTC))
+    with pytest.raises(SigningError) as early:
+        sign_invoice(reference_original, reference_p12, "", now=datetime(2023, 7, 14, tzinfo=UTC))
+
+    assert str(expired.value) == EXPIRED
+    assert str(early.value) == "El certificado de firma todavía no es válido."
+
+
+def test_loading_a_certificate_can_skip_the_validity_check(rsa_key):
+    now = datetime.now(UTC)
+    p12 = make_p12(
+        rsa_key, b"clave", not_before=now - timedelta(days=400), not_after=now - timedelta(days=1)
+    )
+
+    with pytest.raises(SigningError):
+        load_certificate(p12, "clave")
+    certificate = load_certificate(p12, "clave", require_valid=False)
+
+    assert certificate.not_valid_after_utc < now
+
+
+def test_verifier_rejects_a_signing_certificate_digest_that_is_not_the_one_in_key_info(
+    monkeypatch, rsa_key
+):
+    # Everything else is consistent: the digest of SignedProperties and the signature are
+    # computed over the wrong CertDigest, so only the tie to the KeyInfo certificate can fail.
+    unsigned = build_invoice_xml(sample_invoice())
+    p12 = make_p12(rsa_key)
+    assert verify_invoice_signature(sign_invoice(unsigned, p12, "clave")) is True
+    original = xades._signed_properties_xml
+
+    def with_wrong_digest(
+        properties_id: str,
+        document_ref_id: str,
+        signing_time: str,
+        certificate_digest: str,
+        issuer_name: str,
+        serial_number: int,
+    ) -> str:
+        wrong = base64.b64encode(hashlib.sha1(b"otro certificado").digest()).decode()
+        assert wrong != certificate_digest
+        return original(
+            properties_id, document_ref_id, signing_time, wrong, issuer_name, serial_number
+        )
+
+    monkeypatch.setattr(xades, "_signed_properties_xml", with_wrong_digest)
+    forged = sign_invoice(unsigned, p12, "clave")
+
+    assert verify_invoice_signature(forged) is False
 
 
 def test_signing_error_is_a_value_error():

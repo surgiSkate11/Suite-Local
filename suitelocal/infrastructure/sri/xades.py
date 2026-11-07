@@ -88,8 +88,8 @@ def _can_sign(certificate: x509.Certificate) -> bool:
     return usage.digital_signature
 
 
-def _load_credentials(
-    p12_bytes: bytes, password: str, moment: datetime
+def _open_credentials(
+    p12_bytes: bytes, password: str
 ) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
     loaded = None
     # An empty password may be stored as "no password" or as an empty one.
@@ -118,12 +118,44 @@ def _load_credentials(
     if not matching:
         raise SigningError(_KEY_MISMATCH)
     certificate = next((item for item in matching if _can_sign(item)), matching[0])
+    return key, certificate
+
+
+def _aware(moment: datetime | None) -> datetime:
+    """`moment` as an aware datetime; None means the computer's current time."""
+    if moment is None:
+        return datetime.now().astimezone()
+    return moment.astimezone() if moment.tzinfo is None else moment
+
+
+def _load_credentials(
+    p12_bytes: bytes, password: str, moment: datetime
+) -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
+    key, certificate = _open_credentials(p12_bytes, password)
     utc_moment = moment.astimezone(UTC)
     if certificate.not_valid_after_utc < utc_moment:
         raise SigningError(_EXPIRED)
     if certificate.not_valid_before_utc > utc_moment:
         raise SigningError(_NOT_YET_VALID)
     return key, certificate
+
+
+def load_certificate(
+    p12_bytes: bytes,
+    password: str,
+    *,
+    now: datetime | None = None,
+    require_valid: bool = True,
+) -> x509.Certificate:
+    """The signing certificate of a PKCS#12 file; raises SigningError if it cannot be used.
+
+    With `require_valid` the certificate must be valid at `now` (default: the current time);
+    without it only the file, the password and the key are checked, so an expired certificate can
+    still be described.
+    """
+    if require_valid:
+        return _load_credentials(p12_bytes, password, _aware(now))[1]
+    return _open_credentials(p12_bytes, password)[1]
 
 
 def _b64_int(number: int) -> str:
@@ -262,9 +294,7 @@ def sign_invoice(
     `now` and `uuid_factory` exist so tests can reproduce a signature exactly; the validity of
     the certificate is checked at `now`.
     """
-    moment = datetime.now().astimezone() if now is None else now
-    if moment.tzinfo is None:
-        moment = moment.astimezone()
+    moment = _aware(now)
     new_id = uuid_factory or (lambda: str(uuid.uuid4()))
     key, certificate = _load_credentials(p12_bytes, password, moment)
 
