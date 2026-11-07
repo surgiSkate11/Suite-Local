@@ -1,8 +1,8 @@
 """Rules of the SRI electronic invoice (factura 1.1.0): access key, buyer, IVA and payment codes."""
 
 import re
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 
 from suitelocal.domain.models import PAYMENT_METHODS
 from suitelocal.domain.tax import tax_breakdown, validate_tax_rate
@@ -195,3 +195,78 @@ class InvoiceData:
     def taxes(self) -> tuple[tuple[int, int, int], ...]:
         """(rate, taxable base, IVA) per rate, highest rate first."""
         return tax_breakdown((line.total_cents, line.tax_rate_basis_points) for line in self.lines)
+
+
+# -- the send queue ------------------------------------------------------------------------
+
+# Statuses of an invoice in the send queue. "pendiente" waits to be sent, "recibida" was accepted
+# by the SRI and waits for its authorization, "devuelta" was refused on reception, "autorizada"
+# and "no_autorizada" are the SRI's final verdicts and "error_local" never left this computer.
+PENDING = "pendiente"
+RECEIVED = "recibida"
+RETURNED = "devuelta"
+AUTHORIZED = "autorizada"
+NOT_AUTHORIZED = "no_autorizada"
+LOCAL_ERROR = "error_local"
+EINVOICE_STATUSES = (PENDING, RECEIVED, RETURNED, AUTHORIZED, NOT_AUTHORIZED, LOCAL_ERROR)
+
+# The SRI accepts an invoice up to 72 hours after its issue date; the owner is warned from 60.
+SEND_DEADLINE = timedelta(hours=72)
+DEADLINE_WARNING_AFTER = timedelta(hours=60)
+
+_RETRY_DELAYS = tuple(timedelta(minutes=minutes) for minutes in (1, 5, 15, 30, 60))
+_SRI_ENVIRONMENT_CODES = {"pruebas": "1", "produccion": "2"}
+
+
+def retry_delay(attempts: int) -> timedelta:
+    """Wait after the `attempts`-th consecutive failure: 1, 5, 15, 30, 60 minutes, then hourly."""
+    if attempts < 1:
+        raise ValueError("El primer intento fallido es el número 1.")
+    return _RETRY_DELAYS[min(attempts, len(_RETRY_DELAYS)) - 1]
+
+
+def sri_environment_code(environment: str) -> str:
+    """SRI "ambiente" digit of our environment name: pruebas -> 1, produccion -> 2."""
+    if environment not in _SRI_ENVIRONMENT_CODES:
+        raise ValueError("El ambiente del SRI debe ser pruebas o producción.")
+    return _SRI_ENVIRONMENT_CODES[environment]
+
+
+@dataclass(frozen=True, slots=True)
+class SriMessage:
+    """One message of an SRI response; `identifier` is the SRI error number (e.g. "43")."""
+
+    identifier: str
+    message: str
+    additional_info: str = ""
+    kind: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class EInvoice:
+    """An invoice of the send queue: its numbering, signed XML, buyer and SRI progress."""
+
+    id: int
+    business_id: int
+    sale_id: int
+    establishment: str
+    emission_point: str
+    sequential: str
+    access_key: str
+    environment: str
+    status: str
+    signed_xml: bytes = field(repr=False)
+    buyer: Buyer
+    messages: tuple[SriMessage, ...]
+    # Consecutive failed attempts with the current step (sending, then asking for authorization).
+    attempts: int
+    # None means due right away.
+    next_attempt_at: datetime | None
+    # The moment of the sale: the 72-hour deadline counts from the invoice date.
+    issued_at: datetime
+    authorized_at: datetime | None
+    authorization_number: str | None
+
+    @property
+    def number(self) -> str:
+        return f"{self.establishment}-{self.emission_point}-{self.sequential}"

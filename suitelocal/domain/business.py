@@ -26,6 +26,12 @@ DEFAULT_BUSINESS_TYPE = "otro"
 
 MODULES = frozenset({"mesas", "venta_por_peso", "codigo_barras", "categorias"})
 
+# SRI environments: "pruebas" is the test service (celcer), "produccion" the real one.
+SRI_ENVIRONMENTS = {"pruebas": "Pruebas", "produccion": "Producción"}
+DEFAULT_SRI_ENVIRONMENT = "pruebas"
+DEFAULT_SERIES_CODE = "001"
+TRADE_NAME_MAX_LENGTH = 300
+
 ADDRESS_MAX_LENGTH = 200
 PHONE_MAX_LENGTH = 30
 RECEIPT_FOOTER_MAX_LENGTH = 300
@@ -39,6 +45,8 @@ DEFAULT_RECEIPT_PAPER_MM = 80
 SALES_NOTE_REGIME = "rimpe_popular"
 
 _RUC_PATTERN = re.compile(r"[0-9]{13}")
+_ISSUER_RUC_PATTERN = re.compile(r"[0-9]{10}001")
+_SERIES_CODE_PATTERN = re.compile(r"[0-9]{3}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +69,13 @@ class BusinessSettings:
     receipt_paper_mm: int = DEFAULT_RECEIPT_PAPER_MM
     # Empty means the Windows default printer.
     printer_name: str = ""
+    einvoice_enabled: bool = False
+    sri_environment: str = DEFAULT_SRI_ENVIRONMENT
+    # The 3-digit establishment and emission point that number the invoices (001-001-000000001).
+    establishment: str = DEFAULT_SERIES_CODE
+    emission_point: str = DEFAULT_SERIES_CODE
+    obligado_contabilidad: bool = False
+    trade_name: str = ""
 
     @property
     def tax_rate_percent(self) -> float:
@@ -152,6 +167,34 @@ def parse_modules(modules: Iterable[str] | str) -> frozenset[str]:
 
 def format_modules(modules: Iterable[str]) -> str:
     return ",".join(sorted(parse_modules(modules)))
+
+
+def validate_sri_environment(environment: str) -> str:
+    if environment not in SRI_ENVIRONMENTS:
+        raise ValueError("El ambiente del SRI debe ser pruebas o producción.")
+    return environment
+
+
+def validate_series_code(code: str, label: str) -> str:
+    """An establishment or emission point: exactly 3 digits, 001 to 999."""
+    if not _SERIES_CODE_PATTERN.fullmatch(code):
+        raise ValueError(f"{label} debe tener exactamente 3 dígitos.")
+    if code == "000":
+        raise ValueError(f"{label} debe estar entre 001 y 999.")
+    return code
+
+
+def validate_einvoice_activation(tax_regime: str, ruc: str, *, has_certificate: bool) -> None:
+    """What a business needs before it can issue electronic invoices."""
+    if not issues_electronic_invoices(tax_regime):
+        raise ValueError("El régimen tributario de este negocio no emite facturas electrónicas.")
+    if not _ISSUER_RUC_PATTERN.fullmatch(ruc):
+        raise ValueError("Para facturar se necesita un RUC de 13 dígitos que termine en 001.")
+    if not has_certificate:
+        raise ValueError(
+            "Para activar la factura electrónica primero se debe cargar el certificado "
+            "de firma (.p12)."
+        )
 
 
 def validate_decimal_separator(decimal_separator: str) -> str:

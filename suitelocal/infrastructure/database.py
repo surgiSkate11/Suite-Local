@@ -54,6 +54,13 @@ CREATE TABLE IF NOT EXISTS business_settings (
     ,receipt_footer TEXT NOT NULL DEFAULT ''
     ,receipt_paper_mm INTEGER NOT NULL DEFAULT 80 CHECK (receipt_paper_mm IN (58, 80))
     ,printer_name TEXT NOT NULL DEFAULT ''
+    ,einvoice_enabled INTEGER NOT NULL DEFAULT 0 CHECK (einvoice_enabled IN (0, 1))
+    ,sri_environment TEXT NOT NULL DEFAULT 'pruebas'
+        CHECK (sri_environment IN ('pruebas', 'produccion'))
+    ,establishment TEXT NOT NULL DEFAULT '001'
+    ,emission_point TEXT NOT NULL DEFAULT '001'
+    ,obligado_contabilidad INTEGER NOT NULL DEFAULT 0 CHECK (obligado_contabilidad IN (0, 1))
+    ,trade_name TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -109,6 +116,47 @@ CREATE TABLE IF NOT EXISTS sale_payments (
     amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
     reference TEXT NOT NULL DEFAULT ''
 );
+
+-- Last sequential handed out per business, environment, establishment and emission point.
+CREATE TABLE IF NOT EXISTS einvoice_sequences (
+    business_id INTEGER NOT NULL REFERENCES businesses(id),
+    environment TEXT NOT NULL CHECK (environment IN ('pruebas', 'produccion')),
+    establishment TEXT NOT NULL,
+    emission_point TEXT NOT NULL,
+    last_sequential INTEGER NOT NULL CHECK (last_sequential BETWEEN 0 AND 999999999),
+    PRIMARY KEY (business_id, environment, establishment, emission_point)
+);
+
+-- The send queue of SRI electronic invoices: one row per invoiced sale.
+CREATE TABLE IF NOT EXISTS einvoices (
+    id INTEGER PRIMARY KEY,
+    business_id INTEGER NOT NULL REFERENCES businesses(id),
+    sale_id INTEGER NOT NULL UNIQUE REFERENCES sales(id),
+    establishment TEXT NOT NULL,
+    emission_point TEXT NOT NULL,
+    sequential TEXT NOT NULL,
+    access_key TEXT NOT NULL UNIQUE,
+    environment TEXT NOT NULL CHECK (environment IN ('pruebas', 'produccion')),
+    status TEXT NOT NULL DEFAULT 'pendiente' CHECK (
+        status IN (
+            'pendiente', 'recibida', 'devuelta', 'autorizada', 'no_autorizada', 'error_local'
+        )
+    ),
+    signed_xml BLOB NOT NULL,
+    buyer_id_type TEXT NOT NULL,
+    buyer_identification TEXT NOT NULL,
+    buyer_name TEXT NOT NULL,
+    buyer_address TEXT NOT NULL DEFAULT '',
+    messages TEXT NOT NULL DEFAULT '[]',
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at TEXT,
+    issued_at TEXT NOT NULL,
+    authorized_at TEXT,
+    authorization_number TEXT,
+    UNIQUE (business_id, environment, establishment, emission_point, sequential)
+);
+
+CREATE INDEX IF NOT EXISTS idx_einvoices_status ON einvoices(status, next_attempt_at);
 """
 
 
@@ -224,6 +272,14 @@ def _migrate_settings(connection: sqlite3.Connection) -> None:
             "receipt_footer TEXT NOT NULL DEFAULT ''",
             "receipt_paper_mm INTEGER NOT NULL DEFAULT 80 CHECK (receipt_paper_mm IN (58, 80))",
             "printer_name TEXT NOT NULL DEFAULT ''",
+            "einvoice_enabled INTEGER NOT NULL DEFAULT 0 CHECK (einvoice_enabled IN (0, 1))",
+            "sri_environment TEXT NOT NULL DEFAULT 'pruebas' "
+            "CHECK (sri_environment IN ('pruebas', 'produccion'))",
+            "establishment TEXT NOT NULL DEFAULT '001'",
+            "emission_point TEXT NOT NULL DEFAULT '001'",
+            "obligado_contabilidad INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (obligado_contabilidad IN (0, 1))",
+            "trade_name TEXT NOT NULL DEFAULT ''",
         ),
     )
     if "tax_regime" in added:

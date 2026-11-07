@@ -1,4 +1,5 @@
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from datetime import datetime
 from decimal import Decimal
 
 from suitelocal.domain.auth import Session
@@ -6,16 +7,32 @@ from suitelocal.domain.business import BusinessSettings, profile_template
 from suitelocal.domain.policies import require_owner
 from suitelocal.infrastructure.repositories import CategoryRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
+from suitelocal.infrastructure.sri.certificate_store import CertificateInfo, CertificateStore
+
+_NO_CERTIFICATE_STORE = "El almacén de certificados no está configurado."
 
 
 class BusinessProfileService:
     """Owner-only writes of the business settings and the Ecuador business profile."""
 
     def __init__(
-        self, settings: BusinessSettingsRepository, categories: CategoryRepository
+        self,
+        settings: BusinessSettingsRepository,
+        categories: CategoryRepository,
+        certificates: Callable[[int], CertificateStore] | None = None,
     ) -> None:
         self.settings = settings
         self.categories = categories
+        self._certificates = certificates
+
+    def certificates(self, business_id: int) -> CertificateStore:
+        """The protected certificate store of a business."""
+        if self._certificates is None:
+            raise ValueError(_NO_CERTIFICATE_STORE)
+        return self._certificates(business_id)
+
+    def _has_certificate(self, business_id: int) -> bool:
+        return self._certificates is not None and self._certificates(business_id).exists()
 
     def get(self, session: Session) -> BusinessSettings:
         return self.settings.get(session.user.business_id)
@@ -69,6 +86,56 @@ class BusinessProfileService:
             receipt_paper_mm=receipt_paper_mm,
             printer_name=printer_name,
         )
+
+    def update_einvoice(
+        self,
+        session: Session,
+        *,
+        enabled: bool | None = None,
+        sri_environment: str | None = None,
+        establishment: str | None = None,
+        emission_point: str | None = None,
+        obligado_contabilidad: bool | None = None,
+        trade_name: str | None = None,
+    ) -> BusinessSettings:
+        """Change only the given electronic-invoicing fields; turning it on has prerequisites."""
+        require_owner(session)
+        business_id = session.user.business_id
+        return self.settings.update_einvoice(
+            business_id,
+            enabled=enabled,
+            sri_environment=sri_environment,
+            establishment=establishment,
+            emission_point=emission_point,
+            obligado_contabilidad=obligado_contabilidad,
+            trade_name=trade_name,
+            has_certificate=self._has_certificate(business_id),
+        )
+
+    def save_certificate(
+        self, session: Session, p12_bytes: bytes, password: str, *, now: datetime | None = None
+    ) -> CertificateInfo:
+        """Check and store the signing certificate; SigningError (nothing stored) if it is bad."""
+        require_owner(session)
+        store = self.certificates(session.user.business_id)
+        store.save(p12_bytes, password, now=now)
+        return store.info()
+
+    def certificate_info(self, session: Session) -> CertificateInfo | None:
+        """What the owner may see of the stored certificate, or None when there is none."""
+        require_owner(session)
+        if not self._has_certificate(session.user.business_id):
+            return None
+        return self.certificates(session.user.business_id).info()
+
+    def remove_certificate(self, session: Session) -> None:
+        require_owner(session)
+        business_id = session.user.business_id
+        if self.settings.get(business_id).einvoice_enabled:
+            raise ValueError(
+                "Primero se debe desactivar la factura electrónica para quitar el certificado."
+            )
+        self.certificates(business_id).clear()
 
     def apply_template(self, session: Session, business_type: str) -> BusinessSettings:
         """Explicitly adopt a business type: replace its modules and add the missing categories."""

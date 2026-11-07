@@ -1,6 +1,10 @@
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
+from test_certificate_store import FakeProtector
+from test_xades import make_p12
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.business_profile import BusinessProfileService
@@ -17,6 +21,8 @@ from suitelocal.domain.business import (
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import CategoryRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
+from suitelocal.infrastructure.sri.certificate_store import CertificateStore
+from suitelocal.infrastructure.sri.xades import SigningError
 
 
 @pytest.fixture
@@ -613,3 +619,299 @@ def test_migrated_business_gets_80_mm_and_the_default_printer_once(tmp_path):
     assert BusinessSettingsRepository(fresh).get(1).receipt_paper_mm == 80
     with fresh.connect() as connection, pytest.raises(sqlite3.IntegrityError):
         connection.execute("UPDATE business_settings SET receipt_paper_mm = 70")
+
+
+# -- electronic invoicing settings ---------------------------------------------------------
+
+NOT_INVOICING = "El régimen tributario de este negocio no emite facturas electrónicas."
+NEEDS_RUC = "Para facturar se necesita un RUC de 13 dígitos que termine en 001."
+NEEDS_CERTIFICATE = (
+    "Para activar la factura electrónica primero se debe cargar el certificado de firma (.p12)."
+)
+CERTIFICATE_PASSWORD = "clave-del-p12"
+
+
+@pytest.fixture(scope="module")
+def signing_key() -> rsa.RSAPrivateKey:
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+@pytest.fixture
+def invoicing(env, tmp_path):
+    _, owner, cashier, settings, categories, _ = env
+    service = BusinessProfileService(
+        settings,
+        categories,
+        lambda business_id: CertificateStore.for_business(
+            tmp_path / "data", business_id, FakeProtector()
+        ),
+    )
+    return service, owner, cashier, settings
+
+
+def make_emprendedor(service, owner, ruc="1790012345001") -> None:
+    service.update_profile(owner, tax_regime="rimpe_emprendedor", ruc=ruc)
+
+
+def einvoice_fields(current) -> tuple:
+    return (
+        current.einvoice_enabled,
+        current.sri_environment,
+        current.establishment,
+        current.emission_point,
+        current.obligado_contabilidad,
+        current.trade_name,
+    )
+
+
+def p12_for(key, not_after: datetime | None = None, password: str = CERTIFICATE_PASSWORD) -> bytes:
+    return make_p12(key, password.encode(), not_after=not_after)
+
+
+def test_a_new_business_has_electronic_invoicing_off_with_the_pruebas_defaults(env):
+    _, owner, _, settings, _, _ = env
+
+    current = settings.get(owner.user.business_id)
+
+    assert einvoice_fields(current) == (False, "pruebas", "001", "001", False, "")
+
+
+def test_electronic_invoicing_columns_are_added_to_an_old_database_once(tmp_path):
+    database = old_settings_database(tmp_path / "old.db")
+
+    database.initialize()
+    BusinessSettingsRepository(database).update_einvoice(
+        1, establishment="002", trade_name="Sol", enabled=False
+    )
+    database.initialize()
+
+    current = BusinessSettingsRepository(database).get(1)
+    assert einvoice_fields(current) == (False, "pruebas", "002", "001", False, "Sol")
+    assert current.name == "Tienda Sol"
+
+
+def test_the_database_itself_refuses_an_unknown_sri_environment(env):
+    database, *_ = env
+
+    with pytest.raises(sqlite3.IntegrityError), database.connect() as connection:
+        connection.execute("UPDATE business_settings SET sri_environment = 'otro'")
+
+
+def test_the_owner_configures_the_invoice_numbering_and_issuer_data(invoicing):
+    service, owner, _, settings = invoicing
+
+    updated = service.update_einvoice(
+        owner,
+        sri_environment="produccion",
+        establishment="002",
+        emission_point="015",
+        obligado_contabilidad=True,
+        trade_name="  La Esquina  ",
+    )
+
+    assert einvoice_fields(updated) == (False, "produccion", "002", "015", True, "La Esquina")
+    assert settings.get(owner.user.business_id) == updated
+
+
+def test_omitted_fields_keep_their_current_value(invoicing):
+    service, owner, _, _ = invoicing
+    service.update_einvoice(owner, establishment="004", trade_name="Sol")
+
+    updated = service.update_einvoice(owner, emission_point="009")
+
+    assert einvoice_fields(updated) == (False, "pruebas", "004", "009", False, "Sol")
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"sri_environment": "otro"}, "El ambiente del SRI debe ser pruebas o producción."),
+        ({"sri_environment": "1"}, "El ambiente del SRI debe ser pruebas o producción."),
+        ({"establishment": "1"}, "El establecimiento debe tener exactamente 3 dígitos."),
+        ({"establishment": "0001"}, "El establecimiento debe tener exactamente 3 dígitos."),
+        ({"establishment": "ab1"}, "El establecimiento debe tener exactamente 3 dígitos."),
+        ({"establishment": "000"}, "El establecimiento debe estar entre 001 y 999."),
+        ({"emission_point": "12"}, "El punto de emisión debe tener exactamente 3 dígitos."),
+        ({"emission_point": "000"}, "El punto de emisión debe estar entre 001 y 999."),
+        ({"trade_name": "x" * 301}, "El nombre comercial no puede superar 300 caracteres."),
+    ],
+)
+def test_invalid_invoicing_values_are_rejected_and_nothing_changes(invoicing, changes, message):
+    service, owner, _, settings = invoicing
+    before = settings.get(owner.user.business_id)
+
+    with pytest.raises(ValueError) as error:
+        service.update_einvoice(owner, obligado_contabilidad=True, **changes)
+
+    assert str(error.value) == message
+    assert settings.get(owner.user.business_id) == before
+
+
+def test_enabling_requires_a_regime_that_issues_electronic_invoices(invoicing, signing_key):
+    service, owner, _, settings = invoicing
+    service.save_certificate(owner, p12_for(signing_key), CERTIFICATE_PASSWORD)
+    service.update_profile(owner, tax_regime="rimpe_popular")
+    before = settings.get(owner.user.business_id)
+
+    with pytest.raises(ValueError) as error:
+        service.update_einvoice(owner, enabled=True, establishment="005")
+
+    assert str(error.value) == NOT_INVOICING
+    assert settings.get(owner.user.business_id) == before
+
+
+def test_enabling_requires_a_ruc_that_ends_in_001(invoicing, signing_key):
+    service, owner, _, settings = invoicing
+    service.save_certificate(owner, p12_for(signing_key), CERTIFICATE_PASSWORD)
+    make_emprendedor(service, owner, ruc="1790012345002")
+    before = settings.get(owner.user.business_id)
+
+    with pytest.raises(ValueError) as error:
+        service.update_einvoice(owner, enabled=True)
+
+    assert str(error.value) == NEEDS_RUC
+    assert settings.get(owner.user.business_id) == before
+
+
+def test_enabling_requires_a_stored_certificate(invoicing):
+    service, owner, _, settings = invoicing
+    make_emprendedor(service, owner)
+    before = settings.get(owner.user.business_id)
+
+    with pytest.raises(ValueError) as error:
+        service.update_einvoice(owner, enabled=True, trade_name="Sol")
+
+    assert str(error.value) == NEEDS_CERTIFICATE
+    assert settings.get(owner.user.business_id) == before
+
+
+def test_enabling_without_a_certificate_store_configured_is_refused(env):
+    _, owner, _, settings, _, service = env
+    make_emprendedor(service, owner)
+
+    with pytest.raises(ValueError) as error:
+        service.update_einvoice(owner, enabled=True)
+
+    assert str(error.value) == NEEDS_CERTIFICATE
+    assert settings.get(owner.user.business_id).einvoice_enabled is False
+
+
+@pytest.mark.parametrize("regime", ["rimpe_emprendedor", "general"])
+def test_enabling_works_with_regime_ruc_and_certificate_and_can_be_switched_off(
+    invoicing, signing_key, regime
+):
+    service, owner, _, _ = invoicing
+    service.update_profile(owner, tax_regime=regime, ruc="1790012345001")
+    service.save_certificate(owner, p12_for(signing_key), CERTIFICATE_PASSWORD)
+
+    enabled = service.update_einvoice(owner, enabled=True)
+    disabled = service.update_einvoice(owner, enabled=False)
+
+    assert enabled.einvoice_enabled is True
+    assert disabled.einvoice_enabled is False
+
+
+def test_changing_other_fields_while_enabled_does_not_ask_again_for_the_certificate(
+    invoicing, signing_key
+):
+    service, owner, _, _ = invoicing
+    make_emprendedor(service, owner)
+    service.save_certificate(owner, p12_for(signing_key), CERTIFICATE_PASSWORD)
+    service.update_einvoice(owner, enabled=True)
+    service.certificates(owner.user.business_id).clear()
+
+    updated = service.update_einvoice(owner, trade_name="Nuevo nombre")
+
+    assert (updated.einvoice_enabled, updated.trade_name) == (True, "Nuevo nombre")
+
+
+def test_the_regime_cannot_change_to_one_that_does_not_invoice_while_enabled(
+    invoicing, signing_key
+):
+    service, owner, _, settings = invoicing
+    make_emprendedor(service, owner)
+    service.save_certificate(owner, p12_for(signing_key), CERTIFICATE_PASSWORD)
+    service.update_einvoice(owner, enabled=True)
+    before = settings.get(owner.user.business_id)
+
+    with pytest.raises(ValueError) as error:
+        service.update_profile(owner, tax_regime="rimpe_popular", address="Otra calle")
+
+    assert str(error.value) == (
+        "Primero se debe desactivar la factura electrónica "
+        "para cambiar a un régimen que no la emite."
+    )
+    assert settings.get(owner.user.business_id) == before
+    assert service.update_profile(owner, tax_regime="general").tax_regime == "general"
+
+
+def test_only_the_owner_can_change_invoicing_settings_or_the_certificate(invoicing, signing_key):
+    service, owner, cashier, settings = invoicing
+    before = settings.get(owner.user.business_id)
+
+    with pytest.raises(PermissionError, match="Solo el dueño"):
+        service.update_einvoice(cashier, establishment="009")
+    with pytest.raises(PermissionError, match="Solo el dueño"):
+        service.save_certificate(cashier, p12_for(signing_key), CERTIFICATE_PASSWORD)
+    with pytest.raises(PermissionError, match="Solo el dueño"):
+        service.remove_certificate(cashier)
+    with pytest.raises(PermissionError, match="Solo el dueño"):
+        service.certificate_info(cashier)
+
+    assert settings.get(owner.user.business_id) == before
+    assert service.certificate_info(owner) is None
+
+
+def test_the_certificate_is_saved_through_the_service_and_described_without_secrets(
+    invoicing, signing_key
+):
+    service, owner, _, _ = invoicing
+
+    service.save_certificate(owner, p12_for(signing_key), CERTIFICATE_PASSWORD)
+
+    info = service.certificate_info(owner)
+    assert info is not None
+    assert info.subject == "Firma de prueba"
+    assert CERTIFICATE_PASSWORD not in repr(info)
+
+
+def test_a_wrong_password_or_expired_certificate_is_not_stored(invoicing, signing_key):
+    service, owner, _, _ = invoicing
+    expired = p12_for(signing_key, datetime.now(UTC) - timedelta(days=1))
+
+    with pytest.raises(SigningError):
+        service.save_certificate(owner, p12_for(signing_key), "incorrecta")
+    with pytest.raises(SigningError):
+        service.save_certificate(owner, expired, CERTIFICATE_PASSWORD)
+
+    assert service.certificate_info(owner) is None
+
+
+def test_the_certificate_can_be_removed_only_while_invoicing_is_off(invoicing, signing_key):
+    service, owner, _, _ = invoicing
+    make_emprendedor(service, owner)
+    service.save_certificate(owner, p12_for(signing_key), CERTIFICATE_PASSWORD)
+    service.update_einvoice(owner, enabled=True)
+
+    with pytest.raises(ValueError) as error:
+        service.remove_certificate(owner)
+    assert str(error.value) == (
+        "Primero se debe desactivar la factura electrónica para quitar el certificado."
+    )
+    assert service.certificate_info(owner) is not None
+
+    service.update_einvoice(owner, enabled=False)
+    service.remove_certificate(owner)
+    assert service.certificate_info(owner) is None
+
+
+def test_the_certificate_of_one_business_is_not_visible_to_another(invoicing, env, signing_key):
+    service, owner, _, _ = invoicing
+    database = env[0]
+    service.save_certificate(owner, p12_for(signing_key), CERTIFICATE_PASSWORD)
+    with database.connect() as connection:
+        business_id = connection.execute("INSERT INTO businesses (name) VALUES ('Otra')").lastrowid
+    assert business_id is not None
+
+    assert service.certificates(business_id).exists() is False
+    assert service.certificates(owner.user.business_id).exists() is True

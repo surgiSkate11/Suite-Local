@@ -1,17 +1,29 @@
 import re
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from suitelocal.domain.einvoice import (
+    AUTHORIZED,
     BUYER_ID_TYPES,
+    DEADLINE_WARNING_AFTER,
+    EINVOICE_STATUSES,
     FINAL_CONSUMER_ID,
+    LOCAL_ERROR,
+    NOT_AUTHORIZED,
+    PENDING,
+    RECEIVED,
+    RETURNED,
+    SEND_DEADLINE,
     Buyer,
+    EInvoice,
     access_key,
     iva_percentage_code,
     modulo11_check_digit,
     payment_code,
+    retry_delay,
+    sri_environment_code,
     validate_buyer,
 )
 
@@ -257,3 +269,68 @@ def test_invalid_buyers_are_rejected_with_a_spanish_error(buyer, message):
         validate_buyer(buyer, 100)
 
     assert str(error.value) == message
+
+
+# -- send queue rules ---------------------------------------------------------------------
+
+
+def test_the_queue_statuses_are_the_six_agreed_ones():
+    assert EINVOICE_STATUSES == (
+        "pendiente",
+        "recibida",
+        "devuelta",
+        "autorizada",
+        "no_autorizada",
+        "error_local",
+    )
+    assert (PENDING, RECEIVED, RETURNED, AUTHORIZED, NOT_AUTHORIZED, LOCAL_ERROR) == (
+        EINVOICE_STATUSES
+    )
+
+
+def test_retry_delays_are_1_5_15_30_60_minutes_and_then_hourly():
+    delays = [retry_delay(attempts) for attempts in range(1, 10)]
+
+    assert delays == [timedelta(minutes=minutes) for minutes in (1, 5, 15, 30, 60, 60, 60, 60, 60)]
+
+
+def test_the_first_failed_attempt_is_number_one():
+    with pytest.raises(ValueError):
+        retry_delay(0)
+
+
+def test_the_environment_codes_are_1_for_pruebas_and_2_for_produccion():
+    assert sri_environment_code("pruebas") == "1"
+    assert sri_environment_code("produccion") == "2"
+    with pytest.raises(ValueError, match="ambiente"):
+        sri_environment_code("otro")
+
+
+def test_the_send_deadline_is_72_hours_and_the_warning_starts_at_60():
+    assert SEND_DEADLINE == timedelta(hours=72)
+    assert DEADLINE_WARNING_AFTER == timedelta(hours=60)
+
+
+def test_an_invoice_number_is_shown_as_establishment_point_and_sequential():
+    invoice = EInvoice(
+        id=1,
+        business_id=1,
+        sale_id=1,
+        establishment="001",
+        emission_point="002",
+        sequential="000000045",
+        access_key="0" * 49,
+        environment="pruebas",
+        status=PENDING,
+        signed_xml=b"<factura/>",
+        buyer=Buyer.final_consumer(),
+        messages=(),
+        attempts=0,
+        next_attempt_at=None,
+        issued_at=datetime(2026, 3, 5, tzinfo=UTC),
+        authorized_at=None,
+        authorization_number=None,
+    )
+
+    assert invoice.number == "001-002-000000045"
+    assert "<factura/>" not in repr(invoice)

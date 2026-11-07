@@ -6,19 +6,26 @@ from suitelocal.domain.business import (
     ADDRESS_MAX_LENGTH,
     DEFAULT_BUSINESS_TYPE,
     DEFAULT_RECEIPT_PAPER_MM,
+    DEFAULT_SERIES_CODE,
+    DEFAULT_SRI_ENVIRONMENT,
     DEFAULT_TAX_REGIME,
     PHONE_MAX_LENGTH,
     PRINTER_NAME_MAX_LENGTH,
     RECEIPT_FOOTER_MAX_LENGTH,
+    TRADE_NAME_MAX_LENGTH,
     BusinessSettings,
     format_modules,
+    issues_electronic_invoices,
     normalize_ruc,
     normalize_text,
     parse_modules,
     validate_business_type,
     validate_decimal_separator,
+    validate_einvoice_activation,
     validate_receipt_paper_mm,
     validate_ruc_for_regime,
+    validate_series_code,
+    validate_sri_environment,
     validate_tax_regime,
 )
 from suitelocal.domain.tax import (
@@ -61,7 +68,9 @@ class BusinessSettingsRepository:
                 SELECT b.name, s.currency_symbol, s.low_stock_threshold,
                 s.enabled_payment_methods, s.tax_rate_basis_points, s.ruc, s.tax_regime,
                 s.business_type, s.enabled_modules, s.decimal_separator, s.address, s.phone,
-                s.receipt_footer, s.receipt_paper_mm, s.printer_name
+                s.receipt_footer, s.receipt_paper_mm, s.printer_name, s.einvoice_enabled,
+                s.sri_environment, s.establishment, s.emission_point, s.obligado_contabilidad,
+                s.trade_name
                 FROM businesses b
                 LEFT JOIN business_settings s ON s.business_id = b.id
                 WHERE b.id = ?
@@ -90,6 +99,12 @@ class BusinessSettingsRepository:
             row["receipt_footer"] or "",
             row["receipt_paper_mm"] or DEFAULT_RECEIPT_PAPER_MM,
             row["printer_name"] or "",
+            bool(row["einvoice_enabled"]),
+            row["sri_environment"] or DEFAULT_SRI_ENVIRONMENT,
+            row["establishment"] or DEFAULT_SERIES_CODE,
+            row["emission_point"] or DEFAULT_SERIES_CODE,
+            bool(row["obligado_contabilidad"]),
+            row["trade_name"] or "",
         )
 
     def update(
@@ -200,6 +215,11 @@ class BusinessSettingsRepository:
         new_ruc = current.ruc if ruc is None else normalize_ruc(ruc)
         new_regime = current.tax_regime if tax_regime is None else validate_tax_regime(tax_regime)
         validate_ruc_for_regime(new_ruc, new_regime)
+        if current.einvoice_enabled and not issues_electronic_invoices(new_regime):
+            raise ValueError(
+                "Primero se debe desactivar la factura electrónica "
+                "para cambiar a un régimen que no la emite."
+            )
         new_type = current.business_type if business_type is None else business_type
         validate_business_type(new_type)
         new_modules = (
@@ -260,3 +280,77 @@ class BusinessSettingsRepository:
                 business_id,
             ),
         )
+
+    def update_einvoice(
+        self,
+        business_id: int,
+        *,
+        enabled: bool | None = None,
+        sri_environment: str | None = None,
+        establishment: str | None = None,
+        emission_point: str | None = None,
+        obligado_contabilidad: bool | None = None,
+        trade_name: str | None = None,
+        has_certificate: bool = False,
+    ) -> BusinessSettings:
+        """Change the given electronic-invoicing fields (None keeps the current value).
+
+        Everything is validated before anything is written. Turning invoicing on needs a
+        regime that issues invoices, a valid RUC and a stored certificate (`has_certificate`).
+        """
+        with self.database.connect() as connection:
+            current = self._load(connection, business_id)
+            new_environment = (
+                current.sri_environment
+                if sri_environment is None
+                else validate_sri_environment(sri_environment)
+            )
+            new_establishment = (
+                current.establishment
+                if establishment is None
+                else validate_series_code(establishment, "El establecimiento")
+            )
+            new_point = (
+                current.emission_point
+                if emission_point is None
+                else validate_series_code(emission_point, "El punto de emisión")
+            )
+            new_trade_name = (
+                current.trade_name
+                if trade_name is None
+                else normalize_text(trade_name, "El nombre comercial", TRADE_NAME_MAX_LENGTH)
+            )
+            new_accounting = (
+                current.obligado_contabilidad
+                if obligado_contabilidad is None
+                else obligado_contabilidad
+            )
+            new_enabled = current.einvoice_enabled if enabled is None else enabled
+            # Only turning it on is checked: a certificate that disappears later must not lock
+            # the owner out of unrelated edits.
+            if new_enabled and not current.einvoice_enabled:
+                validate_einvoice_activation(
+                    current.tax_regime, current.ruc, has_certificate=has_certificate
+                )
+            connection.execute(
+                "INSERT OR IGNORE INTO business_settings (business_id) VALUES (?)",
+                (business_id,),
+            )
+            connection.execute(
+                """
+                UPDATE business_settings
+                SET einvoice_enabled = ?, sri_environment = ?, establishment = ?,
+                    emission_point = ?, obligado_contabilidad = ?, trade_name = ?
+                WHERE business_id = ?
+                """,
+                (
+                    int(new_enabled),
+                    new_environment,
+                    new_establishment,
+                    new_point,
+                    int(new_accounting),
+                    new_trade_name,
+                    business_id,
+                ),
+            )
+        return self.get(business_id)
