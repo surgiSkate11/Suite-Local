@@ -11,3 +11,4 @@ build/
 !.env.example
 # Local AI runtime state
 .atl/
+.reference/
