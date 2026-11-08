@@ -54,7 +54,7 @@ Todo se configura desde **Ajustes**, sin tocar código:
 | Ajuste | Para qué sirve |
 |---|---|
 | Tipo de negocio | Aplica una plantilla con módulos y categorías de ejemplo |
-| Módulos | Activa o desactiva Mesas, códigos de barras, categorías y venta por peso |
+| Módulos | Activa o desactiva Mesas, códigos de barras y categorías |
 | Régimen tributario | Define si se emite ticket interno o factura electrónica |
 | Cobro | Formas de pago, IVA por defecto, separador decimal y aviso de stock |
 | Ticket | Impresora, ancho de papel y mensaje al pie |
