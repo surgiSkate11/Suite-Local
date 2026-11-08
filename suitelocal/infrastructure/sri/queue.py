@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from suitelocal.domain.einvoice import (
     DEADLINE_WARNING_AFTER,
     PENDING,
+    REPLACED,
     Buyer,
     EInvoice,
     SriMessage,
@@ -16,10 +17,12 @@ from suitelocal.infrastructure.database import Database
 _COLUMNS = """
     id, business_id, sale_id, establishment, emission_point, sequential, access_key, environment,
     status, signed_xml, buyer_id_type, buyer_identification, buyer_name, buyer_address, messages,
-    attempts, next_attempt_at, issued_at, authorized_at, authorization_number
+    attempts, next_attempt_at, issued_at, authorized_at, authorization_number, replaced_by
 """
 _NO_TRANSACTION = "Un secuencial solo se reserva dentro de una transacción BEGIN IMMEDIATE."
 _EXHAUSTED = "Se agotó la numeración de facturas de este punto de emisión."
+LAST_SEQUENTIAL = 999_999_999
+_SEQUENTIAL_RANGE = f"El próximo secuencial debe estar entre 1 y {LAST_SEQUENTIAL}."
 
 
 def to_text(moment: datetime) -> str:
@@ -80,6 +83,7 @@ def _einvoice(row: sqlite3.Row) -> EInvoice:
         issued_at=issued_at,
         authorized_at=_from_text(row["authorized_at"]),
         authorization_number=row["authorization_number"],
+        replaced_by=row["replaced_by"],
     )
 
 
@@ -122,6 +126,79 @@ class EInvoiceRepository:
                 raise
             raise ValueError(_EXHAUSTED) from error
         return int(row["last_sequential"])
+
+    @staticmethod
+    def last_sequential(
+        connection: sqlite3.Connection,
+        business_id: int,
+        environment: str,
+        establishment: str,
+        emission_point: str,
+    ) -> int:
+        """The last number handed out in a series; 0 when none has been."""
+        row = connection.execute(
+            """
+            SELECT last_sequential FROM einvoice_sequences
+            WHERE business_id = ? AND environment = ? AND establishment = ? AND emission_point = ?
+            """,
+            (business_id, environment, establishment, emission_point),
+        ).fetchone()
+        return 0 if row is None else int(row["last_sequential"])
+
+    @staticmethod
+    def raise_next_sequential(
+        connection: sqlite3.Connection,
+        business_id: int,
+        environment: str,
+        establishment: str,
+        emission_point: str,
+        next_sequential: int,
+    ) -> None:
+        """Make `next_sequential` the next number of a series; it can only go up.
+
+        The caller's connection decides the transaction, so it can be undone with other changes.
+        Asking for the number that is already next is allowed and changes nothing.
+        """
+        if isinstance(next_sequential, bool) or not 1 <= next_sequential <= LAST_SEQUENTIAL:
+            raise ValueError(_SEQUENTIAL_RANGE)
+        last = EInvoiceRepository.last_sequential(
+            connection, business_id, environment, establishment, emission_point
+        )
+        if next_sequential <= last:
+            raise ValueError(f"El próximo secuencial debe ser mayor que el último usado ({last}).")
+        connection.execute(
+            """
+            INSERT INTO einvoice_sequences
+                (business_id, environment, establishment, emission_point, last_sequential)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (business_id, environment, establishment, emission_point)
+            DO UPDATE SET last_sequential = excluded.last_sequential
+            """,
+            (business_id, environment, establishment, emission_point, next_sequential - 1),
+        )
+
+    @staticmethod
+    def active_for_sale(connection: sqlite3.Connection, sale_id: int) -> EInvoice | None:
+        """The sale's invoice that has not been replaced, read inside the caller's transaction."""
+        row = connection.execute(
+            f"SELECT {_COLUMNS} FROM einvoices WHERE sale_id = ? AND status <> ?",
+            (sale_id, REPLACED),
+        ).fetchone()
+        return None if row is None else _einvoice(row)
+
+    @staticmethod
+    def replace(connection: sqlite3.Connection, einvoice_id: int) -> None:
+        """Mark an invoice as replaced; call `link_replacement` once its successor exists."""
+        connection.execute(
+            "UPDATE einvoices SET status = ?, next_attempt_at = NULL WHERE id = ?",
+            (REPLACED, einvoice_id),
+        )
+
+    @staticmethod
+    def link_replacement(connection: sqlite3.Connection, einvoice_id: int, new_id: int) -> None:
+        connection.execute(
+            "UPDATE einvoices SET replaced_by = ? WHERE id = ?", (new_id, einvoice_id)
+        )
 
     @staticmethod
     def sale_invoice_exists(connection: sqlite3.Connection, sale_id: int) -> bool:
@@ -183,7 +260,10 @@ class EInvoiceRepository:
     def get_for_sale(self, business_id: int, sale_id: int) -> EInvoice | None:
         with self.database.connect() as connection:
             row = connection.execute(
-                f"SELECT {_COLUMNS} FROM einvoices WHERE sale_id = ? AND business_id = ?",
+                f"""
+                SELECT {_COLUMNS} FROM einvoices
+                WHERE sale_id = ? AND business_id = ? AND status <> '{REPLACED}'
+                """,
                 (sale_id, business_id),
             ).fetchone()
         return None if row is None else _einvoice(row)
@@ -210,6 +290,18 @@ class EInvoiceRepository:
                 (to_text(now), business_id, business_id),
             ).fetchall()
         return [_einvoice(row) for row in rows]
+
+    def count_open(self, business_id: int) -> int:
+        """Invoices of the business still waiting on the SRI: pending or received."""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS total FROM einvoices
+                WHERE business_id = ? AND status IN ('pendiente', 'recibida')
+                """,
+                (business_id,),
+            ).fetchone()
+        return int(row["total"])
 
     def near_deadline(self, now: datetime, business_id: int | None = None) -> list[int]:
         """Ids of the invoices still not received more than 60 hours after the sale."""

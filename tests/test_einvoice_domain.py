@@ -14,6 +14,8 @@ from suitelocal.domain.einvoice import (
     NOT_AUTHORIZED,
     PENDING,
     RECEIVED,
+    REISSUABLE_STATUSES,
+    REPLACED,
     RETURNED,
     SEND_DEADLINE,
     Buyer,
@@ -274,7 +276,7 @@ def test_invalid_buyers_are_rejected_with_a_spanish_error(buyer, message):
 # -- send queue rules ---------------------------------------------------------------------
 
 
-def test_the_queue_statuses_are_the_six_agreed_ones():
+def test_the_queue_statuses_are_the_seven_agreed_ones():
     assert EINVOICE_STATUSES == (
         "pendiente",
         "recibida",
@@ -282,10 +284,12 @@ def test_the_queue_statuses_are_the_six_agreed_ones():
         "autorizada",
         "no_autorizada",
         "error_local",
+        "reemplazada",
     )
-    assert (PENDING, RECEIVED, RETURNED, AUTHORIZED, NOT_AUTHORIZED, LOCAL_ERROR) == (
+    assert (PENDING, RECEIVED, RETURNED, AUTHORIZED, NOT_AUTHORIZED, LOCAL_ERROR, REPLACED) == (
         EINVOICE_STATUSES
     )
+    assert REISSUABLE_STATUSES == (RETURNED, NOT_AUTHORIZED, LOCAL_ERROR)
 
 
 def test_retry_delays_are_1_5_15_30_60_minutes_and_then_hourly():

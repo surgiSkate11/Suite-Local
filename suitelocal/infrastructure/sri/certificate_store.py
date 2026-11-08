@@ -145,6 +145,14 @@ def _find_ruc(certificate: x509.Certificate) -> str:
     return ""
 
 
+def _info_of(certificate: x509.Certificate) -> CertificateInfo:
+    return CertificateInfo(
+        _subject_name(certificate),
+        _find_ruc(certificate),
+        certificate.not_valid_after_utc.astimezone(UTC),
+    )
+
+
 class CertificateStore:
     """One business's protected certificate file."""
 
@@ -173,6 +181,14 @@ class CertificateStore:
 
     def exists(self) -> bool:
         return self.path.is_file()
+
+    @staticmethod
+    def inspect(p12_bytes: bytes, password: str, *, now: datetime | None = None) -> CertificateInfo:
+        """What a .p12 says about its holder, RUC and expiry, without storing anything.
+
+        Raises SigningError for a wrong password, a bad file or an expired certificate.
+        """
+        return _info_of(load_certificate(p12_bytes, password, now=now))
 
     def save(self, p12_bytes: bytes, password: str, *, now: datetime | None = None) -> None:
         """Check the .p12 with its password and store both; raises and stores nothing otherwise.
@@ -210,12 +226,7 @@ class CertificateStore:
     def info(self) -> CertificateInfo:
         """Subject, RUC and expiry of the stored certificate, even if it has already expired."""
         p12_bytes, password = self.load()
-        certificate = load_certificate(p12_bytes, password, require_valid=False)
-        return CertificateInfo(
-            _subject_name(certificate),
-            _find_ruc(certificate),
-            certificate.not_valid_after_utc.astimezone(UTC),
-        )
+        return _info_of(load_certificate(p12_bytes, password, require_valid=False))
 
     def clear(self) -> None:
         self.path.unlink(missing_ok=True)

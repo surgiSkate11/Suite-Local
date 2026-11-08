@@ -202,13 +202,25 @@ class InvoiceData:
 # Statuses of an invoice in the send queue. "pendiente" waits to be sent, "recibida" was accepted
 # by the SRI and waits for its authorization, "devuelta" was refused on reception, "autorizada"
 # and "no_autorizada" are the SRI's final verdicts and "error_local" never left this computer.
+# "reemplazada" is a refused invoice that was issued again; it points to its successor.
 PENDING = "pendiente"
 RECEIVED = "recibida"
 RETURNED = "devuelta"
 AUTHORIZED = "autorizada"
 NOT_AUTHORIZED = "no_autorizada"
 LOCAL_ERROR = "error_local"
-EINVOICE_STATUSES = (PENDING, RECEIVED, RETURNED, AUTHORIZED, NOT_AUTHORIZED, LOCAL_ERROR)
+REPLACED = "reemplazada"
+EINVOICE_STATUSES = (
+    PENDING,
+    RECEIVED,
+    RETURNED,
+    AUTHORIZED,
+    NOT_AUTHORIZED,
+    LOCAL_ERROR,
+    REPLACED,
+)
+# Only an invoice the SRI will never authorize can be issued again with a new number.
+REISSUABLE_STATUSES = (RETURNED, NOT_AUTHORIZED, LOCAL_ERROR)
 
 # The SRI accepts an invoice up to 72 hours after its issue date; the owner is warned from 60.
 SEND_DEADLINE = timedelta(hours=72)
@@ -266,6 +278,8 @@ class EInvoice:
     issued_at: datetime
     authorized_at: datetime | None
     authorization_number: str | None
+    # The id of the invoice that took this one's place; set only when the status is "reemplazada".
+    replaced_by: int | None = None
 
     @property
     def number(self) -> str:

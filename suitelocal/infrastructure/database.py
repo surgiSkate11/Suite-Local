@@ -126,12 +126,16 @@ CREATE TABLE IF NOT EXISTS einvoice_sequences (
     last_sequential INTEGER NOT NULL CHECK (last_sequential BETWEEN 0 AND 999999999),
     PRIMARY KEY (business_id, environment, establishment, emission_point)
 );
+"""
 
--- The send queue of SRI electronic invoices: one row per invoiced sale.
-CREATE TABLE IF NOT EXISTS einvoices (
+# The send queue of SRI electronic invoices: one row per invoice. A sale has at most one active
+# row; a refused invoice that is re-issued stays as "reemplazada" and points to its successor.
+# It is built by code, not by SCHEMA, because adding a status to a CHECK needs a table rebuild.
+_EINVOICES_TABLE = """
+CREATE TABLE {name} (
     id INTEGER PRIMARY KEY,
     business_id INTEGER NOT NULL REFERENCES businesses(id),
-    sale_id INTEGER NOT NULL UNIQUE REFERENCES sales(id),
+    sale_id INTEGER NOT NULL REFERENCES sales(id),
     establishment TEXT NOT NULL,
     emission_point TEXT NOT NULL,
     sequential TEXT NOT NULL,
@@ -139,7 +143,8 @@ CREATE TABLE IF NOT EXISTS einvoices (
     environment TEXT NOT NULL CHECK (environment IN ('pruebas', 'produccion')),
     status TEXT NOT NULL DEFAULT 'pendiente' CHECK (
         status IN (
-            'pendiente', 'recibida', 'devuelta', 'autorizada', 'no_autorizada', 'error_local'
+            'pendiente', 'recibida', 'devuelta', 'autorizada', 'no_autorizada', 'error_local',
+            'reemplazada'
         )
     ),
     signed_xml BLOB NOT NULL,
@@ -153,11 +158,31 @@ CREATE TABLE IF NOT EXISTS einvoices (
     issued_at TEXT NOT NULL,
     authorized_at TEXT,
     authorization_number TEXT,
+    replaced_by INTEGER REFERENCES einvoices(id),
     UNIQUE (business_id, environment, establishment, emission_point, sequential)
-);
-
-CREATE INDEX IF NOT EXISTS idx_einvoices_status ON einvoices(status, next_attempt_at);
+)
 """
+# Every column of the table before `replaced_by` existed, in storage order.
+_EINVOICES_OLD_COLUMNS = (
+    "id, business_id, sale_id, establishment, emission_point, sequential, access_key, "
+    "environment, status, signed_xml, buyer_id_type, buyer_identification, buyer_name, "
+    "buyer_address, messages, attempts, next_attempt_at, issued_at, authorized_at, "
+    "authorization_number"
+)
+_EINVOICES_REBUILT = "einvoices_rebuilt"
+_EINVOICES_COPY = (
+    f"INSERT INTO {_EINVOICES_REBUILT} ({_EINVOICES_OLD_COLUMNS}) "
+    f"SELECT {_EINVOICES_OLD_COLUMNS} FROM einvoices"
+)
+_EINVOICES_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_einvoices_status ON einvoices(status, next_attempt_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_einvoices_active_sale "
+    "ON einvoices(sale_id) WHERE status <> 'reemplazada'",
+)
+_EINVOICES_COPY_FAILED = (
+    "La migración de las facturas electrónicas no copió todas las filas y se deshizo. "
+    "No se perdió ningún dato."
+)
 
 
 class Database:
@@ -190,6 +215,7 @@ class Database:
             _migrate_settings(connection)
             _migrate_products(connection)
             _migrate_sales(connection)
+            _migrate_einvoices(connection)
             # Left NULL on old sales: they were priced with the tax added on top, so a
             # per-line IVA cannot be derived from them and they are never rewritten.
             add_missing_columns(
@@ -251,6 +277,36 @@ def _migrate_sales(connection: sqlite3.Connection) -> None:
         connection.execute(
             "UPDATE sales SET business_id = ? WHERE business_id IS NULL", (businesses[0]["id"],)
         )
+
+
+def _migrate_einvoices(connection: sqlite3.Connection) -> None:
+    """Create `einvoices`, or rebuild an old one so a sale can have replaced rows.
+
+    Runs inside the caller's transaction. The rebuild copies every row into a new table, checks
+    that nothing was lost, drops the old table and renames the new one; any failure raises and
+    the caller's rollback leaves the old table exactly as it was. Once the table has
+    `replaced_by` there is nothing to do, so running it again changes nothing.
+    """
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(einvoices)")}
+    if not columns:
+        connection.execute(_EINVOICES_TABLE.format(name="einvoices"))
+    elif "replaced_by" not in columns:
+        connection.execute(f"DROP TABLE IF EXISTS {_EINVOICES_REBUILT}")
+        connection.execute(_EINVOICES_TABLE.format(name=_EINVOICES_REBUILT))
+        connection.execute(_EINVOICES_COPY)
+        old_rows = connection.execute("SELECT COUNT(*) FROM einvoices").fetchone()[0]
+        new_rows = connection.execute(f"SELECT COUNT(*) FROM {_EINVOICES_REBUILT}").fetchone()[0]
+        # Counting is not enough: any old row without an identical twin is a lost row.
+        unmatched = connection.execute(
+            f"SELECT COUNT(*) FROM (SELECT {_EINVOICES_OLD_COLUMNS} FROM einvoices "
+            f"EXCEPT SELECT {_EINVOICES_OLD_COLUMNS} FROM {_EINVOICES_REBUILT})"
+        ).fetchone()[0]
+        if old_rows != new_rows or unmatched:
+            raise RuntimeError(_EINVOICES_COPY_FAILED)
+        connection.execute("DROP TABLE einvoices")
+        connection.execute(f"ALTER TABLE {_EINVOICES_REBUILT} RENAME TO einvoices")
+    for statement in _EINVOICES_INDEXES:
+        connection.execute(statement)
 
 
 def _migrate_settings(connection: sqlite3.Connection) -> None:

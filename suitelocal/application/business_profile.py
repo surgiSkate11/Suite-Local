@@ -12,6 +12,15 @@ from suitelocal.infrastructure.sri.certificate_store import CertificateInfo, Cer
 _NO_CERTIFICATE_STORE = "El almacén de certificados no está configurado."
 
 
+def _check_certificate_ruc(info: CertificateInfo, business_ruc: str) -> None:
+    """A certificate that names a RUC can only sign for that RUC; one without a RUC passes."""
+    if info.ruc and info.ruc != business_ruc:
+        raise ValueError(
+            f"El RUC del certificado ({info.ruc}) no coincide con el RUC del negocio "
+            f"({business_ruc or 'sin RUC'})."
+        )
+
+
 class BusinessProfileService:
     """Owner-only writes of the business settings and the Ecuador business profile."""
 
@@ -97,10 +106,18 @@ class BusinessProfileService:
         emission_point: str | None = None,
         obligado_contabilidad: bool | None = None,
         trade_name: str | None = None,
+        next_sequential: int | None = None,
     ) -> BusinessSettings:
-        """Change only the given electronic-invoicing fields; turning it on has prerequisites."""
+        """Change only the given electronic-invoicing fields; turning it on has prerequisites.
+
+        `next_sequential` can only raise the next number of the series being saved.
+        """
         require_owner(session)
         business_id = session.user.business_id
+        if enabled and self._has_certificate(business_id):
+            current = self.settings.get(business_id)
+            if not current.einvoice_enabled:
+                _check_certificate_ruc(self.certificates(business_id).info(), current.ruc)
         return self.settings.update_einvoice(
             business_id,
             enabled=enabled,
@@ -110,14 +127,25 @@ class BusinessProfileService:
             obligado_contabilidad=obligado_contabilidad,
             trade_name=trade_name,
             has_certificate=self._has_certificate(business_id),
+            next_sequential=next_sequential,
         )
+
+    def next_sequential(self, session: Session) -> int:
+        """The number the next invoice of the business's current series will get."""
+        require_owner(session)
+        return self.settings.next_sequential(session.user.business_id)
 
     def save_certificate(
         self, session: Session, p12_bytes: bytes, password: str, *, now: datetime | None = None
     ) -> CertificateInfo:
         """Check and store the signing certificate; SigningError (nothing stored) if it is bad."""
         require_owner(session)
-        store = self.certificates(session.user.business_id)
+        business_id = session.user.business_id
+        store = self.certificates(business_id)
+        # Checked before storing: a certificate of another RUC must not replace a good one.
+        _check_certificate_ruc(
+            store.inspect(p12_bytes, password, now=now), self.settings.get(business_id).ruc
+        )
         store.save(p12_bytes, password, now=now)
         return store.info()
 

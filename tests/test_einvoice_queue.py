@@ -8,13 +8,18 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
-from test_certificate_store import FakeProtector
+from test_certificate_store import FakeProtector, make_p12_with_ruc
 from test_sri_client import FakeTransport, fixture
 from test_xades import make_p12
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.business_profile import BusinessProfileService
-from suitelocal.application.einvoice import EInvoiceProcessor, EInvoiceService, ProcessReport
+from suitelocal.application.einvoice import (
+    EInvoiceProcessor,
+    EInvoiceService,
+    ProcessReport,
+    run_processing_pass,
+)
 from suitelocal.application.receipts import ReceiptService
 from suitelocal.domain.auth import Session, User
 from suitelocal.domain.einvoice import (
@@ -28,6 +33,7 @@ from suitelocal.domain.einvoice import (
     SriMessage,
 )
 from suitelocal.domain.models import Payment, Sale, SaleItem
+from suitelocal.infrastructure import database as database_module
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import (
     CategoryRepository,
@@ -943,3 +949,427 @@ def test_an_already_registered_invoice_through_the_real_client_ends_authorized(e
     assert stored is not None
     assert stored.status == AUTHORIZED
     assert len(transport.requests) == 2
+
+
+# -- re-issuing, starting sequential and the certificate's RUC ---------------------------------
+
+NOT_REISSUABLE = "Solo se puede reemitir una factura devuelta, no autorizada o con error local."
+NO_INVOICE = "La venta no tiene una factura electrónica para reemitir."
+OLD_STATUS_CHECK = (
+    "'pendiente', 'recibida', 'devuelta', 'autorizada', 'no_autorizada', 'error_local'"
+)
+
+
+def mark(env: Env, invoice, status: str) -> None:
+    env.repository.record(invoice.id, status=status, attempts=0, next_attempt_at=None)
+
+
+@pytest.mark.parametrize("status", [RETURNED, NOT_AUTHORIZED, LOCAL_ERROR])
+def test_a_refused_invoice_is_reissued_with_a_new_number_and_access_key(env, status):
+    sale_id = sell(env)
+    old = issue(env, sale_id)
+    mark(env, old, status)
+
+    new = env.service.reissue_for_sale(env.owner, sale_id)
+
+    assert new.status == PENDING
+    assert new.sequential == "000000002"
+    assert new.access_key != old.access_key
+    assert new.id != old.id
+    assert verify_invoice_signature(new.signed_xml)
+    assert env.service.get_for_sale(env.owner, sale_id) == new
+    replaced = env.repository.get(old.id)
+    assert replaced.status == "reemplazada"
+    assert replaced.replaced_by == new.id
+    assert replaced.sequential == "000000001"
+    assert [invoice.id for invoice in env.service.list_for_business(env.owner)] == [new.id, old.id]
+
+
+@pytest.mark.parametrize("status", [PENDING, RECEIVED, AUTHORIZED])
+def test_an_invoice_in_progress_or_authorized_can_never_be_reissued(env, status):
+    sale_id = sell(env)
+    old = issue(env, sale_id)
+    mark(env, old, status)
+    before = table_snapshot(env.database, "einvoices", "einvoice_sequences")
+
+    with pytest.raises(ValueError) as error:
+        env.service.reissue_for_sale(env.owner, sale_id)
+
+    assert str(error.value) == NOT_REISSUABLE
+    assert table_snapshot(env.database, "einvoices", "einvoice_sequences") == before
+
+
+def test_a_sale_without_an_invoice_cannot_be_reissued(env):
+    sale_id = sell(env)
+
+    with pytest.raises(ValueError) as error:
+        env.service.reissue_for_sale(env.owner, sale_id)
+
+    assert str(error.value) == NO_INVOICE
+    assert allocate(env.database) == 1
+
+
+def test_a_reissue_that_fails_keeps_the_old_invoice_and_burns_no_number(env):
+    sale_id = sell(env)
+    old = issue(env, sale_id)
+    mark(env, old, RETURNED)
+    env.profile.certificates(1).clear()
+    before = table_snapshot(env.database, "einvoices", "einvoice_sequences")
+
+    with pytest.raises(CertificateStoreError):
+        env.service.reissue_for_sale(env.owner, sale_id)
+
+    assert table_snapshot(env.database, "einvoices", "einvoice_sequences") == before
+    assert env.service.get_for_sale(env.owner, sale_id).status == RETURNED
+
+
+def test_the_reissue_keeps_the_buyer_unless_a_new_one_is_given(env):
+    sale_id = sell(env)
+    old = issue(env, sale_id, Buyer("05", "1710034065", "Ana Mora"))
+    mark(env, old, RETURNED)
+    kept = env.service.reissue_for_sale(env.owner, sale_id)
+    mark(env, kept, RETURNED)
+    changed = env.service.reissue_for_sale(
+        env.owner, sale_id, Buyer("05", "0912345674", "Luis Paz")
+    )
+
+    assert kept.buyer == Buyer("05", "1710034065", "Ana Mora")
+    assert changed.buyer == Buyer("05", "0912345674", "Luis Paz")
+    assert changed.sequential == "000000003"
+
+
+def test_a_sale_has_only_one_active_invoice_after_several_reissues(env):
+    sale_id = sell(env)
+    first = issue(env, sale_id)
+    mark(env, first, RETURNED)
+    second = env.service.reissue_for_sale(env.owner, sale_id)
+    mark(env, second, NOT_AUTHORIZED)
+    third = env.service.reissue_for_sale(env.owner, sale_id)
+
+    statuses = [env.repository.get(invoice.id).status for invoice in (first, second, third)]
+    assert statuses == ["reemplazada", "reemplazada", PENDING]
+    assert env.repository.get(second.id).replaced_by == third.id
+    with pytest.raises(ValueError, match="Solo se puede reemitir"):
+        env.service.reissue_for_sale(env.owner, sale_id)
+
+
+def test_a_replaced_invoice_is_never_processed_again(env):
+    sale_id = sell(env)
+    old = issue(env, sale_id)
+    mark(env, old, RETURNED)
+    env.service.reissue_for_sale(env.owner, sale_id)
+    with env.database.connect() as connection:
+        connection.execute("UPDATE einvoices SET next_attempt_at = NULL")
+
+    assert [invoice.id for invoice in env.repository.due(NOW)] == [2]
+
+
+def test_the_database_allows_a_replaced_row_beside_an_active_one_but_not_two_active(env):
+    sale_id = sell(env)
+    old = issue(env, sale_id)
+    mark(env, old, RETURNED)
+    env.service.reissue_for_sale(env.owner, sale_id)
+    insert = (
+        "INSERT INTO einvoices (business_id, sale_id, establishment, emission_point, sequential,"
+        " access_key, environment, status, signed_xml, buyer_id_type, buyer_identification,"
+        " buyer_name, issued_at) VALUES (1, ?, '001', '001', ?, ?, 'pruebas', ?, x'00', '07',"
+        " '9999999999999', 'CONSUMIDOR FINAL', '2026-03-05T19:30:00+00:00')"
+    )
+
+    with env.database.connect() as connection:
+        connection.execute(insert, (sale_id, "000000090", "clave-a", "reemplazada"))
+    with pytest.raises(sqlite3.IntegrityError), env.database.connect() as connection:
+        connection.execute(insert, (sale_id, "000000091", "clave-b", "pendiente"))
+
+
+def downgrade_to_the_old_einvoices_table(database: Database) -> None:
+    """Recreate `einvoices` the way versions before the re-issue made it."""
+    with database.connect() as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.executescript(
+            f"""
+            CREATE TABLE einvoices_old (
+                id INTEGER PRIMARY KEY,
+                business_id INTEGER NOT NULL REFERENCES businesses(id),
+                sale_id INTEGER NOT NULL UNIQUE REFERENCES sales(id),
+                establishment TEXT NOT NULL,
+                emission_point TEXT NOT NULL,
+                sequential TEXT NOT NULL,
+                access_key TEXT NOT NULL UNIQUE,
+                environment TEXT NOT NULL CHECK (environment IN ('pruebas', 'produccion')),
+                status TEXT NOT NULL DEFAULT 'pendiente' CHECK (status IN ({OLD_STATUS_CHECK})),
+                signed_xml BLOB NOT NULL,
+                buyer_id_type TEXT NOT NULL,
+                buyer_identification TEXT NOT NULL,
+                buyer_name TEXT NOT NULL,
+                buyer_address TEXT NOT NULL DEFAULT '',
+                messages TEXT NOT NULL DEFAULT '[]',
+                attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                next_attempt_at TEXT,
+                issued_at TEXT NOT NULL,
+                authorized_at TEXT,
+                authorization_number TEXT,
+                UNIQUE (business_id, environment, establishment, emission_point, sequential)
+            );
+            INSERT INTO einvoices_old
+                SELECT id, business_id, sale_id, establishment, emission_point, sequential,
+                       access_key, environment, status, signed_xml, buyer_id_type,
+                       buyer_identification, buyer_name, buyer_address, messages, attempts,
+                       next_attempt_at, issued_at, authorized_at, authorization_number
+                FROM einvoices;
+            DROP TABLE einvoices;
+            ALTER TABLE einvoices_old RENAME TO einvoices;
+            """
+        )
+
+
+def test_an_old_einvoices_table_is_migrated_keeping_its_rows_and_can_reissue(env):
+    sale_id = sell(env)
+    old = issue(env, sale_id)
+    mark(env, old, RETURNED)
+    downgrade_to_the_old_einvoices_table(env.database)
+
+    env.database.initialize()
+    env.database.initialize()
+
+    assert env.repository.get(old.id).status == RETURNED
+    new = env.service.reissue_for_sale(env.owner, sale_id)
+    assert env.repository.get(old.id).replaced_by == new.id
+    assert new.sequential == "000000002"
+    with env.database.connect() as connection:
+        indexes = {row["name"] for row in connection.execute("PRAGMA index_list(einvoices)")}
+    assert "idx_einvoices_status" in indexes
+
+
+OLD_COLUMNS = (
+    "id, business_id, sale_id, establishment, emission_point, sequential, access_key, "
+    "environment, status, signed_xml, buyer_id_type, buyer_identification, buyer_name, "
+    "buyer_address, messages, attempts, next_attempt_at, issued_at, authorized_at, "
+    "authorization_number"
+)
+
+
+def old_columns_snapshot(database: Database) -> list[tuple]:
+    with database.connect() as connection:
+        return [
+            tuple(row)
+            for row in connection.execute(f"SELECT {OLD_COLUMNS} FROM einvoices ORDER BY id")
+        ]
+
+
+def test_the_migration_keeps_every_row_status_and_signed_blob_byte_for_byte(env):
+    statuses = [PENDING, RECEIVED, RETURNED, AUTHORIZED, NOT_AUTHORIZED, LOCAL_ERROR]
+    for position, status in enumerate(statuses):
+        invoice = issue(env, sell(env))
+        mark(env, invoice, status)
+        blob = bytes(range(256)) + bytes([position, 0, 255, 0])
+        with env.database.connect() as connection:
+            connection.execute(
+                "UPDATE einvoices SET signed_xml = ?, messages = ?, attempts = ?, "
+                "authorization_number = ? WHERE id = ?",
+                (blob, f'[{{"n": {position}}}]', position, f"auth-{position}", invoice.id),
+            )
+    downgrade_to_the_old_einvoices_table(env.database)
+    before = old_columns_snapshot(env.database)
+    assert len(before) == len(statuses)
+
+    env.database.initialize()
+    after_first = old_columns_snapshot(env.database)
+    env.database.initialize()
+    after_second = old_columns_snapshot(env.database)
+
+    assert after_first == before
+    assert after_second == before
+    assert [row[8] for row in after_second] == statuses
+    assert all(isinstance(row[9], bytes) for row in after_second)
+    with env.database.connect() as connection:
+        replaced = connection.execute(
+            "SELECT COUNT(*) FROM einvoices WHERE replaced_by IS NOT NULL"
+        )
+        assert replaced.fetchone()[0] == 0
+        tables = {row["name"] for row in connection.execute("SELECT name FROM sqlite_master")}
+    assert "einvoices_rebuilt" not in tables
+
+
+def test_a_migration_that_loses_a_row_raises_and_leaves_the_old_table_untouched(env, monkeypatch):
+    for _ in range(3):
+        issue(env, sell(env))
+    downgrade_to_the_old_einvoices_table(env.database)
+    before = old_columns_snapshot(env.database)
+    monkeypatch.setattr(
+        database_module, "_EINVOICES_COPY", database_module._EINVOICES_COPY + " WHERE id <> 2"
+    )
+
+    with pytest.raises(RuntimeError, match="no copió todas las filas"):
+        env.database.initialize()
+
+    monkeypatch.undo()
+    assert old_columns_snapshot(env.database) == before
+    with env.database.connect() as connection:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(einvoices)")}
+        tables = {row["name"] for row in connection.execute("SELECT name FROM sqlite_master")}
+    assert "replaced_by" not in columns
+    assert "einvoices_rebuilt" not in tables
+    env.database.initialize()
+    assert old_columns_snapshot(env.database) == before
+
+
+def test_initializing_twice_leaves_the_einvoices_untouched(env):
+    issue(env, sell(env))
+    before = table_snapshot(env.database, "einvoices", "einvoice_sequences")
+
+    env.database.initialize()
+
+    assert table_snapshot(env.database, "einvoices", "einvoice_sequences") == before
+
+
+# starting sequential
+
+
+def test_the_owner_can_start_numbering_higher_and_the_next_invoice_uses_it(env):
+    assert env.profile.next_sequential(env.owner) == 1
+
+    env.profile.update_einvoice(env.owner, next_sequential=250)
+
+    assert env.profile.next_sequential(env.owner) == 250
+    assert issue(env, sell(env)).sequential == "000000250"
+    assert env.profile.next_sequential(env.owner) == 251
+
+
+def test_the_sequential_can_be_raised_but_never_lowered_below_the_last_used(env):
+    for _ in range(3):
+        issue(env, sell(env))
+
+    with pytest.raises(ValueError) as error:
+        env.profile.update_einvoice(env.owner, next_sequential=3)
+
+    assert str(error.value) == "El próximo secuencial debe ser mayor que el último usado (3)."
+    assert env.profile.next_sequential(env.owner) == 4
+    env.profile.update_einvoice(env.owner, next_sequential=4)
+    env.profile.update_einvoice(env.owner, next_sequential=10)
+    with pytest.raises(ValueError, match="mayor que el último usado"):
+        env.profile.update_einvoice(env.owner, next_sequential=9)
+    assert env.profile.next_sequential(env.owner) == 10
+
+
+def test_a_rejected_sequential_saves_nothing_else_of_the_same_change(env):
+    issue(env, sell(env))
+    before = env.profile.get(env.owner)
+
+    with pytest.raises(ValueError):
+        env.profile.update_einvoice(env.owner, trade_name="Otro nombre", next_sequential=1)
+
+    assert env.profile.get(env.owner) == before
+
+
+@pytest.mark.parametrize("value", [0, -5, 1_000_000_000])
+def test_the_starting_sequential_must_fit_nine_digits(env, value):
+    with pytest.raises(ValueError) as error:
+        env.profile.update_einvoice(env.owner, next_sequential=value)
+
+    assert str(error.value) == "El próximo secuencial debe estar entre 1 y 999999999."
+
+
+def test_the_starting_sequential_applies_to_the_series_saved_in_the_same_change(env):
+    env.profile.update_einvoice(env.owner, establishment="002", next_sequential=10)
+
+    assert env.profile.next_sequential(env.owner) == 10
+    invoice = issue(env, sell(env))
+    assert invoice.number == "002-001-000000010"
+    env.profile.update_einvoice(env.owner, establishment="001")
+    assert env.profile.next_sequential(env.owner) == 1
+
+
+def test_only_the_owner_sets_the_starting_sequential(env):
+    with pytest.raises(PermissionError):
+        env.profile.update_einvoice(env.cashier, next_sequential=50)
+
+    assert env.profile.next_sequential(env.owner) == 1
+
+
+# certificate RUC
+
+
+def certificate_with_ruc(ruc: str | None) -> bytes:
+    return make_p12_with_ruc(
+        rsa.generate_private_key(public_exponent=65537, key_size=2048), ruc, b"clave"
+    )
+
+
+def test_a_certificate_with_another_ruc_is_refused_and_nothing_is_saved(env):
+    store = env.profile.certificates(1)
+    stored_before = store.path.read_bytes()
+
+    with pytest.raises(ValueError) as error:
+        env.profile.save_certificate(env.owner, certificate_with_ruc("0990000001001"), "clave")
+
+    assert str(error.value) == (
+        "El RUC del certificado (0990000001001) no coincide con el RUC del negocio (1790012345001)."
+    )
+    assert store.path.read_bytes() == stored_before
+
+
+def test_a_certificate_with_the_business_ruc_or_without_any_is_saved(env):
+    info = env.profile.save_certificate(env.owner, certificate_with_ruc(RUC), "clave")
+    assert info.ruc == RUC
+
+    info = env.profile.save_certificate(env.owner, certificate_with_ruc(None), "clave")
+    assert info.ruc == ""
+
+
+def test_enabling_checks_the_certificate_ruc_against_the_business_ruc(env):
+    env.profile.save_certificate(env.owner, certificate_with_ruc(RUC), "clave")
+    env.profile.update_einvoice(env.owner, enabled=False)
+    env.profile.update_profile(env.owner, ruc="0990000001001")
+
+    with pytest.raises(ValueError) as error:
+        env.profile.update_einvoice(env.owner, enabled=True)
+
+    assert str(error.value) == (
+        "El RUC del certificado (1790012345001) no coincide con el RUC del negocio (0990000001001)."
+    )
+    assert env.profile.get(env.owner).einvoice_enabled is False
+    env.profile.update_profile(env.owner, ruc=RUC)
+    assert env.profile.update_einvoice(env.owner, enabled=True).einvoice_enabled is True
+
+
+# -- one background pass ---------------------------------------------------------------------
+
+
+def test_a_pass_counts_the_invoices_still_open_for_the_business(env):
+    first = issue(env, sell(env))
+    issue(env, sell(env))
+    gateway = FakeGateway([RECEIVED_OK, RECEIVED_OK])
+
+    result = run_processing_pass(env.database.path, 1, lambda environment: gateway, NOW)
+
+    # Both were sent; they are asked about in a later pass, so both are still open.
+    assert result.error == ""
+    assert result.report == ProcessReport(sent=(first.id, first.id + 1), near_deadline=())
+    assert result.open_count == 2
+    assert EInvoiceRepository(env.database).count_open(1) == 2
+    assert EInvoiceRepository(env.database).count_open(2) == 0
+
+
+def test_a_pass_that_raises_reports_the_error_instead_of_raising(env):
+    issue(env, sell(env))
+
+    def broken(environment: str):
+        raise RuntimeError("falló el cliente")
+
+    result = run_processing_pass(env.database.path, 1, broken, NOW)
+
+    assert result.report is None
+    assert "falló el cliente" in result.error
+    assert result.open_count == 1
+
+
+def test_authorized_and_refused_invoices_are_not_open(env):
+    done = issue(env, sell(env))
+    refused = issue(env, sell(env))
+    waiting = issue(env, sell(env))
+    mark(env, done, AUTHORIZED)
+    mark(env, refused, RETURNED)
+    mark(env, waiting, RECEIVED)
+
+    assert EInvoiceRepository(env.database).count_open(1) == 1

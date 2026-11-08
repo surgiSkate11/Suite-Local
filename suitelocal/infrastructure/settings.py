@@ -34,6 +34,7 @@ from suitelocal.domain.tax import (
     validate_tax_rate,
 )
 from suitelocal.infrastructure.database import Database
+from suitelocal.infrastructure.sri.queue import EInvoiceRepository
 
 DEFAULT_PAYMENT_METHODS = ("cash", "transfer")
 
@@ -292,11 +293,14 @@ class BusinessSettingsRepository:
         obligado_contabilidad: bool | None = None,
         trade_name: str | None = None,
         has_certificate: bool = False,
+        next_sequential: int | None = None,
     ) -> BusinessSettings:
         """Change the given electronic-invoicing fields (None keeps the current value).
 
         Everything is validated before anything is written. Turning invoicing on needs a
         regime that issues invoices, a valid RUC and a stored certificate (`has_certificate`).
+        `next_sequential` raises the next number of the series being saved (never lowers it) in
+        the same transaction, so a rejected number saves none of the other fields.
         """
         with self.database.connect() as connection:
             current = self._load(connection, business_id)
@@ -336,6 +340,15 @@ class BusinessSettingsRepository:
                 "INSERT OR IGNORE INTO business_settings (business_id) VALUES (?)",
                 (business_id,),
             )
+            if next_sequential is not None:
+                EInvoiceRepository.raise_next_sequential(
+                    connection,
+                    business_id,
+                    new_environment,
+                    new_establishment,
+                    new_point,
+                    next_sequential,
+                )
             connection.execute(
                 """
                 UPDATE business_settings
@@ -354,3 +367,15 @@ class BusinessSettingsRepository:
                 ),
             )
         return self.get(business_id)
+
+    def next_sequential(self, business_id: int) -> int:
+        """The number the next invoice of the business's current series will get."""
+        with self.database.connect() as connection:
+            current = self._load(connection, business_id)
+            return 1 + EInvoiceRepository.last_sequential(
+                connection,
+                business_id,
+                current.sri_environment,
+                current.establishment,
+                current.emission_point,
+            )

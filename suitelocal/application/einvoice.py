@@ -2,6 +2,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
+from pathlib import Path
 from typing import Protocol
 
 from suitelocal.application.receipts import ReceiptService
@@ -14,6 +15,7 @@ from suitelocal.domain.einvoice import (
     NOT_AUTHORIZED,
     PENDING,
     RECEIVED,
+    REISSUABLE_STATUSES,
     RETURNED,
     Buyer,
     EInvoice,
@@ -51,6 +53,8 @@ _INCONSISTENT = "La venta no cuadra con su desglose de IVA y no se puede factura
 _NOT_ENABLED = "La factura electrónica no está activada para este negocio."
 _SALE_NOT_FOUND = "La venta no existe en este negocio."
 _ALREADY_INVOICED = "Esta venta ya tiene una factura electrónica."
+_NO_INVOICE = "La venta no tiene una factura electrónica para reemitir."
+_NOT_REISSUABLE = "Solo se puede reemitir una factura devuelta, no autorizada o con error local."
 _BAD_SIGNATURE = "La firma generada no se pudo verificar y la factura no se guardó."
 _CORRUPT = "El comprobante guardado no pasa la verificación de la firma y no se puede enviar."
 # "Clave acceso registrada" (43) and "clave de acceso en procesamiento" (70): the SRI already has
@@ -151,6 +155,23 @@ class EInvoiceService:
         the invoice row and its signature are one transaction: nothing is stored, and no number
         is burned, unless all of it succeeds.
         """
+        return self._issue(session, sale_id, buyer, reissue=False)
+
+    def reissue_for_sale(
+        self, session: Session, sale_id: int, buyer: Buyer | None = None
+    ) -> EInvoice:
+        """Issue again the invoice of a sale whose invoice was refused, with a new number.
+
+        Only a "devuelta", "no_autorizada" or "error_local" invoice qualifies: one that is
+        pending, received or authorized may still be, or already is, valid at the SRI. The old
+        row stays as "reemplazada" and points to the new one, all in one transaction. The buyer
+        of the old invoice is kept unless a new one is given.
+        """
+        return self._issue(session, sale_id, buyer, reissue=True)
+
+    def _issue(
+        self, session: Session, sale_id: int, buyer: Buyer | None, *, reissue: bool
+    ) -> EInvoice:
         business_id = session.user.business_id
         settings = self.settings.get(business_id)
         if not settings.einvoice_enabled:
@@ -164,8 +185,17 @@ class EInvoiceService:
             ).fetchone()
             if sale is None:
                 raise ValueError(_SALE_NOT_FOUND)
-            if self.repository.sale_invoice_exists(connection, sale_id):
+            replaced: EInvoice | None = None
+            if reissue:
+                replaced = self.repository.active_for_sale(connection, sale_id)
+                if replaced is None:
+                    raise ValueError(_NO_INVOICE)
+                if replaced.status not in REISSUABLE_STATUSES:
+                    raise ValueError(_NOT_REISSUABLE)
+                buyer = buyer or replaced.buyer
+            elif self.repository.sale_invoice_exists(connection, sale_id):
                 raise ValueError(_ALREADY_INVOICED)
+            assert buyer is not None
             sequential = self.repository.allocate_sequential(
                 connection,
                 business_id,
@@ -188,7 +218,10 @@ class EInvoiceService:
             signed = sign_invoice(unsigned, p12_bytes, password, now=self._clock())
             if not verify_invoice_signature(signed):
                 raise SigningError(_BAD_SIGNATURE)
-            self.repository.insert(
+            if replaced is not None:
+                # Before the insert: only one non-replaced row per sale can exist.
+                self.repository.replace(connection, replaced.id)
+            new_id = self.repository.insert(
                 connection,
                 business_id=business_id,
                 sale_id=sale_id,
@@ -210,6 +243,8 @@ class EInvoiceService:
                 buyer=buyer,
                 issued_at=datetime.fromisoformat(sale["created_at"]).replace(tzinfo=UTC),
             )
+            if replaced is not None:
+                self.repository.link_replacement(connection, replaced.id, new_id)
         stored = self.repository.get_for_sale(business_id, sale_id)
         assert stored is not None
         return stored
@@ -368,3 +403,39 @@ class EInvoiceProcessor:
             messages=result.messages,
         )
         return RECEIVED
+
+
+@dataclass(frozen=True, slots=True)
+class PassResult:
+    """The outcome of one background pass: what it did, how many invoices are still open."""
+
+    report: ProcessReport | None
+    # None when it could not even be counted.
+    open_count: int | None
+    error: str = ""
+
+
+def run_processing_pass(
+    database_path: Path | str,
+    business_id: int,
+    client_for: Callable[[str], SriGateway],
+    now: datetime,
+) -> PassResult:
+    """One processing pass over a business, safe to run on a worker thread.
+
+    It opens its own database handle, so it shares no connection with the caller, and it never
+    raises: whatever goes wrong comes back as `error`, because nobody can catch it on a worker.
+    """
+    database = Database(database_path)
+    repository = EInvoiceRepository(database)
+    report: ProcessReport | None = None
+    error = ""
+    try:
+        report = EInvoiceProcessor(database, client_for).process_pending(now, business_id)
+    except Exception as failure:  # reported to the caller instead
+        error = str(failure) or type(failure).__name__
+    try:
+        open_count: int | None = repository.count_open(business_id)
+    except Exception:  # an unreadable count must not hide the pass result
+        open_count = None
+    return PassResult(report, open_count, error)
