@@ -72,12 +72,14 @@ class TablesService:
         session: Session,
         order_id: int,
         payments: Sequence[Payment],
+        customer_id: int | None = None,
     ) -> int:
         """Charge the order through the regular sale path and return the sale id.
 
         The sale (totals, IVA, payment and stock rules) is the existing one. The order is closed
         inside the sale's own transaction, so a failure at any step leaves the sale unregistered
         and the order open, and an order that was already charged cannot be charged again.
+        ``customer_id`` links the sale to a customer of the business, in that same transaction.
         """
         business_id = session.user.business_id
         order = self.tables.get_order(business_id, order_id)
@@ -101,4 +103,5 @@ class TablesService:
             on_registered=close_order,
             business_id=business_id,
             user_id=session.user.id,
+            customer_id=customer_id,
         )

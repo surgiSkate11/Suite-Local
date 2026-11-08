@@ -87,6 +87,23 @@ CREATE TABLE IF NOT EXISTS cash_sessions (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_sessions_one_open
     ON cash_sessions(business_id) WHERE closed_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS customers (
+    id INTEGER PRIMARY KEY,
+    business_id INTEGER NOT NULL REFERENCES businesses(id),
+    id_type TEXT NOT NULL CHECK (id_type IN ('cedula', 'ruc', 'pasaporte')),
+    id_number TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    phone TEXT NOT NULL DEFAULT '',
+    address TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    accepts_offers INTEGER NOT NULL DEFAULT 0 CHECK (accepts_offers IN (0, 1)),
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_business_id_number
+    ON customers(business_id, id_number);
+
 CREATE TABLE IF NOT EXISTS sales (
     id INTEGER PRIMARY KEY,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -257,8 +274,10 @@ def _migrate_sales(connection: sqlite3.Connection) -> None:
             "business_id INTEGER REFERENCES businesses(id)",
             "user_id INTEGER REFERENCES users(id)",
             "sales_note_number TEXT",
+            "customer_id INTEGER REFERENCES customers(id)",
         ),
     )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id)")
     if "business_id" not in added:
         return
     # Old sales never recorded their business. The cash session knows it; what is left belongs

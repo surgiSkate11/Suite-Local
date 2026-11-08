@@ -1,4 +1,5 @@
 import secrets
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
@@ -188,11 +189,12 @@ class EInvoiceService:
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             sale = connection.execute(
-                "SELECT created_at FROM sales WHERE id = ? AND business_id = ?",
+                "SELECT created_at, customer_id FROM sales WHERE id = ? AND business_id = ?",
                 (sale_id, business_id),
             ).fetchone()
             if sale is None:
                 raise ValueError(_SALE_NOT_FOUND)
+            buyer_email = self._customer_email(connection, business_id, sale["customer_id"])
             replaced: EInvoice | None = None
             if reissue:
                 replaced = self.repository.active_for_sale(connection, sale_id)
@@ -221,7 +223,7 @@ class EInvoiceService:
             invoice = build_invoice_data(
                 self.database, session, sale_id, buyer, emission, timezone=self.timezone
             )
-            unsigned = build_invoice_xml(invoice)
+            unsigned = build_invoice_xml(invoice, buyer_email)
             validate_against_xsd(unsigned)
             signed = sign_invoice(unsigned, p12_bytes, password, now=self._clock())
             if not verify_invoice_signature(signed):
@@ -256,6 +258,19 @@ class EInvoiceService:
         stored = self.repository.get_for_sale(business_id, sale_id)
         assert stored is not None
         return stored
+
+    @staticmethod
+    def _customer_email(
+        connection: sqlite3.Connection, business_id: int, customer_id: int | None
+    ) -> str:
+        """The email of the sale's customer, or "" when it has none (or no customer)."""
+        if customer_id is None:
+            return ""
+        row = connection.execute(
+            "SELECT email FROM customers WHERE id = ? AND business_id = ?",
+            (customer_id, business_id),
+        ).fetchone()
+        return "" if row is None else row["email"]
 
     def invoice_data_for(self, session: Session, einvoice: EInvoice) -> InvoiceData:
         """The invoice as issued, rebuilt from its stored sale, to print its RIDE.

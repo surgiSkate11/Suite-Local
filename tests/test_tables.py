@@ -5,8 +5,10 @@ from datetime import datetime
 import pytest
 
 from suitelocal.application.auth import AuthService
+from suitelocal.application.customers import CustomerService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
+from suitelocal.domain.customers import CustomerData
 from suitelocal.domain.models import Payment, Sale, SaleItem
 from suitelocal.domain.tables import (
     ComandaLine,
@@ -806,3 +808,53 @@ def test_charged_table_sale_stores_the_business_and_the_seller(env):
         ).fetchone()
     assert (sale["business_id"], sale["user_id"]) == (cashier.user.business_id, cashier.user.id)
     assert sale["user_id"] != owner.user.id
+
+
+def test_charged_table_sale_stores_the_customer_id(env):
+    database, service, owner, cashier, products, coffee, _ = env
+    customer = CustomerService(database).create(
+        cashier, CustomerData("cedula", "1712345678", "Ana")
+    )
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(cashier, table.id)
+    service.add_product(cashier, order.id, coffee.id, 1)
+
+    sale_id = service.charge(cashier, order.id, [Payment("cash", 200)], customer_id=customer.id)
+
+    with database.connect() as connection:
+        stored = connection.execute("SELECT customer_id FROM sales WHERE id = ?", (sale_id,))
+        assert stored.fetchone()["customer_id"] == customer.id
+
+
+def test_charge_with_a_foreign_customer_rolls_back_and_keeps_the_order_open(env):
+    database, service, owner, cashier, products, coffee, _ = env
+    with database.connect() as connection:
+        other = connection.execute("INSERT INTO businesses (name) VALUES ('Otro')").lastrowid
+        foreign = connection.execute(
+            "INSERT INTO customers (business_id, id_type, id_number, full_name) "
+            "VALUES (?, 'cedula', '1712345678', 'Ajena')",
+            (other,),
+        ).lastrowid
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(cashier, table.id)
+    service.add_product(cashier, order.id, coffee.id, 1)
+
+    with pytest.raises(ValueError, match="^El cliente no existe.$"):
+        service.charge(cashier, order.id, [Payment("cash", 200)], customer_id=foreign)
+
+    assert _count(database, "sales") == 0
+    assert _order_status(database, order.id) == ("open", None)
+    assert _stock(products, coffee) == 10
+
+
+def test_charge_without_a_customer_stores_none(env):
+    database, service, owner, cashier, _, coffee, _ = env
+    table = service.create_table(owner, "Mesa 1")
+    order = service.open_order(cashier, table.id)
+    service.add_product(cashier, order.id, coffee.id, 1)
+
+    sale_id = service.charge(cashier, order.id, [Payment("cash", 200)])
+
+    with database.connect() as connection:
+        stored = connection.execute("SELECT customer_id FROM sales WHERE id = ?", (sale_id,))
+        assert stored.fetchone()["customer_id"] is None

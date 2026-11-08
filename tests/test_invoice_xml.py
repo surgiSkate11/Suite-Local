@@ -4,12 +4,16 @@ from datetime import UTC, date, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
+from einvoice_env import build_env
 from lxml import etree
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.business_profile import BusinessProfileService
+from suitelocal.application.customers import CustomerService
 from suitelocal.application.einvoice import build_invoice_data
 from suitelocal.domain.auth import Session, User
+from suitelocal.domain.customers import CustomerData
 from suitelocal.domain.einvoice import (
     Buyer,
     InvoiceData,
@@ -28,6 +32,7 @@ from suitelocal.infrastructure.repositories import (
 )
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.infrastructure.sri.invoice_xml import build_invoice_xml, validate_against_xsd
+from suitelocal.infrastructure.sri.xades import verify_invoice_signature
 
 FIXTURES = Path(__file__).parent / "fixtures" / "sri"
 XSD_DIR = Path(__file__).parent.parent / "suitelocal" / "infrastructure" / "sri" / "xsd"
@@ -698,3 +703,107 @@ def test_invoice_data_of_a_final_consumer_sale_above_the_limit_fails_when_buildi
 
     with pytest.raises(ValueError, match="consumidor final"):
         build_invoice_xml(invoice)
+
+
+# -- the customer's email in <infoAdicional> -----------------------------------------------
+
+
+def additional_fields(root) -> list[tuple[str, str]]:
+    return [
+        (field.get("nombre"), field.text) for field in root.findall("infoAdicional/campoAdicional")
+    ]
+
+
+def test_an_email_goes_to_info_adicional_after_the_details_and_still_validates():
+    xml = build_invoice_xml(mixed_invoice(), buyer_email="ana@correo.com")
+
+    validate_against_xsd(xml)
+    root = parse(xml)
+    assert additional_fields(root) == [("Email", "ana@correo.com")]
+    assert [child.tag for child in root] == [
+        "infoTributaria",
+        "infoFactura",
+        "detalles",
+        "infoAdicional",
+    ]
+
+
+def test_without_an_email_the_xml_has_no_info_adicional_and_is_unchanged():
+    plain = build_invoice_xml(mixed_invoice())
+
+    assert plain == build_invoice_xml(mixed_invoice(), buyer_email="")
+    assert plain == build_invoice_xml(mixed_invoice(), buyer_email="   ")
+    assert parse(plain).find("infoAdicional") is None
+
+
+def test_an_email_with_special_characters_is_escaped_and_validates():
+    xml = build_invoice_xml(mixed_invoice(), buyer_email="a&b@correo.com")
+
+    validate_against_xsd(xml)
+    assert additional_fields(parse(xml)) == [("Email", "a&b@correo.com")]
+
+
+def test_an_email_longer_than_the_schema_allows_is_rejected_in_spanish():
+    with pytest.raises(ValueError, match="El correo del comprador"):
+        build_invoice_xml(mixed_invoice(), buyer_email="a" * 300 + "@correo.com")
+
+
+@pytest.fixture(scope="module")
+def rsa_key():
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+def issue_to_customer(tmp_path, rsa_key, email: str):
+    env = build_env(tmp_path, rsa_key)
+    customers = CustomerService(env.database)
+    customer = customers.create(
+        env.owner,
+        CustomerData("cedula", "1712345678", "Ana Pérez", email=email, accepts_offers=bool(email)),
+    )
+    sale_id = env.sell()
+    with env.database.connect() as connection:
+        connection.execute("UPDATE sales SET customer_id = ? WHERE id = ?", (customer.id, sale_id))
+    buyer = customer.as_buyer()
+    return env, sale_id, buyer
+
+
+def signed_fields(einvoice) -> list[tuple[str, str]]:
+    return additional_fields(etree.fromstring(einvoice.signed_xml))
+
+
+def test_the_issued_invoice_of_a_sale_with_a_customer_carries_the_email(tmp_path, rsa_key):
+    env, sale_id, buyer = issue_to_customer(tmp_path, rsa_key, "ana@correo.com")
+
+    einvoice = env.service.issue_for_sale(env.owner, sale_id, buyer)
+
+    assert signed_fields(einvoice) == [("Email", "ana@correo.com")]
+    assert verify_invoice_signature(einvoice.signed_xml)
+
+
+def test_the_issued_invoice_of_a_customer_without_email_has_no_info_adicional(tmp_path, rsa_key):
+    env, sale_id, buyer = issue_to_customer(tmp_path, rsa_key, "")
+
+    einvoice = env.service.issue_for_sale(env.owner, sale_id, buyer)
+
+    assert signed_fields(einvoice) == []
+
+
+def test_a_sale_without_customer_issues_exactly_as_before(tmp_path, rsa_key):
+    env = build_env(tmp_path, rsa_key)
+    sale_id = env.sell()
+
+    einvoice = env.service.issue_for_sale(env.owner, sale_id, Buyer.final_consumer())
+
+    assert signed_fields(einvoice) == []
+
+
+def test_a_reissued_invoice_keeps_the_email(tmp_path, rsa_key):
+    env, sale_id, buyer = issue_to_customer(tmp_path, rsa_key, "ana@correo.com")
+    first = env.service.issue_for_sale(env.owner, sale_id, buyer)
+    with env.database.connect() as connection:
+        connection.execute("UPDATE einvoices SET status = 'devuelta' WHERE id = ?", (first.id,))
+
+    second = env.service.reissue_for_sale(env.owner, sale_id)
+
+    assert second.id != first.id
+    assert signed_fields(second) == [("Email", "ana@correo.com")]

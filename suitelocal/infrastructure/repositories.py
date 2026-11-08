@@ -1,8 +1,10 @@
 import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from suitelocal.domain.business import normalize_sales_note_number
+from suitelocal.domain.customers import Customer, CustomerData, CustomerHistory, Purchase
 from suitelocal.domain.models import KEEP, Keep, Product, Sale, validate_sale
 from suitelocal.domain.tax import DEFAULT_TAX_RATE_BASIS_POINTS, validate_tax_rate
 from suitelocal.infrastructure.database import Database
@@ -354,19 +356,23 @@ class SaleRepository:
         business_id: int | None = None,
         user_id: int | None = None,
         sales_note_number: str | None = None,
+        customer_id: int | None = None,
     ) -> int:
         """Register the sale and return its id.
 
         Every caller that knows who sells passes ``business_id`` and ``user_id``: they decide
         which business may read the receipt and who the cashier on it is. A sale stored without
         a business belongs to nobody. ``sales_note_number`` is the number of the handwritten
-        sales note of a RIMPE popular business.
+        sales note of a RIMPE popular business. ``customer_id`` links the sale to a customer of
+        the same business.
         """
         validate_sale(sale)
         sales_note_number = normalize_sales_note_number(sales_note_number)
         with self.database.connect() as connection:
             # Take the write lock up front so concurrent sales cannot oversell.
             connection.execute("BEGIN IMMEDIATE")
+            if customer_id is not None:
+                _require_customer_of_business(connection, customer_id, business_id)
             for item in sale.items:
                 row = connection.execute(
                     "SELECT stock FROM products WHERE id = ? AND active = 1",
@@ -386,9 +392,9 @@ class SaleRepository:
                 INSERT INTO sales (
                     total_cents, payment_cents, change_cents,
                     subtotal_cents, tax_cents, tax_rate_basis_points, cash_session_id,
-                    business_id, user_id, sales_note_number
+                    business_id, user_id, sales_note_number, customer_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sale.total_cents,
@@ -403,6 +409,7 @@ class SaleRepository:
                     business_id,
                     user_id,
                     sales_note_number,
+                    customer_id,
                 ),
             )
             sale_id = cursor.lastrowid
@@ -463,3 +470,183 @@ class SaleRepository:
                 """
             ).fetchone()
         return row["sale_count"], row["revenue"]
+
+
+_CUSTOMER_NOT_FOUND = "El cliente no existe."
+_CUSTOMER_COLUMNS = (
+    "id, business_id, id_type, id_number, full_name, phone, address, email, accepts_offers, "
+    "active, created_at"
+)
+
+
+def _customer_from_row(row: sqlite3.Row) -> Customer:
+    return Customer(
+        row["id"],
+        row["business_id"],
+        row["id_type"],
+        row["id_number"],
+        row["full_name"],
+        row["phone"],
+        row["address"],
+        row["email"],
+        bool(row["accepts_offers"]),
+        bool(row["active"]),
+        row["created_at"],
+    )
+
+
+def _require_customer_of_business(
+    connection: sqlite3.Connection, customer_id: int, business_id: int | None
+) -> None:
+    owned = connection.execute(
+        "SELECT 1 FROM customers WHERE id = ? AND business_id = ?", (customer_id, business_id)
+    ).fetchone()
+    if owned is None:
+        raise ValueError(_CUSTOMER_NOT_FOUND)
+
+
+class CustomerRepository:
+    """Customers of one business; every method is scoped by ``business_id``."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def get(self, business_id: int, customer_id: int) -> Customer | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                f"SELECT {_CUSTOMER_COLUMNS} FROM customers WHERE id = ? AND business_id = ?",
+                (customer_id, business_id),
+            ).fetchone()
+        return None if row is None else _customer_from_row(row)
+
+    def find_active_by_id_number(self, business_id: int, id_number: str) -> Customer | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                f"SELECT {_CUSTOMER_COLUMNS} FROM customers "
+                "WHERE business_id = ? AND id_number = ? AND active = 1",
+                (business_id, id_number),
+            ).fetchone()
+        return None if row is None else _customer_from_row(row)
+
+    def list_active(self, business_id: int) -> list[Customer]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"SELECT {_CUSTOMER_COLUMNS} FROM customers "
+                "WHERE business_id = ? AND active = 1 ORDER BY id",
+                (business_id,),
+            ).fetchall()
+        return [_customer_from_row(row) for row in rows]
+
+    def add(self, business_id: int, data: CustomerData) -> Customer:
+        try:
+            with self.database.connect() as connection:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO customers
+                        (business_id, id_type, id_number, full_name, phone, address, email,
+                         accepts_offers)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (business_id, *_customer_values(data)),
+                )
+                row = connection.execute(
+                    f"SELECT {_CUSTOMER_COLUMNS} FROM customers WHERE id = ?", (cursor.lastrowid,)
+                ).fetchone()
+        except sqlite3.IntegrityError as error:
+            raise self._translate(business_id, data.id_number, error) from error
+        return _customer_from_row(row)
+
+    def update(self, business_id: int, customer_id: int, data: CustomerData) -> Customer:
+        try:
+            with self.database.connect() as connection:
+                updated = connection.execute(
+                    """
+                    UPDATE customers
+                    SET id_type = ?, id_number = ?, full_name = ?, phone = ?, address = ?,
+                        email = ?, accepts_offers = ?
+                    WHERE id = ? AND business_id = ?
+                    """,
+                    (*_customer_values(data), customer_id, business_id),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError(_CUSTOMER_NOT_FOUND)
+                row = connection.execute(
+                    f"SELECT {_CUSTOMER_COLUMNS} FROM customers WHERE id = ?", (customer_id,)
+                ).fetchone()
+        except sqlite3.IntegrityError as error:
+            raise self._translate(business_id, data.id_number, error) from error
+        return _customer_from_row(row)
+
+    def deactivate(self, business_id: int, customer_id: int) -> None:
+        with self.database.connect() as connection:
+            updated = connection.execute(
+                "UPDATE customers SET active = 0 WHERE id = ? AND business_id = ?",
+                (customer_id, business_id),
+            )
+            if updated.rowcount != 1:
+                raise ValueError(_CUSTOMER_NOT_FOUND)
+
+    def history(self, business_id: int, customer_id: int, limit: int) -> CustomerHistory:
+        with self.database.connect() as connection:
+            _require_customer_of_business(connection, customer_id, business_id)
+            totals = connection.execute(
+                """
+                SELECT COUNT(*) AS purchase_count, COALESCE(SUM(total_cents), 0) AS total_cents
+                FROM sales WHERE customer_id = ? AND business_id = ?
+                """,
+                (customer_id, business_id),
+            ).fetchone()
+            rows = connection.execute(
+                """
+                SELECT id, created_at, total_cents FROM sales
+                WHERE customer_id = ? AND business_id = ?
+                ORDER BY created_at DESC, id DESC LIMIT ?
+                """,
+                (customer_id, business_id, limit),
+            ).fetchall()
+        purchases = tuple(
+            Purchase(
+                row["id"],
+                datetime.fromisoformat(row["created_at"]).replace(tzinfo=UTC),
+                row["total_cents"],
+            )
+            for row in rows
+        )
+        return CustomerHistory(purchases, totals["purchase_count"], totals["total_cents"])
+
+    def offer_recipients(self, business_id: int) -> list[Customer]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"SELECT {_CUSTOMER_COLUMNS} FROM customers "
+                "WHERE business_id = ? AND active = 1 AND accepts_offers = 1 AND email <> '' "
+                "ORDER BY id",
+                (business_id,),
+            ).fetchall()
+        return [_customer_from_row(row) for row in rows]
+
+    def _translate(
+        self, business_id: int, id_number: str, error: sqlite3.IntegrityError
+    ) -> ValueError | sqlite3.IntegrityError:
+        """A taken identification becomes a message that names the customer who holds it."""
+        if "customers.id_number" not in str(error):
+            return error
+        with self.database.connect() as connection:
+            existing = connection.execute(
+                "SELECT full_name, active FROM customers WHERE business_id = ? AND id_number = ?",
+                (business_id, id_number),
+            ).fetchone()
+        name = "" if existing is None else existing["full_name"]
+        note = " (está desactivado)" if existing is not None and not existing["active"] else ""
+        return ValueError(f"Ya existe un cliente con esa identificación: {name}{note}.")
+
+
+def _customer_values(data: CustomerData) -> tuple[str | int, ...]:
+    return (
+        data.id_type,
+        data.id_number,
+        data.full_name,
+        data.phone,
+        data.address,
+        data.email,
+        int(data.accepts_offers),
+    )

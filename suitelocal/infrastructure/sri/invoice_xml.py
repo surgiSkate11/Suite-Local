@@ -214,13 +214,25 @@ def _detail(line: InvoiceLine) -> str:
     )
 
 
-def build_invoice_xml(invoice: InvoiceData) -> bytes:
-    """The unsigned factura XML (UTF-8); raises ValueError with a Spanish message if invalid."""
+def _info_adicional(buyer_email: str) -> str:
+    email = _text(buyer_email, "El correo del comprador", TEXT_MAX_LENGTH, required=False)
+    if not email:
+        return ""
+    field = f'<campoAdicional nombre="Email">{escape(email)}</campoAdicional>'
+    return f"<infoAdicional>{field}</infoAdicional>"
+
+
+def build_invoice_xml(invoice: InvoiceData, buyer_email: str = "") -> bytes:
+    """The unsigned factura XML (UTF-8); raises ValueError with a Spanish message if invalid.
+
+    A non-blank ``buyer_email`` goes to ``<infoAdicional>``, where the schema allows free fields.
+    """
     _validate(invoice)
     body = (
         _info_tributaria(invoice)
         + _info_factura(invoice)
         + f"<detalles>{''.join(_detail(line) for line in invoice.lines)}</detalles>"
+        + _info_adicional(buyer_email)
     )
     xml = (
         '<?xml version="1.0" encoding="UTF-8"?>'
