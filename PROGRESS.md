@@ -152,3 +152,10 @@ Fase 5 — Pulido: atajos, foco, toasts, transiciones, contraste y capturas visu
 - Capturas reales a 1100 y 1440 px revisadas; detectaron el botón de cierre del panel sin estilo (corregido).
 - Validación: 90 pruebas, Ruff y Pyright sin errores.
 - Pendientes detectados en las capturas: sidebar colapsado recorta la marca y la tarjeta de usuario; la lista de Caja muestra solo el nombre del producto; el toast tapa el botón de confirmar venta durante 4 s; la casilla marcada no muestra el check.
+
+## Fase 6 — Multinegocio Ecuador (rama `feat/multinegocio`)
+
+- Estado: en cierre. Detalle completo en `odd/tasks/rediseno-multinegocio.md`.
+- Hecho: caja Atelier + Grafito con modo claro/oscuro, perfil de negocio ecuatoriano (IVA 15/5/0 % incluido en el precio, RUC, régimen, plantillas por tipo de negocio, módulos, categorías, costo y margen), mesas y comandas (sin propinas, decisión del usuario), apertura y cierre de caja, reportes CSV, ticket interno imprimible, factura electrónica del SRI (XML 1.1.0 validado con XSD, firma XAdES-BES idéntica a una referencia autorizada, cola offline, envío automático, RIDE con Code 128), clientes con búsqueda por cédula.
+- Decisiones: un solo programa con módulos activables; comprobante según régimen (ticket interno o factura electrónica); el certificado .p12 se guarda cifrado con DPAPI; nunca se muestran botones de funciones que no existen.
+- Pendiente: probar la factura contra el SRI de pruebas con un certificado real; venta por peso (cantidades decimales); avisos menores de revisión (impresión en el hilo de la UI, ventas sin dueño en el repositorio, `issued_at` al reemitir); integrar `feat/multinegocio` en `main`.
