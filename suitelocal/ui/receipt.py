@@ -1,13 +1,14 @@
 """Internal sale receipt: HTML layout for 58/80 mm paper, Windows printing and PDF export."""
 
 import html
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Protocol
 
-from PySide6.QtCore import QMarginsF, QSizeF
+from PySide6.QtCore import QMarginsF, QSizeF, QUrl
 from PySide6.QtGui import (
     QGuiApplication,
+    QImage,
     QPagedPaintDevice,
     QPageLayout,
     QPageSize,
@@ -28,10 +29,14 @@ __all__ = [
     "ReceiptOutput",
     "ReceiptPrintError",
     "ReceiptPrinter",
+    "build_html_document",
     "build_receipt_document",
+    "escape_html",
     "installed_printer_names",
+    "printable_width_px",
     "printer_status_text",
     "render_receipt_html",
+    "send_document",
 ]
 
 DEFAULT_PRINTER_LABEL = "Predeterminada del sistema"
@@ -127,7 +132,7 @@ def printer_status_text(printer_name: str) -> str:
     return f"Impresora: {printer_name}" if printer_name else "Impresora: predeterminada"
 
 
-def _escape(text: str) -> str:
+def escape_html(text: str) -> str:
     return html.escape(text, quote=True)
 
 
@@ -140,7 +145,7 @@ def render_receipt_html(receipt: Receipt, decimal_separator: str, paper_mm: int)
     validate_receipt_paper_mm(paper_mm)
 
     def money(cents: int) -> str:
-        return _escape(format_usd(cents, decimal_separator))
+        return escape_html(format_usd(cents, decimal_separator))
 
     def centered(text: str, style: str = "") -> str:
         return f'<div align="center" style="{style}">{text}</div>'
@@ -152,27 +157,27 @@ def render_receipt_html(receipt: Receipt, decimal_separator: str, paper_mm: int)
         )
 
     business = receipt.business
-    parts = [centered(f"<b>{_escape(business.name)}</b>", "font-size: 1.3em;")]
+    parts = [centered(f"<b>{escape_html(business.name)}</b>", "font-size: 1.3em;")]
     if business.ruc:
-        parts.append(centered(f"RUC: {_escape(business.ruc)}"))
+        parts.append(centered(f"RUC: {escape_html(business.ruc)}"))
     if business.address:
-        parts.append(centered(_escape(business.address)))
+        parts.append(centered(escape_html(business.address)))
     if business.phone:
-        parts.append(centered(f"Tel.: {_escape(business.phone)}"))
-    parts.append(centered(_escape(business.regime_label)))
+        parts.append(centered(f"Tel.: {escape_html(business.phone)}"))
+    parts.append(centered(escape_html(business.regime_label)))
     parts.append(RULE)
     info = [
-        f"<b>Ticket N.º {_escape(receipt.number)}</b>",
+        f"<b>Ticket N.º {escape_html(receipt.number)}</b>",
         f"Fecha: {receipt.issued_at:%d/%m/%Y %H:%M}",
     ]
     if receipt.cashier:
-        info.append(f"Cajero: {_escape(receipt.cashier)}")
+        info.append(f"Cajero: {escape_html(receipt.cashier)}")
     if receipt.sales_note_number:
-        info.append(f"Nota de venta N.º {_escape(receipt.sales_note_number)}")
+        info.append(f"Nota de venta N.º {escape_html(receipt.sales_note_number)}")
     parts.append("<br/>".join(info))
     parts.append(RULE)
     for line in receipt.lines:
-        parts.append(f"<div>{_escape(line.name)}</div>")
+        parts.append(f"<div>{escape_html(line.name)}</div>")
         detail = (
             f"{line.quantity} × {money(line.unit_price_cents)} "
             f"(IVA {_percent(line.tax_rate_basis_points)})"
@@ -187,17 +192,17 @@ def render_receipt_html(receipt: Receipt, decimal_separator: str, paper_mm: int)
     parts.append(pair("<b>TOTAL</b>", f"<b>{money(receipt.total_cents)}</b>", "font-size: 1.2em;"))
     parts.append(RULE)
     for payment in receipt.payments:
-        label = _escape(METHOD_LABELS.get(payment.method, payment.method))
+        label = escape_html(METHOD_LABELS.get(payment.method, payment.method))
         if payment.reference:
-            label += f" ({_escape(payment.reference)})"
+            label += f" ({escape_html(payment.reference)})"
         parts.append(pair(label, money(payment.amount_cents)))
     if receipt.change_cents:
         parts.append(pair("Cambio", money(receipt.change_cents)))
     parts.append(RULE)
-    parts.append(centered(_escape(receipt.legend), "font-size: 0.9em;"))
+    parts.append(centered(escape_html(receipt.legend), "font-size: 0.9em;"))
     if business.footer:
         parts.append("<br/>")
-        parts.append(centered(_escape(business.footer).replace("\n", "<br/>")))
+        parts.append(centered(escape_html(business.footer).replace("\n", "<br/>")))
     body = "\n".join(parts)
     return (
         f'<html><body style="font-family: {MONOSPACE}; font-size: {FONT_POINTS[paper_mm]}pt;">'
@@ -209,17 +214,42 @@ def _screen_dpi() -> float:
     return QGuiApplication.primaryScreen().logicalDotsPerInchX()
 
 
+def build_html_document(
+    html_text: str, paper_mm: int, resources: Mapping[str, QImage] | None = None
+) -> tuple[QTextDocument, float]:
+    """Lay out HTML for a roll of `paper_mm`; returns it with the page height (mm) it needs.
+
+    `resources` are images the HTML refers to by name (`<img src="name">`).
+    """
+    document = QTextDocument()
+    document.setDocumentMargin(0)
+    for name, image in (resources or {}).items():
+        document.addResource(QTextDocument.ResourceType.ImageResource, QUrl(name), image)
+    document.setHtml(html_text)
+    dpi = _screen_dpi()
+    document.setTextWidth(printable_width_px(paper_mm, dpi))
+    height_mm = document.size().height() / dpi * MM_PER_INCH
+    return document, height_mm + 2 * PAGE_MARGIN_MM + TAIL_MM
+
+
+def printable_width_px(paper_mm: int, dpi: float | None = None) -> float:
+    """Width of the text area of a roll, in the document's logical pixels."""
+    return (paper_mm - 2 * PAGE_MARGIN_MM) / MM_PER_INCH * (dpi or _screen_dpi())
+
+
 def build_receipt_document(
     receipt: Receipt, decimal_separator: str, paper_mm: int
 ) -> tuple[QTextDocument, float]:
     """The laid-out document and the height (mm) a roll page needs to hold all of it."""
-    document = QTextDocument()
-    document.setDocumentMargin(0)
-    document.setHtml(render_receipt_html(receipt, decimal_separator, paper_mm))
-    dpi = _screen_dpi()
-    document.setTextWidth((paper_mm - 2 * PAGE_MARGIN_MM) / MM_PER_INCH * dpi)
-    height_mm = document.size().height() / dpi * MM_PER_INCH
-    return document, height_mm + 2 * PAGE_MARGIN_MM + TAIL_MM
+    return build_html_document(render_receipt_html(receipt, decimal_separator, paper_mm), paper_mm)
+
+
+def send_document(
+    device: ReceiptDevice, document: QTextDocument, height_mm: float, paper_mm: int
+) -> None:
+    """Size the page to the document and send it to the device."""
+    device.set_paper(float(paper_mm), height_mm, PAGE_MARGIN_MM)
+    device.print_document(document)
 
 
 class ReceiptPrinter:
@@ -254,5 +284,4 @@ class ReceiptPrinter:
         document, height_mm = build_receipt_document(
             receipt, business.decimal_separator, business.receipt_paper_mm
         )
-        device.set_paper(float(business.receipt_paper_mm), height_mm, PAGE_MARGIN_MM)
-        device.print_document(document)
+        send_document(device, document, height_mm, business.receipt_paper_mm)
