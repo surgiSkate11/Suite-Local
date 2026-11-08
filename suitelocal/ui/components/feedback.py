@@ -76,6 +76,9 @@ class InlineMessage(QLabel):
     def show_error(self, text: str) -> None:
         self._show(text, "error")
 
+    def show_warning(self, text: str) -> None:
+        self._show(text, "warning")
+
     def clear_message(self) -> None:
         self.clear()
         self.hide()

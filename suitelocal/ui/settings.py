@@ -1,5 +1,5 @@
 from collections.abc import Callable, Iterable, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -28,6 +28,7 @@ from suitelocal.domain.business import (
     RECEIPT_PAPER_WIDTHS_MM,
     TAX_REGIMES,
     BusinessSettings,
+    issues_electronic_invoices,
     requires_ruc,
 )
 from suitelocal.domain.tax import TAX_RATES_BASIS_POINTS
@@ -35,13 +36,27 @@ from suitelocal.infrastructure.backups import BackupError, create_backup, restor
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import Category, CategoryRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
-from suitelocal.ui.components import DangerButton, InlineMessage, confirm_action, set_variant
+from suitelocal.infrastructure.sri.certificate_store import CertificateInfo, CertificateStore
+from suitelocal.ui.components import (
+    DangerButton,
+    InlineMessage,
+    SwitchButton,
+    confirm_action,
+    set_variant,
+)
 from suitelocal.ui.receipt import DEFAULT_PRINTER_LABEL, installed_printer_names
 
 Confirmer = Callable[[QWidget | None, str, str], bool]
 PrinterNames = Callable[[], Sequence[str]]
+CertificatePicker = Callable[[QWidget | None], Path | None]
 
 FIELD_MAX_WIDTH = 460
+SRI_ENVIRONMENT_LABELS = {"pruebas": "Pruebas", "produccion": "Producción"}
+# The owner is warned this long before the signing certificate expires.
+CERTIFICATE_WARNING_DAYS = 30
+NO_CERTIFICATE_TEXT = "Sin certificado cargado"
+# Ecuador has no daylight saving time, so a fixed offset is the right clock for its dates.
+ECUADOR_TIME = timezone(timedelta(hours=-5), "ECT")
 NO_SELECTION = "Elegí una categoría de la lista."
 DECIMAL_SEPARATOR_LABELS = {",": "Coma (1.234,56)", ".": "Punto (1,234.56)"}
 # Module code -> (checkbox label, one-line description), in the order they are shown.
@@ -60,6 +75,17 @@ MODULE_INFO = {
         "Agrupá los productos y filtrá la caja por categoría.",
     ),
 }
+
+
+def pick_certificate_file(parent: QWidget | None) -> Path | None:
+    """Ask the owner for a .p12 file; None when the dialog is cancelled."""
+    path, _ = QFileDialog.getOpenFileName(
+        parent,
+        "Seleccionar certificado de firma",
+        str(Path.home()),
+        "Certificado de firma (*.p12 *.pfx);;Todos los archivos (*)",
+    )
+    return Path(path) if path else None
 
 
 def _card(title: str, hint: str | None = None) -> tuple[QFrame, QVBoxLayout]:
@@ -114,15 +140,20 @@ class SettingsWidget(QWidget):
         confirm: Confirmer = confirm_action,
         parent: QWidget | None = None,
         printer_names: PrinterNames = installed_printer_names,
+        certificates: Callable[[int], CertificateStore] | None = None,
+        pick_certificate: CertificatePicker = pick_certificate_file,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         super().__init__(parent)
+        self.pick_certificate = pick_certificate
+        self.clock = clock or (lambda: datetime.now(ECUADOR_TIME))
         self.settings = settings
         self.printer_names = printer_names
         self.session = session
         self.database = database
         self.confirm = confirm
         categories = CategoryRepository(database)
-        self.profile = BusinessProfileService(settings, categories)
+        self.profile = BusinessProfileService(settings, categories, certificates)
         self.category_service = CategoryService(categories)
         current = self.profile.get(session)
 
@@ -185,11 +216,16 @@ class SettingsWidget(QWidget):
         layout.addWidget(self._build_type_card())
         layout.addWidget(self._build_modules_card())
         layout.addWidget(self._build_checkout_card())
+        layout.addWidget(self._build_einvoice_card())
         layout.addWidget(self._build_categories_card())
         layout.addWidget(self._build_backup_card())
         layout.addStretch()
 
+        self._loading_einvoice = False
+        self._stored_next_sequential = 1
         self._load(current)
+        if session.is_owner:
+            self._load_einvoice(current)
         self._reload_categories()
 
     # -- construction -----------------------------------------------------------------------
@@ -249,6 +285,81 @@ class SettingsWidget(QWidget):
         form.addRow("Ancho del papel del ticket:", self.receipt_paper)
         form.addRow("Impresora de tickets:", self.printer)
         layout.addLayout(form)
+        return card
+
+    def _build_einvoice_card(self) -> QFrame:
+        card, layout = _card(
+            "Facturación electrónica",
+            "Emití facturas electrónicas autorizadas por el SRI. Necesitás el RUC del negocio "
+            "y tu certificado de firma (.p12). Las facturas se envían solas cuando hay internet.",
+        )
+        self.einvoice_card = card
+        self.einvoice_enabled = SwitchButton("Facturar electrónicamente")
+        self.einvoice_environment = _limited(QComboBox())
+        for code, label in SRI_ENVIRONMENT_LABELS.items():
+            self.einvoice_environment.addItem(label, code)
+        self.einvoice_environment.currentIndexChanged.connect(self._on_environment_changed)
+        self.einvoice_establishment = _limited(QLineEdit())
+        self.einvoice_point = _limited(QLineEdit())
+        for field in (self.einvoice_establishment, self.einvoice_point):
+            field.setMaxLength(3)
+            field.setPlaceholderText("001")
+        self.einvoice_next_sequential = _limited(QSpinBox())
+        self.einvoice_next_sequential.setRange(1, 999_999_999)
+        self.einvoice_accounting = QCheckBox("Obligado a llevar contabilidad")
+        self.einvoice_trade_name = _limited(QLineEdit())
+        self.einvoice_trade_name.setPlaceholderText("Opcional")
+        layout.addWidget(self.einvoice_enabled)
+        form = _form()
+        form.addRow("Ambiente:", self.einvoice_environment)
+        form.addRow("Establecimiento:", self.einvoice_establishment)
+        form.addRow("Punto de emisión:", self.einvoice_point)
+        form.addRow("Próximo secuencial:", self.einvoice_next_sequential)
+        form.addRow("Nombre comercial:", self.einvoice_trade_name)
+        layout.addLayout(form)
+        layout.addWidget(self.einvoice_accounting)
+        layout.addWidget(
+            _hint("El secuencial solo se puede subir: nunca por debajo del último número usado.")
+        )
+
+        heading = QLabel("Certificado de firma")
+        heading.setObjectName("sectionTitle")
+        self.certificate_holder = QLabel(NO_CERTIFICATE_TEXT)
+        self.certificate_ruc = QLabel()
+        self.certificate_expiry = QLabel()
+        self.certificate_warning = InlineMessage()
+        self.certificate_password = _limited(QLineEdit())
+        self.certificate_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.certificate_password.setPlaceholderText("Contraseña del certificado")
+        self.certificate_password.returnPressed.connect(self.load_certificate)
+        self.load_certificate_button = set_variant(
+            QPushButton("Cargar certificado (.p12)"), "secondary"
+        )
+        self.load_certificate_button.clicked.connect(self.load_certificate)
+        self.remove_certificate_button = DangerButton("Quitar certificado")
+        self.remove_certificate_button.clicked.connect(self.remove_certificate)
+        certificate_row = QHBoxLayout()
+        certificate_row.setSpacing(12)
+        certificate_row.addWidget(self.certificate_password, 1)
+        certificate_row.addWidget(self.load_certificate_button)
+        certificate_row.addWidget(self.remove_certificate_button)
+        layout.addSpacing(6)
+        layout.addWidget(heading)
+        layout.addWidget(self.certificate_holder)
+        layout.addWidget(self.certificate_ruc)
+        layout.addWidget(self.certificate_expiry)
+        layout.addWidget(self.certificate_warning)
+        layout.addLayout(certificate_row)
+
+        self.einvoice_message = InlineMessage()
+        self.einvoice_save_button = set_variant(QPushButton("Guardar facturación"), "secondary")
+        self.einvoice_save_button.clicked.connect(self.save_einvoice)
+        save_row = QHBoxLayout()
+        save_row.addStretch()
+        save_row.addWidget(self.einvoice_save_button)
+        layout.addWidget(self.einvoice_message)
+        layout.addLayout(save_row)
+        self._show_certificate(None)
         return card
 
     def _build_categories_card(self) -> QFrame:
@@ -328,6 +439,27 @@ class SettingsWidget(QWidget):
         )
         self._load_printers(current.printer_name)
         self._update_ruc_hint()
+        self.einvoice_card.setVisible(
+            self.session.is_owner and issues_electronic_invoices(current.tax_regime)
+        )
+
+    def _load_einvoice(self, current: BusinessSettings) -> None:
+        """Fill the invoicing fields and the certificate summary from what is stored."""
+        self._loading_einvoice = True
+        try:
+            self.einvoice_enabled.setChecked(current.einvoice_enabled)
+            self.einvoice_environment.setCurrentIndex(
+                max(self.einvoice_environment.findData(current.sri_environment), 0)
+            )
+            self.einvoice_establishment.setText(current.establishment)
+            self.einvoice_point.setText(current.emission_point)
+            self.einvoice_accounting.setChecked(current.obligado_contabilidad)
+            self.einvoice_trade_name.setText(current.trade_name)
+            self._stored_next_sequential = self.profile.next_sequential(self.session)
+            self.einvoice_next_sequential.setValue(self._stored_next_sequential)
+        finally:
+            self._loading_einvoice = False
+        self._refresh_certificate()
 
     def _load_printers(self, selected: str) -> None:
         """List the installed printers; a saved one that is gone stays selectable, flagged."""
@@ -435,6 +567,125 @@ class SettingsWidget(QWidget):
         self._reload_categories()
         self.notification.emit(f"Plantilla de {label} aplicada.", "success")
         self.business_changed.emit()
+
+    # -- electronic invoicing ---------------------------------------------------------------
+
+    def _on_environment_changed(self, _index: int) -> None:
+        """Production issues real tax documents: switching to it needs an explicit yes."""
+        if self._loading_einvoice or self.einvoice_environment.currentData() != "produccion":
+            return
+        if self.confirm(
+            self,
+            "Pasar a producción",
+            "En producción las facturas se envían al SRI y tienen validez tributaria real. "
+            "Revisá que el RUC, el establecimiento y el certificado sean los correctos. "
+            "¿Querés continuar?",
+        ):
+            return
+        self.einvoice_environment.blockSignals(True)
+        self.einvoice_environment.setCurrentIndex(self.einvoice_environment.findData("pruebas"))
+        self.einvoice_environment.blockSignals(False)
+
+    def save_einvoice(self) -> None:
+        """Save the invoicing fields together, or show the backend's message and save nothing."""
+        next_value = self.einvoice_next_sequential.value()
+        try:
+            saved = self.profile.update_einvoice(
+                self.session,
+                enabled=self.einvoice_enabled.isChecked(),
+                sri_environment=self.einvoice_environment.currentData(),
+                establishment=self.einvoice_establishment.text().strip(),
+                emission_point=self.einvoice_point.text().strip(),
+                obligado_contabilidad=self.einvoice_accounting.isChecked(),
+                trade_name=self.einvoice_trade_name.text(),
+                # Only an edited number is sent: a new series otherwise starts at 1.
+                next_sequential=None if next_value == self._stored_next_sequential else next_value,
+            )
+        except (ValueError, PermissionError) as error:
+            self.einvoice_message.show_error(str(error))
+            # Nothing was saved, so the switch must not keep showing an "on" that never happened.
+            self.einvoice_enabled.setChecked(self.profile.get(self.session).einvoice_enabled)
+            return
+        self._load_einvoice(saved)
+        self.einvoice_message.show_success("Facturación electrónica guardada.")
+        self.notification.emit("Facturación electrónica actualizada.", "success")
+        self.business_changed.emit()
+
+    def load_certificate(self) -> None:
+        """Store the chosen .p12 with its password; any problem leaves the old one in place."""
+        password = self.certificate_password.text()
+        if not password:
+            self.einvoice_message.show_error("Escribí la contraseña del certificado.")
+            return
+        path = self.pick_certificate(self)
+        if path is None:
+            return
+        try:
+            data = path.read_bytes()
+        except OSError:
+            self.einvoice_message.show_error("No se pudo leer el archivo del certificado.")
+            return
+        try:
+            info = self.profile.save_certificate(self.session, data, password, now=self.clock())
+        except (ValueError, PermissionError) as error:
+            self.einvoice_message.show_error(str(error))
+            return
+        self.certificate_password.clear()
+        self._show_certificate(info)
+        self.einvoice_message.show_success("Certificado guardado de forma segura.")
+
+    def remove_certificate(self) -> None:
+        if not self.confirm(
+            self,
+            "Quitar certificado",
+            "Se borrará el certificado guardado y no vas a poder facturar hasta cargar otro. "
+            "¿Querés continuar?",
+        ):
+            return
+        try:
+            self.profile.remove_certificate(self.session)
+        except (ValueError, PermissionError) as error:
+            self.einvoice_message.show_error(str(error))
+            return
+        self._show_certificate(None)
+        self.einvoice_message.show_success("Certificado quitado.")
+
+    def _refresh_certificate(self) -> None:
+        try:
+            info = self.profile.certificate_info(self.session)
+        except (ValueError, PermissionError) as error:
+            self._show_certificate(None)
+            self.certificate_warning.show_error(str(error))
+            return
+        self._show_certificate(info)
+
+    def _show_certificate(self, info: CertificateInfo | None) -> None:
+        """Holder, RUC and expiry of the stored certificate, with a warning when it is near."""
+        self.certificate_warning.clear_message()
+        has_certificate = info is not None
+        self.certificate_ruc.setVisible(has_certificate)
+        self.certificate_expiry.setVisible(has_certificate)
+        self.remove_certificate_button.setVisible(has_certificate)
+        if info is None:
+            self.certificate_holder.setText(NO_CERTIFICATE_TEXT)
+            return
+        expiry = info.valid_until.astimezone(ECUADOR_TIME).strftime("%d/%m/%Y")
+        self.certificate_holder.setText(f"Titular: {info.subject}")
+        self.certificate_ruc.setText(
+            f"RUC: {info.ruc}" if info.ruc else "RUC: no consta en el certificado"
+        )
+        self.certificate_expiry.setText(f"Válido hasta {expiry}")
+        remaining = info.valid_until - self.clock()
+        if remaining <= timedelta(0):
+            self.certificate_warning.show_error(
+                f"El certificado venció el {expiry}. Cargá uno nuevo para poder facturar."
+            )
+        elif remaining < timedelta(days=CERTIFICATE_WARNING_DAYS):
+            days = remaining.days
+            when = "hoy" if days == 0 else f"en {days} día" + ("" if days == 1 else "s")
+            self.certificate_warning.show_warning(
+                f"El certificado vence {when}. Cargá uno nuevo antes de esa fecha."
+            )
 
     # -- categories -------------------------------------------------------------------------
 

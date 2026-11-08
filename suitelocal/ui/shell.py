@@ -1,8 +1,9 @@
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from PySide6.QtCore import QDate, QEasingCurve, QSize, Qt, QVariantAnimation, Signal
-from PySide6.QtGui import QAction, QFont, QKeySequence, QResizeEvent, QShortcut
+from PySide6.QtGui import QAction, QCloseEvent, QFont, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -24,9 +25,11 @@ from suitelocal.application.auth import AuthService
 from suitelocal.application.cash_register import CashRegisterService
 from suitelocal.application.catalog import CatalogService
 from suitelocal.application.categories import CategoryService
+from suitelocal.application.einvoice import PassResult, SriGateway, run_processing_pass
 from suitelocal.application.receipts import ReceiptService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
+from suitelocal.domain.business import issues_electronic_invoices
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import (
     CategoryRepository,
@@ -34,7 +37,11 @@ from suitelocal.infrastructure.repositories import (
     SaleRepository,
 )
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
+from suitelocal.infrastructure.sri.certificate_store import CertificateStore
+from suitelocal.infrastructure.sri.client import SriClient
+from suitelocal.infrastructure.sri.queue import EInvoiceRepository
 from suitelocal.ui.components import ElidedLabel, ToastHost
+from suitelocal.ui.components.einvoice_runner import EInvoiceRunner, Executor, thread_pool_executor
 from suitelocal.ui.dashboard import DashboardWidget
 from suitelocal.ui.inventory import InventoryWidget
 from suitelocal.ui.pos import PosWidget, format_money
@@ -98,6 +105,9 @@ class AppShell(QMainWindow):
         auth: AuthService,
         database: Database,
         receipt_output: ReceiptOutput | None = None,
+        certificates: Callable[[int], CertificateStore] | None = None,
+        einvoice_client_for: Callable[[str], SriGateway] | None = None,
+        einvoice_executor: Executor = thread_pool_executor,
     ) -> None:
         super().__init__()
         self.setWindowTitle("SuiteLocal")
@@ -106,6 +116,7 @@ class AppShell(QMainWindow):
         self.setWindowTitle(f"SuiteLocal — {business.name}")
         self._session = session
         self._settings = settings
+        self._database = database
         self._currency_symbol = business.currency_symbol
         self._printer_name = business.printer_name
         # The rail is built once per login, so module changes are compared with what it shows.
@@ -172,7 +183,7 @@ class AppShell(QMainWindow):
             users = UsersWidget(auth, session)
             users.notification.connect(self._show_toast)
             users_index = self._add_page(users)
-            settings_page = SettingsWidget(settings, session, database)
+            settings_page = SettingsWidget(settings, session, database, certificates=certificates)
             settings_page.notification.connect(self._show_toast)
             settings_page.business_changed.connect(self._on_business_changed)
             self.settings_page = settings_page
@@ -301,6 +312,7 @@ class AppShell(QMainWindow):
             # A table charge lowers stock, so the counter catalog must not keep stale counts.
             self.tables_widget.sale_registered.connect(self.pos_widget.refresh_products)
         self.pages.currentChanged.connect(self._refresh_register_on_page_change)
+        self._start_einvoice_runner(einvoice_client_for, einvoice_executor)
         self.dashboard.quick_action.clicked.connect(lambda: self.pages.setCurrentIndex(1))
         theme_manager().theme_changed.connect(self._apply_theme)
         self._apply_theme(theme_manager().name)
@@ -417,6 +429,8 @@ class AppShell(QMainWindow):
         offline, self.status_offline = item("Funcionando sin internet", "ok")
         # The backups module records no last-backup time, so only what is true today is shown.
         printer, self.status_printer = item(printer_status_text(self._printer_name), "idle")
+        self.status_sri_item, self.status_sri = item("", "warn")
+        self.status_sri_item.hide()
         self.status_cash_base = QLabel()
         self.status_cash_expected = QLabel()
         for value in (self.status_cash_base, self.status_cash_expected):
@@ -440,6 +454,7 @@ class AppShell(QMainWindow):
         layout.setSpacing(22)
         layout.addWidget(offline)
         layout.addWidget(printer)
+        layout.addWidget(self.status_sri_item)
         layout.addStretch()
         layout.addWidget(self.status_cash)
         return self.status_bar
@@ -475,6 +490,56 @@ class AppShell(QMainWindow):
                 "El módulo de mesas se aplica la próxima vez que inicies sesión.", "info"
             )
         self._enabled_modules = business.enabled_modules
+        self._refresh_einvoice_status()
+
+    # -- electronic invoices ----------------------------------------------------------------
+
+    def _einvoicing_enabled(self) -> bool:
+        business = self._settings.get(self._session.user.business_id)
+        return business.einvoice_enabled and issues_electronic_invoices(business.tax_regime)
+
+    def _start_einvoice_runner(
+        self, client_for: Callable[[str], SriGateway] | None, executor: Executor
+    ) -> None:
+        """Process the invoice queue every two minutes, off the UI thread, while it is enabled."""
+        database_path = self._database.path
+        business_id = self._session.user.business_id
+        gateway_for = client_for or SriClient
+
+        def run_pass(now: datetime) -> PassResult:
+            return run_processing_pass(database_path, business_id, gateway_for, now)
+
+        self.einvoice_runner = EInvoiceRunner(
+            is_enabled=self._einvoicing_enabled, run_pass=run_pass, executor=executor, parent=self
+        )
+        self.einvoice_runner.warning.connect(self._show_einvoice_warning)
+        self.einvoice_runner.pending_changed.connect(self._show_sri_pending)
+        self.einvoice_runner.start()
+        self._refresh_einvoice_status()
+
+    def _show_einvoice_warning(self, message: str) -> None:
+        self._show_toast(message, "warning")
+
+    def _refresh_einvoice_status(self) -> None:
+        """Show how many invoices wait for the SRI, read right now from the queue."""
+        if not self._einvoicing_enabled():
+            self.status_sri_item.hide()
+            return
+        self._show_sri_pending(
+            EInvoiceRepository(self._database).count_open(self._session.user.business_id)
+        )
+
+    def _show_sri_pending(self, count: int) -> None:
+        if count <= 0 or not self._einvoicing_enabled():
+            self.status_sri_item.hide()
+            return
+        noun = "pendiente" if count == 1 else "pendientes"
+        self.status_sri.setText(f"SRI: {count} {noun}")
+        self.status_sri_item.show()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.einvoice_runner.stop()
+        super().closeEvent(event)
 
     # -- cash register ----------------------------------------------------------------------
 

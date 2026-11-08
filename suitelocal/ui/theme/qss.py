@@ -268,6 +268,11 @@ def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
         border-radius: {tokens.radius_control}px;
         padding: 8px 10px;
     }}
+    #inlineMessage[state="warning"] {{
+        color: {tokens.warning};
+        background: {tokens.warning_background};
+        border: 1px solid {tokens.warning_border};
+    }}
     #inlineMessage[state="error"] {{
         color: {tokens.danger};
         background: {tokens.danger_background};
@@ -443,6 +448,7 @@ def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
     #statusBar #statusValue {{ color: {tokens.text_700}; font-weight: 600; }}
     #statusDot {{ color: {tokens.text_400}; font-size: 10px; }}
     #statusDot[state="ok"] {{ color: {tokens.success}; }}
+    #statusDot[state="warn"] {{ color: {tokens.warning}; }}
     #offlineStatus {{ color: {tokens.success}; background: {tokens.success_background}; border-radius: 999px; padding: 7px 10px; font-size: 12px; font-weight: 500; }}
     #authDialog {{ background: {tokens.surface}; }}
     #authBrandPanel {{ background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1, stop: 0 {tokens.hero_2}, stop: 1 {tokens.rail}); }}
