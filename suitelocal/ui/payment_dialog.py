@@ -17,9 +17,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from suitelocal.domain.einvoice import Buyer
 from suitelocal.domain.models import PAYMENT_METHODS, Payment, Sale, SaleItem
 from suitelocal.domain.money import format_usd
 from suitelocal.ui.components import InlineMessage, PrimaryButton, SwitchButton
+from suitelocal.ui.components.buyer_section import BuyerDraft, BuyerSection
 from suitelocal.ui.theme.icons import ICONS, icon
 from suitelocal.ui.theme.manager import current_tokens
 
@@ -154,12 +156,22 @@ class PaymentDialog(QDialog):
         validate: PaymentValidator | None = None,
         parent: QWidget | None = None,
         decimal_separator: str = ",",
+        invoicing: bool = False,
+        buyer_draft: BuyerDraft | None = None,
     ) -> None:
         super().__init__(parent)
         self.total_cents = total_cents
         self.currency_symbol = currency_symbol
         self.decimal_separator = decimal_separator
         self.payments: tuple[Payment, ...] = ()
+        # Who the electronic invoice goes to; only set when invoicing and the data are valid.
+        self.buyer: Buyer | None = None
+        self.invoicing = invoicing
+        self.buyer_section = BuyerSection()
+        self.buyer_section.set_total(total_cents)
+        if buyer_draft is not None:
+            self.buyer_section.load(buyer_draft)
+        self.buyer_section.set_invoicing(invoicing)
         self._enabled = tuple(
             method for method in PAYMENT_METHODS if method != "cash" and method in enabled_methods
         )
@@ -169,6 +181,7 @@ class PaymentDialog(QDialog):
         self._typing = False
         self._scrim: QWidget | None = None
         self.payment_rows: list[PaymentRow] = []
+        self.rows_scroll: QScrollArea | None = None
         self.setWindowTitle("Cobrar la venta")
         self.setModal(True)
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
@@ -264,6 +277,7 @@ class PaymentDialog(QDialog):
         self.add_button.setAutoDefault(False)
         self.add_button.clicked.connect(self._toggle_form)
         host_layout.addWidget(self.add_button)
+        host_layout.addWidget(self.buyer_section)
         host_layout.addStretch()
         scroll = QScrollArea()
         scroll.setObjectName("paymentScroll")
@@ -271,6 +285,7 @@ class PaymentDialog(QDialog):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidget(rows_host)
+        self.rows_scroll = scroll
         layout.addWidget(scroll, 1)
 
         self.message = InlineMessage()
@@ -468,6 +483,13 @@ class PaymentDialog(QDialog):
         except ValueError as error:
             self.message.show_error(str(error))
             return
+        if self.invoicing:
+            buyer = self.buyer_section.buyer(self.total_cents)
+            if buyer is None:
+                if self.rows_scroll is not None:
+                    self.rows_scroll.ensureWidgetVisible(self.buyer_section)
+                return
+            self.buyer = buyer
         self.payments = payments
         self.accept()
 

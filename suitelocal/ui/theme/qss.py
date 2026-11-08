@@ -152,6 +152,10 @@ def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
         color: {tokens.text_900};
         font-weight: 600;
     }}
+    #segmented QPushButton[variant="segment"]:disabled {{
+        background: transparent;
+        color: {tokens.text_400};
+    }}
     #segmented QPushButton[variant="segment"]:focus {{
         border: 2px solid {tokens.focus};
         padding: 0 12px;
@@ -592,6 +596,8 @@ def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
     }}
     #addPayment:hover {{ background: {tokens.mist}; }}
     #paymentFieldLabel {{ color: {tokens.text_500}; font-size: 13px; font-weight: 600; }}
+    #buyerTitle {{ color: {tokens.text_500}; font-size: 13px; font-weight: 600; }}
+    #buyerHint {{ color: {tokens.champagne_text}; font-size: 12px; }}
     #cashDisplay {{
         background: {tokens.surface};
         color: {tokens.text_900};

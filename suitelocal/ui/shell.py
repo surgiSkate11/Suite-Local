@@ -25,7 +25,12 @@ from suitelocal.application.auth import AuthService
 from suitelocal.application.cash_register import CashRegisterService
 from suitelocal.application.catalog import CatalogService
 from suitelocal.application.categories import CategoryService
-from suitelocal.application.einvoice import PassResult, SriGateway, run_processing_pass
+from suitelocal.application.einvoice import (
+    EInvoiceService,
+    PassResult,
+    SriGateway,
+    run_processing_pass,
+)
 from suitelocal.application.receipts import ReceiptService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
@@ -43,9 +48,11 @@ from suitelocal.infrastructure.sri.queue import EInvoiceRepository
 from suitelocal.ui.components import ElidedLabel, ToastHost
 from suitelocal.ui.components.einvoice_runner import EInvoiceRunner, Executor, thread_pool_executor
 from suitelocal.ui.dashboard import DashboardWidget
+from suitelocal.ui.einvoices import EInvoicesWidget
 from suitelocal.ui.inventory import InventoryWidget
 from suitelocal.ui.pos import PosWidget, format_money
 from suitelocal.ui.receipt import ReceiptOutput, ReceiptPrinter, printer_status_text
+from suitelocal.ui.ride import RideOutput, RidePrinter
 from suitelocal.ui.settings import SettingsWidget
 from suitelocal.ui.tables import TablesWidget
 from suitelocal.ui.theme.icons import icon
@@ -58,6 +65,10 @@ ROLE_LABELS = {"owner": "Dueño", "cashier": "Cajero"}
 # Navigation items keep the page index (or "section") in UserRole, plus these two extras.
 LABEL_ROLE = Qt.ItemDataRole.UserRole + 1
 ICON_ROLE = Qt.ItemDataRole.UserRole + 3
+
+
+def _no_certificates(_business_id: int) -> CertificateStore:
+    raise ValueError("Todavía no hay un certificado para firmar las facturas.")
 
 
 def initials(name: str) -> str:
@@ -108,6 +119,7 @@ class AppShell(QMainWindow):
         certificates: Callable[[int], CertificateStore] | None = None,
         einvoice_client_for: Callable[[str], SriGateway] | None = None,
         einvoice_executor: Executor = thread_pool_executor,
+        ride_output: RideOutput | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("SuiteLocal")
@@ -122,6 +134,7 @@ class AppShell(QMainWindow):
         # The rail is built once per login, so module changes are compared with what it shows.
         self._enabled_modules = business.enabled_modules
         self.inventory_page: InventoryWidget | None = None
+        self.einvoices_page: EInvoicesWidget | None = None
         self.settings_page: SettingsWidget | None = None
         self.cash_register = CashRegisterService(database)
         business_id = session.user.business_id
@@ -129,6 +142,10 @@ class AppShell(QMainWindow):
         self.receipt_output: ReceiptOutput = receipt_output or ReceiptPrinter(
             lambda: settings.get(business_id)
         )
+        # Same printer and paper as the internal ticket: the RIDE is printed in its place.
+        self.ride_output: RideOutput = ride_output or RidePrinter(lambda: settings.get(business_id))
+        self.einvoice_service = EInvoiceService(database, certificates or _no_certificates)
+        einvoicing = self._einvoicing_enabled()
         receipts = ReceiptService(database)
         self.dashboard = DashboardWidget(
             products,
@@ -153,6 +170,9 @@ class AppShell(QMainWindow):
             session=session,
             receipts=receipts,
             receipt_output=self.receipt_output,
+            einvoices=self.einvoice_service,
+            ride_output=self.ride_output,
+            einvoicing_enabled=einvoicing,
         )
         self.pages = QStackedWidget()
         self._add_page(self.dashboard)
@@ -171,6 +191,9 @@ class AppShell(QMainWindow):
                 enabled_payment_methods=tuple(business.enabled_payment_methods),
                 receipts=receipts,
                 receipt_output=self.receipt_output,
+                einvoices=self.einvoice_service,
+                ride_output=self.ride_output,
+                einvoicing_enabled=einvoicing,
             )
             operation.append(("Mesas", self._add_page(self.tables_widget), "table"))
         if session.is_owner:
@@ -189,12 +212,26 @@ class AppShell(QMainWindow):
             self.settings_page = settings_page
             settings_index = self._add_page(settings_page)
             operation.append(("Inventario", inventory_index, "box"))
-            groups.append(
-                (
-                    "Negocio",
-                    [("Equipo", users_index, "users"), ("Ajustes", settings_index, "settings")],
+            business_entries = [
+                ("Equipo", users_index, "users"),
+                ("Ajustes", settings_index, "settings"),
+            ]
+            if einvoicing:
+                # The runner is built after the pages, so "Procesar ahora" reaches it late.
+                einvoices_page = EInvoicesWidget(
+                    self.einvoice_service,
+                    session,
+                    process_now=lambda: self.einvoice_runner.tick(),
+                    ride_output=self.ride_output,
+                    currency_symbol=business.currency_symbol,
+                    decimal_separator=business.decimal_separator,
                 )
-            )
+                einvoices_page.notification.connect(self._show_toast)
+                self.einvoices_page = einvoices_page
+                business_entries.insert(
+                    0, ("Facturas electrónicas", self._add_page(einvoices_page), "invoice")
+                )
+            groups.append(("Negocio", business_entries))
 
         navigation = QListWidget()
         self.navigation = navigation
@@ -296,8 +333,10 @@ class AppShell(QMainWindow):
         self.setCentralWidget(container)
         self.toasts = ToastHost(container)
         self.pos_widget.notification.connect(self._show_toast)
+        self.pos_widget.invoice_issued.connect(self._on_invoice_issued)
         if self.tables_widget is not None:
             self.tables_widget.notification.connect(self._show_toast)
+            self.tables_widget.invoice_issued.connect(self._on_invoice_issued)
         self.top_date = date
         self.top_account = account
         self._sidebar_collapsed = False
@@ -478,6 +517,7 @@ class AppShell(QMainWindow):
         if self.tables_widget is not None:
             self.tables_widget.currency_symbol = business.currency_symbol
             self.tables_widget.decimal_separator = business.decimal_separator
+            self.tables_widget.einvoicing_enabled = self._einvoicing_enabled()
             self.tables_widget.enabled_payment_methods = business.enabled_payment_methods or (
                 "cash",
             )
@@ -490,6 +530,15 @@ class AppShell(QMainWindow):
                 "El módulo de mesas se aplica la próxima vez que inicies sesión.", "info"
             )
         self._enabled_modules = business.enabled_modules
+        if self._session.is_owner and self._einvoicing_enabled() and self.einvoices_page is None:
+            self._show_toast(
+                "La página de Facturas electrónicas aparece la próxima vez que inicies sesión.",
+                "info",
+            )
+        if self.einvoices_page is not None:
+            self.einvoices_page.currency_symbol = business.currency_symbol
+            self.einvoices_page.decimal_separator = business.decimal_separator
+            self.einvoices_page.refresh()
         self._refresh_einvoice_status()
 
     # -- electronic invoices ----------------------------------------------------------------
@@ -514,8 +563,16 @@ class AppShell(QMainWindow):
         )
         self.einvoice_runner.warning.connect(self._show_einvoice_warning)
         self.einvoice_runner.pending_changed.connect(self._show_sri_pending)
+        if self.einvoices_page is not None:
+            self.einvoice_runner.pass_completed.connect(self.einvoices_page.refresh)
         self.einvoice_runner.start()
         self._refresh_einvoice_status()
+
+    def _on_invoice_issued(self) -> None:
+        """A sale just tried to issue its invoice: show the new queue size and reload the page."""
+        self._refresh_einvoice_status()
+        if self.einvoices_page is not None:
+            self.einvoices_page.refresh()
 
     def _show_einvoice_warning(self, message: str) -> None:
         self._show_toast(message, "warning")

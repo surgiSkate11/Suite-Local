@@ -22,9 +22,11 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.catalog import CatalogService
+from suitelocal.application.einvoice import EInvoiceService
 from suitelocal.application.receipts import ReceiptService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
+from suitelocal.domain.einvoice import Buyer
 from suitelocal.domain.models import Payment, Sale
 from suitelocal.domain.tables import OpenOrder, OrderLine, TableStatus
 from suitelocal.ui.components import (
@@ -39,8 +41,11 @@ from suitelocal.ui.components import (
     confirm_action,
     set_variant,
 )
+from suitelocal.ui.components.buyer_section import BuyerDraft
+from suitelocal.ui.components.invoice_checkout import InvoiceCheckout
 from suitelocal.ui.payment_dialog import PaymentDialog, format_money
 from suitelocal.ui.receipt import ReceiptOutput
+from suitelocal.ui.ride import RideOutput
 from suitelocal.ui.theme.manager import current_tokens, theme_manager
 
 __all__ = ["TablesWidget"]
@@ -239,6 +244,8 @@ def _label(text: str, name: str) -> QLabel:
 class TablesWidget(QWidget):
     notification = Signal(str, str)
     sale_registered = Signal()
+    # After an invoice was attempted for a charge, so the status bar and invoice page refresh.
+    invoice_issued = Signal()
 
     def __init__(
         self,
@@ -255,6 +262,9 @@ class TablesWidget(QWidget):
         parent: QWidget | None = None,
         receipts: ReceiptService | None = None,
         receipt_output: ReceiptOutput | None = None,
+        einvoices: EInvoiceService | None = None,
+        ride_output: RideOutput | None = None,
+        einvoicing_enabled: bool = False,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -270,6 +280,18 @@ class TablesWidget(QWidget):
         self.receipts = receipts
         self.receipt_output = receipt_output
         self.last_print_ticket = False
+        self.last_buyer: Buyer | None = None
+        self.einvoicing_enabled = einvoicing_enabled
+        self._invoice_checkout: InvoiceCheckout | None = None
+        if (
+            einvoices is not None
+            and ride_output is not None
+            and receipts is not None
+            and receipt_output is not None
+        ):
+            self._invoice_checkout = InvoiceCheckout(
+                einvoices, session, receipts, receipt_output, ride_output, self.notification.emit
+            )
         self.cards: list[TableCard] = []
         self.statuses: list[TableStatus] = []
         self.selected_table_id: int | None = None
@@ -650,6 +672,11 @@ class TablesWidget(QWidget):
         self.refresh()
         self.notification.emit(f"Se anuló la cuenta de {status.table.name}.", "info")
 
+    @property
+    def invoicing_active(self) -> bool:
+        """True when charges are invoiced: the module is on and the wiring to issue exists."""
+        return self.einvoicing_enabled and self._invoice_checkout is not None
+
     def charge_order(self) -> None:
         status = self._selected_status()
         order = self.order
@@ -673,11 +700,17 @@ class TablesWidget(QWidget):
             f"{status.table.name} cobrada · Venta N.º {sale_id} · Total {total}", "success"
         )
         self.sale_registered.emit()
-        if self.last_print_ticket:
+        if self._invoice_checkout is not None and self.invoicing_active and self.last_buyer:
+            self._invoice_checkout.complete(sale_id, self.last_buyer, self.last_print_ticket)
+            self.invoice_issued.emit()
+        elif self.last_print_ticket:
             self._print_receipt(sale_id)
 
     def _print_receipt(self, sale_id: int) -> None:
         """Print the stored sale; the charge is already saved, so a failure only warns."""
+        if self._invoice_checkout is not None and self.invoicing_active:
+            self._invoice_checkout.print_sale(sale_id)
+            return
         if self.receipts is None or self.receipt_output is None:
             return
         try:
@@ -691,6 +724,10 @@ class TablesWidget(QWidget):
         def validate(payments: tuple[Payment, ...]) -> Sale:
             return self._sale_for(order, payments)
 
+        # Only an active invoicing run hands the dialog its Comprobante section.
+        invoicing: dict[str, object] = (
+            {"invoicing": True, "buyer_draft": BuyerDraft()} if self.invoicing_active else {}
+        )
         dialog = self.payment_dialog_factory(
             total_cents=self._grand_total(order),
             currency_symbol=self.currency_symbol,
@@ -700,9 +737,11 @@ class TablesWidget(QWidget):
             total_note=self._tax_note(order),
             validate=validate,
             parent=self,
+            **invoicing,
         )
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         payments = dialog.payments
+        self.last_buyer = dialog.buyer if accepted and self.invoicing_active else None
         self.last_print_ticket = accepted and dialog.print_ticket
         dialog.deleteLater()
         return payments if accepted and payments else None

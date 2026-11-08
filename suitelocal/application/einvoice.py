@@ -127,6 +127,14 @@ def build_invoice_data(
     return invoice
 
 
+@dataclass(frozen=True, slots=True)
+class InvoiceRow:
+    """An invoice of the send queue with the total of its sale, for listing."""
+
+    einvoice: EInvoice
+    total_cents: int
+
+
 class EInvoiceService:
     """Turns a stored sale into a signed invoice waiting in the send queue."""
 
@@ -249,12 +257,56 @@ class EInvoiceService:
         assert stored is not None
         return stored
 
+    def invoice_data_for(self, session: Session, einvoice: EInvoice) -> InvoiceData:
+        """The invoice as issued, rebuilt from its stored sale, to print its RIDE.
+
+        Numbering and buyer are the stored ones; the issuer's data are the business's current
+        settings, as in `build_invoice_data`.
+        """
+        emission = InvoiceEmission(
+            sri_environment_code(einvoice.environment),
+            einvoice.establishment,
+            einvoice.emission_point,
+            einvoice.sequential,
+            # Key layout: date 8, type 2, RUC 13, environment 1, series 6, sequential 9, code 8.
+            einvoice.access_key[39:47],
+        )
+        return build_invoice_data(
+            self.database,
+            session,
+            einvoice.sale_id,
+            einvoice.buyer,
+            emission,
+            timezone=self.timezone,
+        )
+
     def get_for_sale(self, session: Session, sale_id: int) -> EInvoice | None:
         return self.repository.get_for_sale(session.user.business_id, sale_id)
 
     def list_for_business(self, session: Session, limit: int = 100) -> list[EInvoice]:
         """The business's invoices, newest first."""
         return self.repository.list_for_business(session.user.business_id, limit)
+
+    def list_rows(self, session: Session, limit: int = 100) -> list[InvoiceRow]:
+        """The business's invoices, newest first, each with the total of its sale."""
+        business_id = session.user.business_id
+        invoices = self.repository.list_for_business(business_id, limit)
+        if not invoices:
+            return []
+        marks = ", ".join("?" for _ in invoices)
+        with self.database.connect() as connection:
+            totals = {
+                row["id"]: row["total_cents"]
+                for row in connection.execute(
+                    f"SELECT id, total_cents FROM sales WHERE business_id = ? AND id IN ({marks})",
+                    (business_id, *(invoice.sale_id for invoice in invoices)),
+                )
+            }
+        return [InvoiceRow(invoice, totals.get(invoice.sale_id, 0)) for invoice in invoices]
+
+    def deadline_warnings(self, session: Session, now: datetime) -> tuple[int, ...]:
+        """Invoices of the business the SRI still has not received 60+ hours after the sale."""
+        return tuple(self.repository.near_deadline(now, session.user.business_id))
 
 
 class SriGateway(Protocol):

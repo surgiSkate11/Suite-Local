@@ -112,6 +112,8 @@ class SegmentedControl(QFrame):
         for option in options:
             button = QPushButton(option)
             button.setCheckable(True)
+            # Inside a dialog, a segment must never take Enter away from the confirm button.
+            button.setAutoDefault(False)
             button.setProperty("variant", "segment")
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(lambda _checked=False, value=option: self.selected.emit(value))
@@ -129,3 +131,9 @@ class SegmentedControl(QFrame):
 
     def select(self, option: str) -> None:
         self._buttons[option].setChecked(True)
+
+    def set_option_enabled(self, option: str, enabled: bool) -> None:
+        self._buttons[option].setEnabled(enabled)
+
+    def is_option_enabled(self, option: str) -> bool:
+        return self._buttons[option].isEnabled()

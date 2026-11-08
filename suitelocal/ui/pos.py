@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.cart import Cart
+from suitelocal.application.einvoice import EInvoiceService
 from suitelocal.application.receipts import ReceiptService
 from suitelocal.domain.auth import Session
 from suitelocal.domain.business import (
@@ -27,7 +28,9 @@ from suitelocal.domain.business import (
     SALES_NOTE_MAX_LENGTH,
     SALES_NOTE_REGIME,
     BusinessSettings,
+    issues_electronic_invoices,
 )
+from suitelocal.domain.einvoice import Buyer
 from suitelocal.domain.models import Payment, Product, SaleError
 from suitelocal.infrastructure.repositories import Category, ProductRepository, SaleRepository
 from suitelocal.ui.components import (
@@ -41,6 +44,8 @@ from suitelocal.ui.components import (
     TicketLine,
     set_variant,
 )
+from suitelocal.ui.components.buyer_section import BuyerSection
+from suitelocal.ui.components.invoice_checkout import InvoiceCheckout
 from suitelocal.ui.components.product import repolish
 from suitelocal.ui.payment_dialog import (
     METHOD_LABELS,
@@ -50,6 +55,7 @@ from suitelocal.ui.payment_dialog import (
     quick_bill_amounts,
 )
 from suitelocal.ui.receipt import ReceiptOutput
+from suitelocal.ui.ride import RideOutput
 from suitelocal.ui.theme.effects import apply_elevation
 from suitelocal.ui.theme.icons import ICONS, icon
 from suitelocal.ui.theme.manager import current_tokens, theme_manager
@@ -131,6 +137,8 @@ def _overlay_row(button: QPushButton, *widgets: QWidget) -> None:
 class PosWidget(QWidget):
     sale_registered = Signal()
     notification = Signal(str, str)
+    # After an invoice was attempted for a sale, so the status bar and the invoice page refresh.
+    invoice_issued = Signal()
 
     def __init__(
         self,
@@ -148,6 +156,9 @@ class PosWidget(QWidget):
         session: Session | None = None,
         receipts: ReceiptService | None = None,
         receipt_output: ReceiptOutput | None = None,
+        einvoices: EInvoiceService | None = None,
+        ride_output: RideOutput | None = None,
+        einvoicing_enabled: bool = False,
     ) -> None:
         super().__init__(parent)
         self.products = products
@@ -168,10 +179,29 @@ class PosWidget(QWidget):
         self.sale_label = business_name or "Venta actual"
         self.payment_dialog_factory: PaymentDialogFactory = PaymentDialog
         self.last_print_ticket = False
+        self.last_buyer: Buyer | None = None
         # Without a session and a printer wired in, the primary action only charges.
         self.can_print_ticket = (
             session is not None and receipts is not None and receipt_output is not None
         )
+        # The Comprobante section and the RIDE need the whole electronic-invoicing wiring.
+        self._invoice_checkout: InvoiceCheckout | None = None
+        if (
+            einvoices is not None
+            and ride_output is not None
+            and session is not None
+            and receipts is not None
+            and receipt_output is not None
+        ):
+            self._invoice_checkout = InvoiceCheckout(
+                einvoices,
+                session,
+                receipts,
+                receipt_output,
+                ride_output,
+                self.notification.emit,
+            )
+        self.einvoicing_enabled = einvoicing_enabled
         self.cart = Cart()
         self.quick_key_delay_ms = 400
         self.ticket_lines: list[TicketLine] = []
@@ -487,6 +517,9 @@ class PosWidget(QWidget):
         self.print_switch.setChecked(True)
         self.print_switch.setVisible(self.can_print_ticket)
         self.print_switch.toggled.connect(self._refresh_charge_label)
+        self.buyer_section = BuyerSection()
+        self.buyer_section.set_invoicing(self.invoicing_active)
+        layout.addWidget(self.buyer_section)
         layout.addWidget(self.print_switch)
         self.checkout_message = InlineMessage()
         layout.addWidget(self.checkout_message)
@@ -660,6 +693,10 @@ class PosWidget(QWidget):
         self.enabled_modules = business.enabled_modules
         self.categories = tuple(categories)
         self.tax_regime = business.tax_regime
+        self.einvoicing_enabled = business.einvoice_enabled and issues_electronic_invoices(
+            business.tax_regime
+        )
+        self.buyer_section.set_invoicing(self.invoicing_active)
         self.sales_note_edit.setVisible(self.tax_regime == SALES_NOTE_REGIME)
         if methods_changed:
             self.enabled_payment_methods = business.enabled_payment_methods or ("cash",)
@@ -976,6 +1013,7 @@ class PosWidget(QWidget):
         self.change_value.setText(self._money(max(0, received - total)))
         self.charge_amount.setText(self._money(total))
         self.charge_button.setEnabled(bool(self.cart.lines))
+        self.buyer_section.set_total(total)
         self._bill_amounts = [total, *quick_bill_amounts(total)] if total else []
         for index, button in enumerate(self.bill_buttons):
             has_amount = index < len(self._bill_amounts)
@@ -1009,14 +1047,26 @@ class PosWidget(QWidget):
             return (Payment("transfer", total, reference),)
         return (Payment(self._method, total),)
 
+    @property
+    def invoicing_active(self) -> bool:
+        """True when sales are invoiced: the module is on and issuing and printing are wired."""
+        return self.einvoicing_enabled and self._invoice_checkout is not None
+
     def confirm_sale(
-        self, payments: tuple[Payment, ...] | None = None, print_ticket: bool | None = None
+        self,
+        payments: tuple[Payment, ...] | None = None,
+        print_ticket: bool | None = None,
+        buyer: Buyer | None = None,
     ) -> None:
         """Register the sale; without ``payments`` the inline checkout supplies the payment.
 
         The ticket is printed after the sale is saved when ``print_ticket`` (the dialog's switch)
         or, by default, the inline "Imprimir ticket" switch says so. A printing failure only
         warns: the sale stays registered.
+
+        While invoicing is active the buyer is validated before charging (``buyer`` comes from
+        the split dialog, which validated it) and, once the sale is saved, its electronic invoice
+        is issued and its RIDE printed in place of the internal ticket.
         """
         if print_ticket is None:
             print_ticket = self.print_switch.isChecked()
@@ -1026,6 +1076,10 @@ class PosWidget(QWidget):
                 return
             payments = self._inline_payments()
             if payments is None:
+                return
+        if self.invoicing_active and buyer is None:
+            buyer = self.buyer_section.buyer(self.cart.grand_total_cents)
+            if buyer is None:
                 return
         try:
             sale = self.cart.to_sale(payments)
@@ -1048,7 +1102,10 @@ class PosWidget(QWidget):
         self.last_sale_id = sale_id
         self._reset_after_sale()
         self.sale_registered.emit()
-        if print_ticket:
+        if self._invoice_checkout is not None and self.invoicing_active and buyer is not None:
+            self._invoice_checkout.complete(sale_id, buyer, print_ticket)
+            self.invoice_issued.emit()
+        elif print_ticket:
             self._print_receipt(sale_id)
 
     def _sales_note_number(self) -> str | None:
@@ -1057,6 +1114,8 @@ class PosWidget(QWidget):
 
     def _print_receipt(self, sale_id: int) -> bool:
         """Print the stored sale; on any failure warn and leave the sale untouched."""
+        if self._invoice_checkout is not None and self.invoicing_active:
+            return self._invoice_checkout.print_sale(sale_id)
         if self.session is None or self.receipts is None or self.receipt_output is None:
             return False
         try:
@@ -1082,6 +1141,7 @@ class PosWidget(QWidget):
         self.received_edit.clear()
         self.reference_edit.clear()
         self.sales_note_edit.clear()
+        self.buyer_section.reset()
         self.checkout_message.clear_message()
         self.search_input.clear()
         self.refresh_cart()
@@ -1094,7 +1154,7 @@ class PosWidget(QWidget):
         """Collect several payments in the dialog and, when accepted, charge with them."""
         payments = self._collect_payments()
         if payments is not None:
-            self.confirm_sale(payments, self.last_print_ticket)
+            self.confirm_sale(payments, self.last_print_ticket, self.last_buyer)
 
     def _collect_payments(self) -> tuple[Payment, ...] | None:
         """Open the payment dialog; return its payments, or None when the cashier cancels."""
@@ -1102,6 +1162,12 @@ class PosWidget(QWidget):
             self.notification.emit("No se puede cobrar. Agrega al menos un producto.", "danger")
             return None
         note = f"IVA incluido {self._money(self.cart.tax_cents)}" if self.cart.tax_cents else ""
+        # Only an active invoicing run hands the dialog its Comprobante section.
+        invoicing: dict[str, object] = (
+            {"invoicing": True, "buyer_draft": self.buyer_section.draft()}
+            if self.invoicing_active
+            else {}
+        )
         dialog = self.payment_dialog_factory(
             total_cents=self.cart.grand_total_cents,
             currency_symbol=self.currency_symbol,
@@ -1111,9 +1177,11 @@ class PosWidget(QWidget):
             total_note=note,
             validate=self.cart.to_sale,
             parent=self,
+            **invoicing,
         )
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         payments = dialog.payments
         self.last_print_ticket = dialog.print_ticket
+        self.last_buyer = dialog.buyer if self.invoicing_active else None
         dialog.deleteLater()
         return payments if accepted and payments else None

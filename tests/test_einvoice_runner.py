@@ -230,3 +230,45 @@ def test_the_thread_pool_runs_the_pass_off_the_ui_thread_and_reports_back_on_it(
     assert seen["pass"] != main_thread
     assert seen["slot"] == main_thread
     assert runner.running is False
+
+
+def test_a_pass_that_raises_clears_the_flag_warns_once_and_the_next_tick_runs(qapp):
+    harness = Harness()
+    calls = {"count": 0}
+
+    def flaky(now: datetime) -> PassResult:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("se cayó el pase")
+        return OK
+
+    harness.runner._run_pass = flaky
+
+    assert harness.runner.tick() is True
+    QCoreApplication.processEvents()
+
+    assert harness.runner.running is False
+    assert harness.warnings == [
+        "No se pudieron procesar las facturas electrónicas: se cayó el pase"
+    ]
+    assert harness.runner.tick() is True
+    QCoreApplication.processEvents()
+    assert calls["count"] == 2
+    assert harness.runner.running is False
+    # The failure was reported once and a clean pass adds nothing.
+    assert len(harness.warnings) == 1
+
+
+def test_a_pass_that_raises_the_same_error_again_does_not_repeat_the_warning(qapp):
+    harness = Harness()
+
+    def always_fails(now: datetime) -> PassResult:
+        raise ValueError
+
+    harness.runner._run_pass = always_fails
+
+    for _ in range(3):
+        assert harness.runner.tick() is True
+        QCoreApplication.processEvents()
+
+    assert harness.warnings == ["No se pudieron procesar las facturas electrónicas: ValueError"]
