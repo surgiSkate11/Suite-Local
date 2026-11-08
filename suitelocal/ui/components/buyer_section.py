@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from suitelocal.domain.customers import ID_TYPE_LABELS, Customer
 from suitelocal.domain.einvoice import (
     FINAL_CONSUMER_LIMIT_CENTS,
     Buyer,
@@ -40,6 +41,17 @@ class BuyerDraft:
     name: str = ""
     address: str = ""
 
+    @classmethod
+    def for_customer(cls, customer: Customer) -> "BuyerDraft":
+        """The buyer data of a registered customer, as the cashier would have typed them."""
+        return cls(
+            True,
+            ID_TYPE_LABELS[customer.id_type],
+            customer.id_number,
+            customer.full_name,
+            customer.address,
+        )
+
 
 class BuyerSection(QFrame):
     """Final consumer by default, or the buyer's identification, name and address.
@@ -52,6 +64,7 @@ class BuyerSection(QFrame):
         super().__init__(parent)
         self.setObjectName("buyerSection")
         self._total_cents = 0
+        self._customer_draft: BuyerDraft | None = None
         self.title_label = QLabel("Comprobante")
         self.title_label.setObjectName("buyerTitle")
         self.mode_control = SegmentedControl([CONSUMER, WITH_DATA], CONSUMER)
@@ -145,6 +158,17 @@ class BuyerSection(QFrame):
         self.message.clear_message()
         # The amount may already forbid the final consumer the draft asks for.
         self.set_total(self._total_cents)
+
+    def apply_customer(self, customer: Customer) -> None:
+        """Prefill the data from the checkout's customer; the cashier can still edit them."""
+        self._customer_draft = BuyerDraft.for_customer(customer)
+        self.load(self._customer_draft)
+
+    def release_customer(self) -> None:
+        """The customer was removed: clear the prefill unless the cashier already changed it."""
+        prefilled, self._customer_draft = self._customer_draft, None
+        if prefilled is not None and self.draft() == prefilled:
+            self.reset()
 
     def buyer(self, total_cents: int | None = None) -> Buyer | None:
         """The buyer to invoice, or None after showing why the data are not valid."""

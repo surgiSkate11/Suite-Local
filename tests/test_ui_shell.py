@@ -189,6 +189,7 @@ def test_rail_groups_and_entries_for_the_owner(shell):
         "Operación",
         "Panel principal",
         "Caja",
+        "Clientes",
         "Inventario",
         "Negocio",
         "Equipo",
@@ -203,7 +204,7 @@ def test_rail_for_a_cashier_has_no_business_group(qapp, env):
     cashier = auth.create_cashier(Session(owner), "cajero", "clave-segura-2", "clave-segura-2")
     window = build_shell(database, auth, cashier)
 
-    assert nav_texts(window) == ["Operación", "Panel principal", "Caja"]
+    assert nav_texts(window) == ["Operación", "Panel principal", "Caja", "Clientes"]
     assert window.user_role.text() == "Cajero"
     destroy(window)
 
@@ -212,7 +213,7 @@ def test_ctrl_number_opens_the_page_in_rail_order(qapp, shell):
     shell.show()
     shell.activateWindow()
     QTest.qWaitForWindowActive(shell)
-    expected = {"Ctrl+1": 0, "Ctrl+2": 1, "Ctrl+3": 2, "Ctrl+4": 3, "Ctrl+5": 4}
+    expected = {f"Ctrl+{number}": number - 1 for number in range(1, 7)}
 
     for shortcut, index in expected.items():
         QTest.keySequence(shell, shortcut)
@@ -295,7 +296,7 @@ def test_collapsed_rail_shows_only_mark_and_avatar_without_clipping(qapp, env):
     assert window.sidebar.maximumWidth() == 72
     assert sorted(sidebar_texts(window)) == ["OW", "S"]
     entries = [window.navigation.item(row) for row in range(window.navigation.count())]
-    assert [item.text() for item in entries if not item.isHidden()] == [""] * 5
+    assert [item.text() for item in entries if not item.isHidden()] == [""] * 6
     assert all(item.toolTip() for item in entries if not item.isHidden())
     assert window.logout_button.accessibleName() == "Cerrar sesión"
     for child in [window.brand_mark, window.user_avatar, window.logout_button, window.navigation]:
@@ -331,6 +332,7 @@ def test_rail_shows_mesas_after_caja_when_the_module_is_on_for_the_owner(qapp, e
         "Panel principal",
         "Caja",
         "Mesas",
+        "Clientes",
         "Inventario",
         "Negocio",
         "Equipo",
@@ -343,7 +345,7 @@ def test_rail_shows_mesas_to_a_cashier_when_the_module_is_on(qapp, env):
     enable_tables(env)
     window = build_shell(env[0], env[1], cashier_of(env))
 
-    assert nav_texts(window) == ["Operación", "Panel principal", "Caja", "Mesas"]
+    assert nav_texts(window) == ["Operación", "Panel principal", "Caja", "Mesas", "Clientes"]
     destroy(window)
 
 
@@ -374,10 +376,11 @@ def test_ctrl_number_follows_the_visible_order_with_mesas_for_the_owner(qapp, en
     enable_tables(env)
     window = build_shell(*env)
 
-    assert press_each_shortcut_and_collect(window, 6) == [
+    assert press_each_shortcut_and_collect(window, 7) == [
         "Panel principal",
         "Caja",
         "Mesas",
+        "Clientes",
         "Inventario",
         "Equipo",
         "Ajustes",
@@ -389,7 +392,12 @@ def test_ctrl_number_follows_the_visible_order_with_mesas_for_a_cashier(qapp, en
     enable_tables(env)
     window = build_shell(env[0], env[1], cashier_of(env))
 
-    assert press_each_shortcut_and_collect(window, 3) == ["Panel principal", "Caja", "Mesas"]
+    assert press_each_shortcut_and_collect(window, 4) == [
+        "Panel principal",
+        "Caja",
+        "Mesas",
+        "Clientes",
+    ]
     destroy(window)
 
 
@@ -399,6 +407,7 @@ class ChargeDialog:
     def __init__(self, payments: tuple[Payment, ...]) -> None:
         self.payments = payments
         self.print_ticket = False
+        self.customer = None
 
     def exec(self):
         return QDialog.DialogCode.Accepted
@@ -732,3 +741,22 @@ def test_the_shell_wires_the_popular_regime_into_the_pos(qapp, env):
     assert window.pos_widget.tax_regime == "rimpe_popular"
     assert window.pos_widget.sales_note_edit.isVisibleTo(window.pos_widget)
     destroy(window)
+
+
+def test_the_owner_sees_the_customers_page_with_owner_only_buttons(shell):
+    assert shell.customers_widget.deactivate_button is not None
+    assert shell.customers_widget.export_button is not None
+
+
+def test_the_cashier_sees_the_customers_page_without_owner_only_buttons(qapp, env):
+    window = build_shell(env[0], env[1], cashier_of(env))
+
+    assert "Clientes" in nav_texts(window)
+    assert window.customers_widget.new_button is not None
+    assert window.customers_widget.deactivate_button is None
+    assert window.customers_widget.export_button is None
+    destroy(window)
+
+
+def test_the_checkout_of_the_counter_can_pick_a_customer(shell):
+    assert shell.pos_widget.customer_picker is not None

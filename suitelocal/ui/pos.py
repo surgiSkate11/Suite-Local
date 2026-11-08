@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.cart import Cart
+from suitelocal.application.customers import CustomerService
 from suitelocal.application.einvoice import EInvoiceService
 from suitelocal.application.receipts import ReceiptService
 from suitelocal.domain.auth import Session
@@ -30,6 +31,7 @@ from suitelocal.domain.business import (
     BusinessSettings,
     issues_electronic_invoices,
 )
+from suitelocal.domain.customers import Customer
 from suitelocal.domain.einvoice import Buyer
 from suitelocal.domain.models import Payment, Product, SaleError
 from suitelocal.infrastructure.repositories import Category, ProductRepository, SaleRepository
@@ -45,8 +47,10 @@ from suitelocal.ui.components import (
     set_variant,
 )
 from suitelocal.ui.components.buyer_section import BuyerSection
+from suitelocal.ui.components.customer_picker import CustomerPicker
 from suitelocal.ui.components.invoice_checkout import InvoiceCheckout
 from suitelocal.ui.components.product import repolish
+from suitelocal.ui.customer_dialog import CustomerDialog, CustomerDialogFactory
 from suitelocal.ui.payment_dialog import (
     METHOD_LABELS,
     PaymentDialog,
@@ -159,6 +163,8 @@ class PosWidget(QWidget):
         einvoices: EInvoiceService | None = None,
         ride_output: RideOutput | None = None,
         einvoicing_enabled: bool = False,
+        customers: CustomerService | None = None,
+        customer_dialog_factory: CustomerDialogFactory = CustomerDialog,
     ) -> None:
         super().__init__(parent)
         self.products = products
@@ -180,6 +186,10 @@ class PosWidget(QWidget):
         self.payment_dialog_factory: PaymentDialogFactory = PaymentDialog
         self.last_print_ticket = False
         self.last_buyer: Buyer | None = None
+        # The "Cliente" field needs the customer service and who is selling.
+        self.customers = customers if session is not None else None
+        self.customer_dialog_factory = customer_dialog_factory
+        self.customer_picker: CustomerPicker | None = None
         # Without a session and a printer wired in, the primary action only charges.
         self.can_print_ticket = (
             session is not None and receipts is not None and receipt_output is not None
@@ -519,6 +529,12 @@ class PosWidget(QWidget):
         self.print_switch.toggled.connect(self._refresh_charge_label)
         self.buyer_section = BuyerSection()
         self.buyer_section.set_invoicing(self.invoicing_active)
+        if self.customers is not None and self.session is not None:
+            self.customer_picker = CustomerPicker(
+                self.customers, self.session, self.customer_dialog_factory
+            )
+            self.customer_picker.customer_changed.connect(self._on_customer_changed)
+            layout.addWidget(self.customer_picker)
         layout.addWidget(self.buyer_section)
         layout.addWidget(self.print_switch)
         self.checkout_message = InlineMessage()
@@ -1088,6 +1104,7 @@ class PosWidget(QWidget):
                 business_id=None if self.session is None else self.session.user.business_id,
                 user_id=None if self.session is None else self.session.user.id,
                 sales_note_number=self._sales_note_number(),
+                customer_id=self._customer_id(),
             )
         except (ValueError, SaleError) as error:
             self.notification.emit(f"No se puede confirmar. {error}", "danger")
@@ -1107,6 +1124,19 @@ class PosWidget(QWidget):
             self.invoice_issued.emit()
         elif print_ticket:
             self._print_receipt(sale_id)
+
+    def _customer_id(self) -> int | None:
+        customer = None if self.customer_picker is None else self.customer_picker.customer
+        return None if customer is None else customer.id
+
+    def _on_customer_changed(self, customer: Customer | None) -> None:
+        """With invoicing on, the chosen customer prefills the Comprobante section."""
+        if not self.invoicing_active:
+            return
+        if customer is None:
+            self.buyer_section.release_customer()
+        else:
+            self.buyer_section.apply_customer(customer)
 
     def _sales_note_number(self) -> str | None:
         """What the cashier typed, only for the regime that keeps handwritten sales notes."""
@@ -1141,6 +1171,8 @@ class PosWidget(QWidget):
         self.received_edit.clear()
         self.reference_edit.clear()
         self.sales_note_edit.clear()
+        if self.customer_picker is not None:
+            self.customer_picker.clear()
         self.buyer_section.reset()
         self.checkout_message.clear_message()
         self.search_input.clear()
@@ -1168,6 +1200,14 @@ class PosWidget(QWidget):
             if self.invoicing_active
             else {}
         )
+        picker = self.customer_picker
+        if picker is not None:
+            invoicing.update(
+                customers=self.customers,
+                session=self.session,
+                customer_dialog_factory=self.customer_dialog_factory,
+                customer=picker.customer,
+            )
         dialog = self.payment_dialog_factory(
             total_cents=self.cart.grand_total_cents,
             currency_symbol=self.currency_symbol,
@@ -1183,5 +1223,7 @@ class PosWidget(QWidget):
         payments = dialog.payments
         self.last_print_ticket = dialog.print_ticket
         self.last_buyer = dialog.buyer if self.invoicing_active else None
+        if picker is not None:
+            picker.set_customer(dialog.customer)
         dialog.deleteLater()
         return payments if accepted and payments else None

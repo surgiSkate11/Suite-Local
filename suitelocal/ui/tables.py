@@ -22,10 +22,12 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.catalog import CatalogService
+from suitelocal.application.customers import CustomerService
 from suitelocal.application.einvoice import EInvoiceService
 from suitelocal.application.receipts import ReceiptService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
+from suitelocal.domain.customers import Customer
 from suitelocal.domain.einvoice import Buyer
 from suitelocal.domain.models import Payment, Sale
 from suitelocal.domain.tables import OpenOrder, OrderLine, TableStatus
@@ -43,6 +45,7 @@ from suitelocal.ui.components import (
 )
 from suitelocal.ui.components.buyer_section import BuyerDraft
 from suitelocal.ui.components.invoice_checkout import InvoiceCheckout
+from suitelocal.ui.customer_dialog import CustomerDialog, CustomerDialogFactory
 from suitelocal.ui.payment_dialog import PaymentDialog, format_money
 from suitelocal.ui.receipt import ReceiptOutput
 from suitelocal.ui.ride import RideOutput
@@ -265,6 +268,8 @@ class TablesWidget(QWidget):
         einvoices: EInvoiceService | None = None,
         ride_output: RideOutput | None = None,
         einvoicing_enabled: bool = False,
+        customers: CustomerService | None = None,
+        customer_dialog_factory: CustomerDialogFactory = CustomerDialog,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -281,6 +286,9 @@ class TablesWidget(QWidget):
         self.receipt_output = receipt_output
         self.last_print_ticket = False
         self.last_buyer: Buyer | None = None
+        self.customers = customers
+        self.customer_dialog_factory = customer_dialog_factory
+        self.last_customer: Customer | None = None
         self.einvoicing_enabled = einvoicing_enabled
         self._invoice_checkout: InvoiceCheckout | None = None
         if (
@@ -689,7 +697,12 @@ class TablesWidget(QWidget):
         if payments is None:
             return
         try:
-            sale_id = self.service.charge(self.session, order.id, payments)
+            sale_id = self.service.charge(
+                self.session,
+                order.id,
+                payments,
+                customer_id=None if self.last_customer is None else self.last_customer.id,
+            )
         except ValueError as error:
             self._fail("No se puede cobrar.", error)
             self.refresh()
@@ -728,6 +741,13 @@ class TablesWidget(QWidget):
         invoicing: dict[str, object] = (
             {"invoicing": True, "buyer_draft": BuyerDraft()} if self.invoicing_active else {}
         )
+        if self.customers is not None:
+            invoicing.update(
+                customers=self.customers,
+                session=self.session,
+                customer_dialog_factory=self.customer_dialog_factory,
+                customer=None,
+            )
         dialog = self.payment_dialog_factory(
             total_cents=self._grand_total(order),
             currency_symbol=self.currency_symbol,
@@ -743,5 +763,6 @@ class TablesWidget(QWidget):
         payments = dialog.payments
         self.last_buyer = dialog.buyer if accepted and self.invoicing_active else None
         self.last_print_ticket = accepted and dialog.print_ticket
+        self.last_customer = dialog.customer if accepted and self.customers is not None else None
         dialog.deleteLater()
         return payments if accepted and payments else None

@@ -40,7 +40,7 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - [x] T9a (S1, S9) Sistema de temas claro/oscuro + estructura (barra lateral, encabezado, barra de estado) — gentle-ai-worker — (commits siguientes; 241 tests sin el WIP de T9b)
 - [x] T9b (S1, S8, S9) Pantalla de caja Atelier + Grafito + cobro (inline y diálogo para dividir) — worker + cierre inline — (commits siguientes; 309 tests)
 
-- [ ] T10 (S14) Clientes: registro, búsqueda por cédula en el cobro, historial y exportación de ofertas — gentle-ai-worker
+- [x] T10 (S14) Clientes: registro, búsqueda por cédula en el cobro, historial y exportación de ofertas — gentle-ai-worker
 
 ## Log
 
@@ -88,3 +88,4 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - L42: Revisión nativa de T7b-2b1 (review-a41cd75d996e2098, 0592620..5173727) aprobada con 2 avisos: (1) si un pase del envío al SRI lanza una excepción, el runner queda trabado (einvoice_runner.py:114-115); se derivó al worker de T7b-2b2. (2) La factura reemitida conserva el issued_at de la venta (einvoice.py:188-195); queda para el cierre.
 - L43: T7b-2b2 hecha (workers mw79nig7 cortado + mw7vb0cw): comprador en el cobro (sin correo, fuera de alcance hasta que la app envíe correos), RIDE con Code 128, página de Facturas electrónicas y runner que ya no se traba. Los 30 min medidos venían de procesos huérfanos del worker cortado; corrida limpia en unos 5 min.
 - L44: T7b-2b2 commiteada (b043b8b, c72c762). Usuario: "para terminar no quiero q te complieques con cosas dificiles lo importante es desarrollar un software bastantemente util". Nuevo S14/T10 Clientes.
+- L45: T10 Clientes hecho (workers mw7yyxlt cortado, mw84yrju y mw86mufq): registro, cédula + Enter en el cobro, cliente guardado en la venta (también en Mesas, dentro de la misma transacción), comprador de la factura precargado, correo en infoAdicional y pantalla Clientes con CSV de ofertas para el dueño. 1316 tests. Decisiones del padre con permiso del usuario: se borraron los temporales y se deja la revisión trabada de 3a79f68.

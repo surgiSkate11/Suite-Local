@@ -17,11 +17,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from suitelocal.application.customers import CustomerService
+from suitelocal.domain.auth import Session
+from suitelocal.domain.customers import Customer
 from suitelocal.domain.einvoice import Buyer
 from suitelocal.domain.models import PAYMENT_METHODS, Payment, Sale, SaleItem
 from suitelocal.domain.money import format_usd
 from suitelocal.ui.components import InlineMessage, PrimaryButton, SwitchButton
 from suitelocal.ui.components.buyer_section import BuyerDraft, BuyerSection
+from suitelocal.ui.components.customer_picker import CustomerPicker
+from suitelocal.ui.customer_dialog import CustomerDialog, CustomerDialogFactory
 from suitelocal.ui.theme.icons import ICONS, icon
 from suitelocal.ui.theme.manager import current_tokens
 
@@ -158,6 +163,10 @@ class PaymentDialog(QDialog):
         decimal_separator: str = ",",
         invoicing: bool = False,
         buyer_draft: BuyerDraft | None = None,
+        customers: CustomerService | None = None,
+        session: Session | None = None,
+        customer_dialog_factory: CustomerDialogFactory = CustomerDialog,
+        customer: Customer | None = None,
     ) -> None:
         super().__init__(parent)
         self.total_cents = total_cents
@@ -172,6 +181,16 @@ class PaymentDialog(QDialog):
         if buyer_draft is not None:
             self.buyer_section.load(buyer_draft)
         self.buyer_section.set_invoicing(invoicing)
+        # The "Cliente" field only exists when the checkout can look customers up.
+        self.customer_picker: CustomerPicker | None = None
+        if customers is not None and session is not None:
+            self.customer_picker = CustomerPicker(customers, session, customer_dialog_factory)
+            if customer is not None:
+                self.customer_picker.set_customer(customer)
+                untouched = buyer_draft is None or buyer_draft == BuyerDraft.for_customer(customer)
+                if invoicing and untouched:
+                    self.buyer_section.apply_customer(customer)
+            self.customer_picker.customer_changed.connect(self._on_customer_changed)
         self._enabled = tuple(
             method for method in PAYMENT_METHODS if method != "cash" and method in enabled_methods
         )
@@ -277,6 +296,8 @@ class PaymentDialog(QDialog):
         self.add_button.setAutoDefault(False)
         self.add_button.clicked.connect(self._toggle_form)
         host_layout.addWidget(self.add_button)
+        if self.customer_picker is not None:
+            host_layout.addWidget(self.customer_picker)
         host_layout.addWidget(self.buyer_section)
         host_layout.addStretch()
         scroll = QScrollArea()
@@ -291,6 +312,19 @@ class PaymentDialog(QDialog):
         self.message = InlineMessage()
         layout.addWidget(self.message)
         return left
+
+    @property
+    def customer(self) -> Customer | None:
+        """The customer chosen in the "Cliente" field, if any."""
+        return None if self.customer_picker is None else self.customer_picker.customer
+
+    def _on_customer_changed(self, customer: Customer | None) -> None:
+        if not self.invoicing:
+            return
+        if customer is None:
+            self.buyer_section.release_customer()
+        else:
+            self.buyer_section.apply_customer(customer)
 
     def _build_form(self) -> QWidget:
         self.form = QFrame()

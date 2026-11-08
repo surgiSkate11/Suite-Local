@@ -25,6 +25,7 @@ from suitelocal.application.auth import AuthService
 from suitelocal.application.cash_register import CashRegisterService
 from suitelocal.application.catalog import CatalogService
 from suitelocal.application.categories import CategoryService
+from suitelocal.application.customers import CustomerService
 from suitelocal.application.einvoice import (
     EInvoiceService,
     PassResult,
@@ -47,6 +48,7 @@ from suitelocal.infrastructure.sri.client import SriClient
 from suitelocal.infrastructure.sri.queue import EInvoiceRepository
 from suitelocal.ui.components import ElidedLabel, ToastHost
 from suitelocal.ui.components.einvoice_runner import EInvoiceRunner, Executor, thread_pool_executor
+from suitelocal.ui.customers import CustomersWidget
 from suitelocal.ui.dashboard import DashboardWidget
 from suitelocal.ui.einvoices import EInvoicesWidget
 from suitelocal.ui.inventory import InventoryWidget
@@ -156,6 +158,7 @@ class AppShell(QMainWindow):
             business.name,
         )
         self.categories = CategoryService(CategoryRepository(database))
+        customers = CustomerService(database)
         self.pos_widget = PosWidget(
             products,
             sales,
@@ -173,6 +176,7 @@ class AppShell(QMainWindow):
             einvoices=self.einvoice_service,
             ride_output=self.ride_output,
             einvoicing_enabled=einvoicing,
+            customers=customers,
         )
         self.pages = QStackedWidget()
         self._add_page(self.dashboard)
@@ -194,8 +198,17 @@ class AppShell(QMainWindow):
                 einvoices=self.einvoice_service,
                 ride_output=self.ride_output,
                 einvoicing_enabled=einvoicing,
+                customers=customers,
             )
             operation.append(("Mesas", self._add_page(self.tables_widget), "table"))
+        self.customers_widget = CustomersWidget(
+            customers,
+            session,
+            currency_symbol=business.currency_symbol,
+            decimal_separator=business.decimal_separator,
+        )
+        self.customers_widget.notification.connect(self._show_toast)
+        operation.append(("Clientes", self._add_page(self.customers_widget), "users"))
         if session.is_owner:
             inventory = InventoryWidget(products, session)
             inventory.notification.connect(self._show_toast)
