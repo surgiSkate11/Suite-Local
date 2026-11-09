@@ -4,7 +4,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -960,6 +960,10 @@ OLD_STATUS_CHECK = (
 )
 
 
+def text_of(xml: str | bytes) -> str:
+    return xml.decode("utf-8") if isinstance(xml, bytes) else xml
+
+
 def mark(env: Env, invoice, status: str) -> None:
     env.repository.record(invoice.id, status=status, attempts=0, next_attempt_at=None)
 
@@ -983,6 +987,42 @@ def test_a_refused_invoice_is_reissued_with_a_new_number_and_access_key(env, sta
     assert replaced.replaced_by == new.id
     assert replaced.sequential == "000000001"
     assert [invoice.id for invoice in env.service.list_for_business(env.owner)] == [new.id, old.id]
+
+
+@pytest.mark.parametrize(
+    ("now", "issue_date", "access_key_date"),
+    [
+        (datetime(2026, 3, 8, 20, 0, tzinfo=UTC), "08/03/2026", "08032026"),
+        # 22:00 in Ecuador is already the next day in UTC: the document uses Ecuador's date.
+        (datetime(2026, 3, 9, 3, 0, tzinfo=UTC), "08/03/2026", "08032026"),
+    ],
+)
+def test_a_reissued_invoice_is_dated_when_it_is_reissued_not_when_the_sale_was_made(
+    env, now, issue_date, access_key_date
+):
+    sale_id = sell(env)
+    old = issue(env, sale_id)
+    mark(env, old, RETURNED)
+    env.clock = now
+
+    new = env.service.reissue_for_sale(env.owner, sale_id)
+
+    assert new.issued_at == now
+    assert f"<fechaEmision>{issue_date}</fechaEmision>" in text_of(new.signed_xml)
+    assert new.access_key.startswith(access_key_date)
+    assert old.access_key.startswith("05032026")
+
+
+def test_the_ride_of_a_reissued_invoice_shows_the_date_of_its_xml(env):
+    sale_id = sell(env)
+    old = issue(env, sale_id)
+    assert env.service.invoice_data_for(env.owner, old).issue_date == date(2026, 3, 5)
+    mark(env, old, RETURNED)
+    env.clock = datetime(2026, 3, 9, 3, 0, tzinfo=UTC)
+
+    new = env.service.reissue_for_sale(env.owner, sale_id)
+
+    assert env.service.invoice_data_for(env.owner, new).issue_date == date(2026, 3, 8)
 
 
 @pytest.mark.parametrize("status", [PENDING, RECEIVED, AUTHORIZED])

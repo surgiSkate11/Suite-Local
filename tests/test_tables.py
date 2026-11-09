@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime
 
 import pytest
+from sale_owner import owner_of
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.customers import CustomerService
@@ -429,7 +430,9 @@ def test_register_calls_the_hook_with_the_same_connection_before_commit(env):
         seen["payments"] = connection.execute("SELECT COUNT(*) FROM sale_payments").fetchone()[0]
         seen["in_transaction"] = connection.in_transaction
 
-    sale_id = SaleRepository(database).register(_sale_of(coffee, 2), on_registered=hook)
+    sale_id = SaleRepository(database).register(
+        _sale_of(coffee, 2), on_registered=hook, **owner_of(database)
+    )
 
     assert seen == {
         "sale_id": sale_id,
@@ -448,7 +451,9 @@ def test_register_rolls_everything_back_when_the_hook_raises(env):
         raise RuntimeError("falló el gancho")
 
     with pytest.raises(RuntimeError, match="falló el gancho"):
-        SaleRepository(database).register(_sale_of(coffee, 2), on_registered=hook)
+        SaleRepository(database).register(
+            _sale_of(coffee, 2), on_registered=hook, **owner_of(database)
+        )
 
     assert _count(database, "sales") == 0
     assert _count(database, "sale_items") == 0
@@ -459,7 +464,7 @@ def test_register_rolls_everything_back_when_the_hook_raises(env):
 def test_register_without_hook_behaves_as_before(env):
     database, _, _, _, products, coffee, _ = env
 
-    sale_id = SaleRepository(database).register(_sale_of(coffee, 2))
+    sale_id = SaleRepository(database).register(_sale_of(coffee, 2), **owner_of(database))
 
     assert _count(database, "sales") == 1
     assert _count(database, "sale_items") == 1
@@ -789,6 +794,7 @@ def test_close_in_with_another_business_does_not_close_and_rolls_the_sale_back(e
             on_registered=lambda connection, sale_id: TablesRepository.close_in(
                 connection, other_business, order.id, sale_id
             ),
+            **owner_of(database),
         )
 
     _assert_nothing_charged(database, products, coffee, cake, order.id)

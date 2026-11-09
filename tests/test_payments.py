@@ -1,4 +1,5 @@
 import pytest
+from sale_owner import owner_of
 
 from suitelocal.domain.models import Payment, Sale, SaleError, SaleItem
 from suitelocal.infrastructure.database import Database
@@ -17,7 +18,7 @@ def test_split_cash_and_transfer_payments_are_stored(tmp_path):
         1000,
         (Payment("cash", 400), Payment("transfer", 600, "TRX-123")),
     )
-    sale_id = sales.register(sale)
+    sale_id = sales.register(sale, **owner_of(sales.database))
 
     with database.connect() as connection:
         rows = connection.execute(

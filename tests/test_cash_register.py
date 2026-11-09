@@ -1,4 +1,5 @@
 import pytest
+from sale_owner import owner_of
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.cash_register import CashRegisterService
@@ -40,7 +41,9 @@ def test_open_and_close_with_exact_expected_and_difference(env):
     assert cash.current(owner) == opened
 
     # 2 x 250 = 500, paid with 1000 cash -> 500 change -> net cash 500.
-    sales.register(Sale((SaleItem(product.id, product.name, 2, 250),), 1000))
+    sales.register(
+        Sale((SaleItem(product.id, product.name, 2, 250),), 1000), **owner_of(sales.database)
+    )
     closed = cash.close(cashier, 10_400, notes="faltan 100")
 
     assert closed.id == opened.id
@@ -70,7 +73,8 @@ def test_only_cash_payments_count_and_change_is_subtracted(env):
             (SaleItem(product.id, product.name, 3, 250),),
             0,
             payments=(Payment("transfer", 500, "REF-1"), Payment("cash", 300)),
-        )
+        ),
+        **owner_of(sales.database),
     )
     # total 250, paid entirely by card: no cash.
     sales.register(
@@ -78,7 +82,8 @@ def test_only_cash_payments_count_and_change_is_subtracted(env):
             (SaleItem(product.id, product.name, 1, 250),),
             0,
             payments=(Payment("card", 250),),
-        )
+        ),
+        **owner_of(sales.database),
     )
     closed = cash.close(owner, 1_250)
 
@@ -89,7 +94,9 @@ def test_only_cash_payments_count_and_change_is_subtracted(env):
 def test_sales_from_a_previous_session_are_not_counted(env):
     _, cash, sales, owner, _, product = env
     cash.open(owner, 0)
-    sales.register(Sale((SaleItem(product.id, product.name, 2, 250),), 500))
+    sales.register(
+        Sale((SaleItem(product.id, product.name, 2, 250),), 500), **owner_of(sales.database)
+    )
     cash.close(owner, 500)
 
     cash.open(owner, 100)
@@ -174,7 +181,9 @@ def test_history_is_newest_first_and_respects_limit(env):
 def test_sale_without_open_session_still_works_with_null_cash_session(env):
     database, _, sales, _, _, product = env
 
-    sale_id = sales.register(Sale((SaleItem(product.id, product.name, 1, 250),), 250))
+    sale_id = sales.register(
+        Sale((SaleItem(product.id, product.name, 1, 250),), 250), **owner_of(sales.database)
+    )
 
     with database.connect() as connection:
         row = connection.execute(
@@ -187,7 +196,9 @@ def test_sale_with_open_session_is_linked_to_it(env):
     database, cash, sales, owner, _, product = env
     opened = cash.open(owner, 0)
 
-    sale_id = sales.register(Sale((SaleItem(product.id, product.name, 1, 250),), 250))
+    sale_id = sales.register(
+        Sale((SaleItem(product.id, product.name, 1, 250),), 250), **owner_of(sales.database)
+    )
 
     with database.connect() as connection:
         row = connection.execute(
@@ -231,9 +242,12 @@ def test_expected_cents_matches_close_and_changes_no_data(env):
             (SaleItem(product.id, product.name, 3, 250),),
             0,
             payments=(Payment("transfer", 500, "REF-1"), Payment("cash", 300)),
-        )
+        ),
+        **owner_of(sales.database),
     )
-    sales.register(Sale((SaleItem(product.id, product.name, 2, 250),), 1_000))
+    sales.register(
+        Sale((SaleItem(product.id, product.name, 2, 250),), 1_000), **owner_of(sales.database)
+    )
     before = _cash_session_rows(database)
 
     expected = cash.expected_cents(owner)

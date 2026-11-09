@@ -2,6 +2,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+from sale_owner import owner_of
 
 from suitelocal.application.reports import (
     DaySales,
@@ -39,7 +40,9 @@ class Seed:
         )
         total = sum(item.total_cents for item in items)
         sale_payments = payments or (Payment("cash", total),)
-        sale_id = self.sales.register(Sale(items, total, payments=sale_payments))
+        sale_id = self.sales.register(
+            Sale(items, total, payments=sale_payments), **owner_of(self.sales.database)
+        )
         local_noon = datetime(day.year, day.month, day.day, 12).astimezone(UTC)
         with self.database.connect() as connection:
             connection.execute(

@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+from sale_owner import owner_session
 
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session
@@ -104,7 +105,7 @@ def test_pos_reports_add_errors_as_danger_notification(qapp, database, no_messag
 def test_pos_confirms_sale_with_success_notification(qapp, database, no_message_boxes):
     products = ProductRepository(database)
     products.add("A-1", "Arroz", 250, 10)
-    pos = PosWidget(products, SaleRepository(database))
+    pos = PosWidget(products, SaleRepository(database), session=owner_session(database))
     notifications: list[tuple[str, str]] = []
     pos.notification.connect(lambda text, state: notifications.append((text, state)))
     pos.add_selected_product()

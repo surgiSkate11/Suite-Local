@@ -10,6 +10,7 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
+from sale_owner import owner_session
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.receipts import ReceiptService
@@ -64,7 +65,12 @@ def pos(qapp, tmp_path):
     products = ProductRepository(database)
     products.add("A-1", "Arroz", 250, 10)
     products.add("B-2", "Frijol", 300, 5)
-    widget = PosWidget(products, SaleRepository(database), ("cash", "transfer", "card"))
+    widget = PosWidget(
+        products,
+        SaleRepository(database),
+        ("cash", "transfer", "card"),
+        session=owner_session(database),
+    )
     yield widget
     widget.deleteLater()
 
@@ -430,6 +436,21 @@ def test_charge_with_enough_cash_registers_the_sale_and_clears_the_checkout(pos)
     assert pos.cart.lines == ()
     assert pos.received_edit.text() == ""
     assert not pos.checkout_message.isVisible()
+
+
+def test_charging_without_a_session_registers_nothing(pos):
+    pos.session = None
+    notifications: list[tuple[str, str]] = []
+    pos.notification.connect(lambda text, state: notifications.append((text, state)))
+    pos.add_quick_product(0)
+    pos.received_edit.setText("5.00")
+
+    pos.charge_button.click()
+
+    assert notifications[-1] == ("No se puede confirmar. No hay una sesión iniciada.", "danger")
+    assert sale_count(pos) == 0
+    assert stock_of(pos, "A-1") == 10
+    assert len(pos.cart.lines) == 1
 
 
 def test_charge_with_insufficient_cash_shows_an_inline_error_and_changes_nothing(pos):

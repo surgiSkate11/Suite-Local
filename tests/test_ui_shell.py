@@ -1,5 +1,7 @@
 import os
 
+from sale_owner import owner_of
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import re
@@ -18,6 +20,7 @@ from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.main import run_session_loop
+from suitelocal.ui.receipt import default_print_executor
 from suitelocal.ui.shell import AppShell
 
 
@@ -86,7 +89,9 @@ def register_cash_sale(env):
     """2 x 250 paid with 1000 cash: 500 of change, so the drawer gains 500."""
     database = env[0]
     product = ProductRepository(database).add("A-1", "Arroz", 250, 100)
-    SaleRepository(database).register(Sale((SaleItem(product.id, product.name, 2, 250),), 1000))
+    SaleRepository(database).register(
+        Sale((SaleItem(product.id, product.name, 2, 250),), 1000), **owner_of(database)
+    )
 
 
 def status_cash_text(shell) -> str:
@@ -657,6 +662,27 @@ def sell_rice_from_the_pos(shell, database) -> None:
     shell.pos_widget._add_product(ProductRepository(database).find_active("A-1")[0])
     shell.pos_widget.received_edit.setText("5.00")
     shell.pos_widget.confirm_sale()
+
+
+def test_a_print_failure_from_the_worker_shows_the_warning_toast(qapp, env):
+    database, auth, owner = env
+    BusinessSettingsRepository(database).update_profile(
+        owner.business_id, printer_name="Impresora-que-no-existe-xyz"
+    )
+    window = build_shell(database, auth, owner)
+    toasts: list[tuple[str, str]] = []
+    window.toasts.show_toast = lambda message, state: toasts.append((message, state))  # type: ignore[method-assign]
+
+    sell_rice_from_the_pos(window, database)
+    assert default_print_executor().wait_for_done(10_000)
+    QCoreApplication.processEvents()
+
+    assert toasts[-1] == (
+        "No se pudo imprimir el ticket: "
+        "La impresora «Impresora-que-no-existe-xyz» no está instalada.",
+        "warning",
+    )
+    destroy(window)
 
 
 def test_a_sale_from_the_shell_prints_through_the_injected_output(qapp, env):

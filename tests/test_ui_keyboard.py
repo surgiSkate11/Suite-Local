@@ -6,6 +6,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QPushButton
+from sale_owner import owner_session
 
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session
@@ -148,7 +149,9 @@ def pos_with_stock(qapp, database):
     products = ProductRepository(database)
     products.add("A-1", "Arroz", 250, 10)
     products.add("B-2", "Frijol", 300, 5)
-    pos = PosWidget(products, SaleRepository(database), ("cash", "transfer"))
+    pos = PosWidget(
+        products, SaleRepository(database), ("cash", "transfer"), session=owner_session(database)
+    )
     show_active(pos)
     yield pos
     pos.deleteLater()

@@ -1,4 +1,5 @@
 import os
+import threading
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -7,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QCoreApplication, QThread
 from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import QApplication
 
@@ -19,6 +21,8 @@ from suitelocal.application.receipts import (
 )
 from suitelocal.domain.business import BusinessSettings
 from suitelocal.ui.receipt import (
+    InlineExecutor,
+    QtPrintExecutor,
     QtReceiptDevice,
     ReceiptPrinter,
     ReceiptPrintError,
@@ -223,7 +227,7 @@ def test_the_document_fits_the_printable_width_of_each_paper(qapp):
 
 def test_print_receipt_sends_one_document_to_the_configured_printer_and_paper(qapp):
     device = FakeDevice()
-    printer = ReceiptPrinter(lambda: settings_for(58, "XP-58"), lambda: device)
+    printer = ReceiptPrinter(lambda: settings_for(58, "XP-58"), lambda: device, InlineExecutor())
 
     printer.print_receipt(make_receipt())
 
@@ -239,7 +243,9 @@ def test_print_receipt_sends_one_document_to_the_configured_printer_and_paper(qa
 def test_print_receipt_uses_the_default_printer_when_none_is_chosen(qapp):
     device = FakeDevice()
 
-    ReceiptPrinter(lambda: settings_for(80, ""), lambda: device).print_receipt(make_receipt())
+    ReceiptPrinter(lambda: settings_for(80, ""), lambda: device, InlineExecutor()).print_receipt(
+        make_receipt()
+    )
 
     assert device.printer_names == [""]
     assert device.papers[0][0] == 80.0
@@ -248,7 +254,7 @@ def test_print_receipt_uses_the_default_printer_when_none_is_chosen(qapp):
 def test_settings_are_read_on_every_print(qapp):
     device = FakeDevice()
     current = {"settings": settings_for(80, "A")}
-    printer = ReceiptPrinter(lambda: current["settings"], lambda: device)
+    printer = ReceiptPrinter(lambda: current["settings"], lambda: device, InlineExecutor())
 
     printer.print_receipt(make_receipt())
     current["settings"] = settings_for(58, "B", ".")
@@ -260,22 +266,158 @@ def test_settings_are_read_on_every_print(qapp):
     assert "$ 3,80" in device.documents[0].toPlainText()
 
 
-def test_a_failing_device_error_reaches_the_caller(qapp):
+def test_a_failing_device_is_reported_as_a_warning_text(qapp):
     class Broken(FakeDevice):
         def print_document(self, document: QTextDocument) -> None:
             raise ReceiptPrintError("La impresora no está disponible.")
 
-    printer = ReceiptPrinter(lambda: settings_for(), Broken)
+    failures: list[str] = []
+    printer = ReceiptPrinter(lambda: settings_for(), Broken, InlineExecutor(), failures.append)
 
-    with pytest.raises(ReceiptPrintError, match="no está disponible"):
-        printer.print_receipt(make_receipt())
+    printer.print_receipt(make_receipt())
+
+    assert failures == ["No se pudo imprimir el ticket: La impresora no está disponible."]
 
 
-def test_a_printer_that_is_not_installed_is_reported_before_printing(qapp):
-    printer = ReceiptPrinter(lambda: settings_for(80, "Impresora-que-no-existe-xyz"))
+def test_a_printer_that_is_not_installed_is_reported_without_printing(qapp):
+    failures: list[str] = []
+    printer = ReceiptPrinter(
+        lambda: settings_for(80, "Impresora-que-no-existe-xyz"),
+        executor=InlineExecutor(),
+        on_failure=failures.append,
+    )
 
-    with pytest.raises(ReceiptPrintError, match="«Impresora-que-no-existe-xyz» no está instalada"):
-        printer.print_receipt(make_receipt())
+    printer.print_receipt(make_receipt())
+
+    assert failures == [
+        "No se pudo imprimir el ticket: "
+        "La impresora «Impresora-que-no-existe-xyz» no está instalada."
+    ]
+
+
+class DeferredExecutor:
+    """Keeps the jobs so a test decides when the worker 'runs' them."""
+
+    def __init__(self) -> None:
+        self.jobs: list = []
+
+    def run(self, job, on_error) -> None:
+        self.jobs.append((job, on_error))
+
+    def run_all(self) -> None:
+        for job, on_error in self.jobs:
+            try:
+                job()
+            except Exception as error:
+                on_error(error)
+        self.jobs.clear()
+
+
+def test_print_receipt_only_queues_the_job_so_the_caller_never_waits_on_the_printer(qapp):
+    device = FakeDevice()
+    executor = DeferredExecutor()
+    printer = ReceiptPrinter(lambda: settings_for(58, "XP-58"), lambda: device, executor)
+
+    printer.print_receipt(make_receipt())
+
+    assert len(executor.jobs) == 1
+    assert (device.printer_names, device.papers, device.documents) == ([], [], [])
+    executor.run_all()
+    assert device.printer_names == ["XP-58"]
+    assert "TOTAL" in device.documents[0].toPlainText()
+
+
+def test_settings_are_captured_before_queueing_and_the_worker_gets_only_plain_data(qapp):
+    device = FakeDevice()
+    executor = DeferredExecutor()
+    current = {"settings": settings_for(80, "A")}
+    printer = ReceiptPrinter(lambda: current["settings"], lambda: device, executor)
+
+    printer.print_receipt(make_receipt())
+    current["settings"] = settings_for(58, "B")
+    executor.run_all()
+
+    assert device.printer_names == ["A"]
+    assert device.papers[0][0] == 80.0
+
+
+def test_queued_failures_use_the_default_handler_without_raising(qapp):
+    class Broken(FakeDevice):
+        def use_printer(self, name: str) -> None:
+            raise ReceiptPrintError("Sin papel.")
+
+    executor = DeferredExecutor()
+    ReceiptPrinter(lambda: settings_for(), Broken, executor).print_receipt(make_receipt())
+
+    executor.run_all()
+
+
+def _wait_for(executor: QtPrintExecutor) -> None:
+    assert executor.wait_for_done(10_000)
+    QCoreApplication.processEvents()
+
+
+def test_qt_executor_runs_the_job_off_the_ui_thread_and_reports_errors_on_it(qapp):
+    executor = QtPrintExecutor()
+    ran_on: list[int] = []
+    failed_on: list[tuple[int, str]] = []
+
+    def job() -> None:
+        ran_on.append(threading.get_ident())
+        raise ReceiptPrintError("Sin papel.")
+
+    def on_error(error: Exception) -> None:
+        failed_on.append((threading.get_ident(), str(error)))
+
+    executor.run(job, on_error)
+    _wait_for(executor)
+
+    assert ran_on and ran_on[0] != threading.get_ident()
+    assert failed_on == [(threading.get_ident(), "Sin papel.")]
+
+
+class PdfDevice(QtReceiptDevice):
+    """The real Qt device with the physical printer swapped for a PDF, recording its threads."""
+
+    target: Path
+    threads: list[tuple[int, bool]] = []
+
+    def use_printer(self, name: str) -> None:
+        self.use_pdf(self.target)
+
+    def print_document(self, document: QTextDocument) -> None:
+        # The document must have been created by the worker that prints it.
+        mine = document.thread() is QThread.currentThread()
+        self.threads.append((threading.get_ident(), mine))
+        super().print_document(document)
+
+
+def test_a_real_receipt_is_laid_out_and_printed_by_the_worker_thread(qapp, tmp_path):
+    PdfDevice.target = tmp_path / "worker.pdf"
+    PdfDevice.threads = []
+    errors: list[str] = []
+    executor = QtPrintExecutor()
+    printer = ReceiptPrinter(lambda: settings_for(80), PdfDevice, executor, errors.append)
+
+    printer.print_receipt(make_receipt())
+    _wait_for(executor)
+
+    assert errors == []
+    ((worker, built_there),) = PdfDevice.threads
+    assert worker != threading.get_ident() and built_there
+    content = PdfDevice.target.read_bytes()
+    assert content.startswith(b"%PDF") and len(content) > 500
+
+
+def test_qt_executor_prints_in_submission_order(qapp):
+    executor = QtPrintExecutor()
+    order: list[int] = []
+
+    for number in range(5):
+        executor.run(lambda number=number: order.append(number), lambda error: None)
+    _wait_for(executor)
+
+    assert order == [0, 1, 2, 3, 4]
 
 
 @pytest.mark.parametrize("paper", [58, 80])

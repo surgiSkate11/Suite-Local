@@ -103,7 +103,7 @@ def test_form_shows_the_current_business_profile(env):
     assert combo_texts(settings.decimal_separator) == ["Coma (1.234,56)", "Punto (1,234.56)"]
     assert settings.decimal_separator.currentText() == "Coma (1.234,56)"
     assert settings.transfer.isChecked()
-    assert set(settings.module_boxes) == {"mesas", "venta_por_peso", "codigo_barras", "categorias"}
+    assert set(settings.module_boxes) == {"mesas", "codigo_barras", "categorias"}
 
 
 def test_every_module_has_a_checkbox_and_a_short_description(env):
@@ -111,13 +111,11 @@ def test_every_module_has_a_checkbox_and_a_short_description(env):
 
     assert {code: box.text() for code, box in settings.module_boxes.items()} == {
         "mesas": "Mesas y comandas",
-        "venta_por_peso": "Venta por peso",
         "codigo_barras": "Códigos de barras",
         "categorias": "Categorías",
     }
     assert {code: label.text() for code, label in settings.module_hints.items()} == {
         "mesas": "Cuentas abiertas por mesa, con envío a cocina. Ideal para cafeterías.",
-        "venta_por_peso": "Productos que se venden por kilo o por libra.",
         "codigo_barras": "Vendé escaneando el código de barras del producto.",
         "categorias": "Agrupá los productos y filtrá la caja por categoría.",
     }
@@ -168,11 +166,25 @@ def test_saving_stores_exactly_the_checked_modules(env):
     settings = build(env)
     for box in settings.module_boxes.values():
         box.setChecked(False)
-    settings.module_boxes["venta_por_peso"].setChecked(True)
+    settings.module_boxes["categorias"].setChecked(True)
 
     settings.save()
 
-    assert stored(env).enabled_modules == {"venta_por_peso"}
+    assert stored(env).enabled_modules == {"categorias"}
+
+
+def test_saving_keeps_a_stored_module_that_has_no_checkbox(env):
+    database, owner, _ = env
+    BusinessSettingsRepository(database).update_profile(
+        owner.user.business_id, enabled_modules=["venta_por_peso", "mesas"]
+    )
+    settings = build(env)
+    settings.module_boxes["mesas"].setChecked(False)
+    settings.module_boxes["categorias"].setChecked(True)
+
+    settings.save()
+
+    assert stored(env).enabled_modules == {"venta_por_peso", "categorias"}
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,7 @@ from suitelocal.domain.einvoice import (
     InvoiceLine,
     InvoicePayment,
 )
+from suitelocal.ui.receipt import InlineExecutor, ReceiptPrintError
 from suitelocal.ui.ride import (
     Ride,
     RidePrinter,
@@ -293,7 +294,7 @@ def settings_for(paper_mm=80, printer_name="") -> BusinessSettings:
 
 def test_print_ride_uses_the_receipt_printer_and_paper_width(qapp):
     device = FakeDevice()
-    printer = RidePrinter(lambda: settings_for(58, "Epson TM"), lambda: device)
+    printer = RidePrinter(lambda: settings_for(58, "Epson TM"), lambda: device, InlineExecutor())
 
     printer.print_ride(Ride(make_invoice(), make_einvoice()))
 
@@ -301,6 +302,31 @@ def test_print_ride_uses_the_receipt_printer_and_paper_width(qapp):
     assert len(device.documents) == 1
     assert device.papers[0][0] == 58.0 and device.papers[0][1] > 40
     assert KEY in device.documents[0].toPlainText()
+
+
+def test_print_ride_only_queues_the_job_and_reports_failures_as_a_ride_warning(qapp):
+    class Broken(FakeDevice):
+        def print_document(self, document: QTextDocument) -> None:
+            raise ReceiptPrintError("La impresora no está disponible.")
+
+    jobs: list = []
+
+    class Deferred:
+        def run(self, job, on_error) -> None:
+            jobs.append((job, on_error))
+
+    failures: list[str] = []
+    printer = RidePrinter(lambda: settings_for(), Broken, Deferred(), failures.append)
+
+    printer.print_ride(Ride(make_invoice(), make_einvoice()))
+
+    assert len(jobs) == 1 and failures == []
+    job, on_error = jobs[0]
+    try:
+        job()
+    except Exception as error:
+        on_error(error)
+    assert failures == ["No se pudo imprimir el RIDE: La impresora no está disponible."]
 
 
 def test_save_pdf_writes_a_non_empty_pdf_and_never_picks_a_printer(qapp, tmp_path):

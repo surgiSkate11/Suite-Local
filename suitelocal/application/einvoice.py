@@ -72,10 +72,13 @@ def build_invoice_data(
     emission: InvoiceEmission,
     *,
     timezone: tzinfo | None = None,
+    issued_at: datetime | None = None,
 ) -> InvoiceData:
     """Assemble the invoice of a stored sale from its receipt, the business settings and the buyer.
 
     Nothing is recomputed from a cart: lines, IVA and payments are the ones stored with the sale.
+    The invoice is dated on the sale's day unless `issued_at` (an aware moment) says otherwise,
+    as it does for a re-issued invoice.
     """
     # The receipt service enforces that the sale belongs to the session's business.
     receipt = ReceiptService(database, timezone).build(session, sale_id)
@@ -115,7 +118,7 @@ def build_invoice_data(
             rimpe=settings.tax_regime == _RIMPE_REGIME,
         ),
         emission,
-        receipt.issued_at.date(),
+        (receipt.issued_at if issued_at is None else issued_at.astimezone(timezone)).date(),
         buyer,
         lines,
         tuple(payments),
@@ -220,8 +223,21 @@ class EInvoiceService:
                 f"{sequential:09d}",
                 self._numeric_code(),
             )
+            # A re-issued invoice is a new document: its date, its access key and the SRI's 72 h
+            # window all count from now, not from the sale.
+            issued_at = (
+                self._clock()
+                if reissue
+                else datetime.fromisoformat(sale["created_at"]).replace(tzinfo=UTC)
+            )
             invoice = build_invoice_data(
-                self.database, session, sale_id, buyer, emission, timezone=self.timezone
+                self.database,
+                session,
+                sale_id,
+                buyer,
+                emission,
+                timezone=self.timezone,
+                issued_at=issued_at,
             )
             unsigned = build_invoice_xml(invoice, buyer_email)
             validate_against_xsd(unsigned)
@@ -251,7 +267,7 @@ class EInvoiceService:
                 environment=settings.sri_environment,
                 signed_xml=signed,
                 buyer=buyer,
-                issued_at=datetime.fromisoformat(sale["created_at"]).replace(tzinfo=UTC),
+                issued_at=issued_at,
             )
             if replaced is not None:
                 self.repository.link_replacement(connection, replaced.id, new_id)
@@ -293,6 +309,7 @@ class EInvoiceService:
             einvoice.buyer,
             emission,
             timezone=self.timezone,
+            issued_at=einvoice.issued_at,
         )
 
     def get_for_sale(self, session: Session, sale_id: int) -> EInvoice | None:

@@ -1,6 +1,7 @@
 import sqlite3
 
 import pytest
+from sale_owner import owner_of
 
 from suitelocal.application.auth import AuthService
 from suitelocal.domain.auth import Session, User
@@ -61,7 +62,7 @@ def test_sale_failure_leaves_stock_and_sales_unchanged(database):
     )
 
     with pytest.raises(ValueError, match="Stock insuficiente para Aceite"):
-        sales.register(sale)
+        sales.register(sale, **owner_of(sales.database))
 
     assert products.find_active("A-1")[0].stock == 10
     assert products.find_active("A-2")[0].stock == 1

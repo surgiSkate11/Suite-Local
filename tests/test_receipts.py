@@ -2,6 +2,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
+from sale_owner import owner_of
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.business_profile import BusinessProfileService
@@ -201,8 +202,11 @@ def test_a_sale_without_a_business_is_never_readable(env):
     database, owner, _, products, _ = env
     product = products.add("A-1", "Arroz", 250, 10)
     sale_id = SaleRepository(database).register(
-        Sale((SaleItem(product.id, product.name, 1, 250),), 250)
+        Sale((SaleItem(product.id, product.name, 1, 250),), 250), **owner_of(database)
     )
+    # register() no longer accepts it; a row from an older database can still have no business.
+    with database.connect() as connection:
+        connection.execute("UPDATE sales SET business_id = NULL WHERE id = ?", (sale_id,))
 
     with pytest.raises(ValueError, match=NOT_FOUND):
         ReceiptService(database).build(owner, sale_id)
@@ -226,7 +230,11 @@ def test_the_cashier_is_empty_when_the_seller_was_not_recorded(env):
     sale_id = SaleRepository(database).register(
         Sale((SaleItem(product.id, product.name, 1, 250),), 250),
         business_id=owner.user.business_id,
+        user_id=owner.user.id,
     )
+    # register() no longer accepts it; a row from an older database can still have no cashier.
+    with database.connect() as connection:
+        connection.execute("UPDATE sales SET user_id = NULL WHERE id = ?", (sale_id,))
 
     assert ReceiptService(database).build(owner, sale_id).cashier == ""
 
@@ -284,6 +292,7 @@ def test_an_overlong_sales_note_number_is_rejected_and_nothing_is_sold(env):
         SaleRepository(database).register(
             Sale((SaleItem(product.id, product.name, 1, 250),), 250),
             sales_note_number="9" * 31,
+            **owner_of(database),
         )
 
     assert SaleRepository(database).today_summary()[0] == 0

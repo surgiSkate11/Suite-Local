@@ -353,18 +353,17 @@ class SaleRepository:
         sale: Sale,
         on_registered: Callable[[sqlite3.Connection, int], None] | None = None,
         *,
-        business_id: int | None = None,
-        user_id: int | None = None,
+        business_id: int,
+        user_id: int,
         sales_note_number: str | None = None,
         customer_id: int | None = None,
     ) -> int:
         """Register the sale and return its id.
 
-        Every caller that knows who sells passes ``business_id`` and ``user_id``: they decide
-        which business may read the receipt and who the cashier on it is. A sale stored without
-        a business belongs to nobody. ``sales_note_number`` is the number of the handwritten
-        sales note of a RIMPE popular business. ``customer_id`` links the sale to a customer of
-        the same business.
+        ``business_id`` and ``user_id`` are required: they decide which business may read the
+        receipt and who the cashier on it is, so a sale never belongs to nobody.
+        ``sales_note_number`` is the number of the handwritten sales note of a RIMPE popular
+        business. ``customer_id`` links the sale to a customer of the same business.
         """
         validate_sale(sale)
         sales_note_number = normalize_sales_note_number(sales_note_number)
@@ -496,7 +495,7 @@ def _customer_from_row(row: sqlite3.Row) -> Customer:
 
 
 def _require_customer_of_business(
-    connection: sqlite3.Connection, customer_id: int, business_id: int | None
+    connection: sqlite3.Connection, customer_id: int, business_id: int
 ) -> None:
     owned = connection.execute(
         "SELECT 1 FROM customers WHERE id = ? AND business_id = ?", (customer_id, business_id)

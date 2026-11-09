@@ -14,7 +14,9 @@ from suitelocal.domain.business import (
     BUSINESS_TYPES,
     MODULES,
     TAX_REGIMES,
+    UNAVAILABLE_MODULES,
     issues_electronic_invoices,
+    parse_modules,
     profile_template,
     requires_ruc,
 )
@@ -303,11 +305,21 @@ def test_tienda_and_minimarket_templates():
         assert template.categories == ("Abarrotes", "Bebidas", "Lácteos", "Limpieza", "Snacks")
 
 
-def test_ferreteria_template_sells_by_weight():
+def test_ferreteria_template_does_not_enable_unavailable_modules():
     template = profile_template("ferreteria")
 
-    assert template.modules == frozenset({"codigo_barras", "categorias", "venta_por_peso"})
+    assert template.modules == frozenset({"codigo_barras", "categorias"})
     assert template.categories
+
+
+def test_no_template_enables_an_unavailable_module():
+    for business_type in BUSINESS_TYPES:
+        assert not profile_template(business_type).modules & UNAVAILABLE_MODULES
+
+
+def test_stored_unavailable_module_still_loads():
+    assert UNAVAILABLE_MODULES == frozenset({"venta_por_peso"})
+    assert parse_modules("venta_por_peso,categorias") == {"venta_por_peso", "categorias"}
 
 
 def test_every_type_has_a_template_made_of_known_modules():

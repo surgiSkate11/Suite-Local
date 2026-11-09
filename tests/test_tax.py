@@ -1,6 +1,7 @@
 import sqlite3
 
 import pytest
+from sale_owner import owner_of
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.cart import Cart
@@ -165,7 +166,9 @@ def test_sale_persists_totals_and_per_line_tax(database):
     cart.add(rice)
     cart.add(rice)
 
-    sale_id = SaleRepository(database).register(cart.to_sale((Payment("cash", 600),)))
+    sale_id = SaleRepository(database).register(
+        cart.to_sale((Payment("cash", 600),)), **owner_of(database)
+    )
 
     with database.connect() as connection:
         sale = connection.execute("SELECT * FROM sales WHERE id = ?", (sale_id,)).fetchone()
@@ -187,7 +190,7 @@ def test_failed_sale_with_tax_leaves_stock_and_tables_untouched(database):
     sale = Sale((SaleItem(coffee.id, coffee.name, 2, 115, 1500),), 230)
 
     with pytest.raises(ValueError, match="Stock insuficiente"):
-        SaleRepository(database).register(sale)
+        SaleRepository(database).register(sale, **owner_of(database))
 
     with database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == 0
