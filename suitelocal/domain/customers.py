@@ -16,6 +16,7 @@ NAME_MAX_LENGTH = 100
 PHONE_MAX_LENGTH = 20
 ADDRESS_MAX_LENGTH = 200
 EMAIL_MAX_LENGTH = 100
+CREDIT_LIMIT_MAX_CENTS = 10_000_000
 
 _PASSPORT = re.compile(r"[A-Za-z0-9]{3,20}")
 _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
@@ -32,6 +33,8 @@ class CustomerData:
     address: str = ""
     email: str = ""
     accepts_offers: bool = False
+    # Most the customer may owe on credit (fiado), in cents; None means no limit.
+    credit_limit_cents: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +50,7 @@ class Customer:
     accepts_offers: bool
     active: bool
     created_at: str
+    credit_limit_cents: int | None = None
 
     def as_buyer(self) -> Buyer:
         """The invoice buyer of this customer."""
@@ -116,6 +120,9 @@ def validate_customer(data: CustomerData) -> CustomerData:
         raise ValueError(f"La dirección no puede superar {ADDRESS_MAX_LENGTH} caracteres.")
     if data.email and (len(data.email) > EMAIL_MAX_LENGTH or not _EMAIL.fullmatch(data.email)):
         raise ValueError("El correo no es válido.")
+    limit = data.credit_limit_cents
+    if limit is not None and not 0 <= limit <= CREDIT_LIMIT_MAX_CENTS:
+        raise ValueError("El límite de crédito debe estar entre $ 0,00 y $ 100.000,00.")
     if data.accepts_offers and not data.email:
         raise ValueError("Para recibir ofertas necesitás registrar un correo.")
     return data

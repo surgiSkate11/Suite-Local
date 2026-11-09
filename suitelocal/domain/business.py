@@ -26,7 +26,7 @@ BUSINESS_TYPES = {
 }
 DEFAULT_BUSINESS_TYPE = "otro"
 
-MODULES = frozenset({"mesas", "venta_por_peso", "codigo_barras", "categorias"})
+MODULES = frozenset({"mesas", "venta_por_peso", "codigo_barras", "categorias", "fiado"})
 # Modules that stay valid in stored settings but do nothing yet, so no screen offers them.
 UNAVAILABLE_MODULES = frozenset({"venta_por_peso"})
 
@@ -95,7 +95,7 @@ class ProfileTemplate:
 
 
 _RETAIL_TEMPLATE = ProfileTemplate(
-    frozenset({"codigo_barras", "categorias"}),
+    frozenset({"codigo_barras", "categorias", "fiado"}),
     ("Abarrotes", "Bebidas", "Lácteos", "Limpieza", "Snacks"),
 )
 _FOOD_SERVICE_TEMPLATE = ProfileTemplate(

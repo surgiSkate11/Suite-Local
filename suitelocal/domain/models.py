@@ -8,7 +8,7 @@ from suitelocal.domain.tax import (
     tax_breakdown,
 )
 
-PAYMENT_METHODS = ("cash", "transfer", "card")
+PAYMENT_METHODS = ("cash", "transfer", "card", "credit")
 
 
 class Keep(Enum):

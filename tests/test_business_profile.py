@@ -74,7 +74,7 @@ def test_known_business_types_and_modules():
         "ferreteria",
         "otro",
     )
-    assert MODULES == frozenset({"mesas", "venta_por_peso", "codigo_barras", "categorias"})
+    assert MODULES == frozenset({"mesas", "venta_por_peso", "codigo_barras", "categorias", "fiado"})
 
 
 @pytest.mark.parametrize(
@@ -301,7 +301,7 @@ def test_cafeteria_and_restaurante_templates():
 def test_tienda_and_minimarket_templates():
     for business_type in ("tienda", "minimarket"):
         template = profile_template(business_type)
-        assert template.modules == frozenset({"codigo_barras", "categorias"})
+        assert template.modules == frozenset({"codigo_barras", "categorias", "fiado"})
         assert template.categories == ("Abarrotes", "Bebidas", "Lácteos", "Limpieza", "Snacks")
 
 

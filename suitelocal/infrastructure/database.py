@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS customers (
     accepts_offers INTEGER NOT NULL DEFAULT 0 CHECK (accepts_offers IN (0, 1)),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ,credit_limit_cents INTEGER CHECK (credit_limit_cents IS NULL OR credit_limit_cents >= 0)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_business_id_number
@@ -130,10 +131,31 @@ CREATE TABLE IF NOT EXISTS sale_items (
 CREATE TABLE IF NOT EXISTS sale_payments (
     id INTEGER PRIMARY KEY,
     sale_id INTEGER NOT NULL REFERENCES sales(id),
-    method TEXT NOT NULL CHECK (method IN ('cash', 'transfer', 'card')),
+    method TEXT NOT NULL CHECK (method IN ('cash', 'transfer', 'card', 'credit')),
     amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
     reference TEXT NOT NULL DEFAULT ''
 );
+
+-- Credit (fiado) account of each customer: a cargo is a credit sale, an abono a payment on it.
+-- The balance is the cargos minus the abonos. A cash abono belongs to the open cash session.
+CREATE TABLE IF NOT EXISTS customer_ledger (
+    id INTEGER PRIMARY KEY,
+    business_id INTEGER NOT NULL REFERENCES businesses(id),
+    customer_id INTEGER NOT NULL REFERENCES customers(id),
+    kind TEXT NOT NULL CHECK (kind IN ('cargo', 'abono')),
+    amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+    sale_id INTEGER REFERENCES sales(id),
+    method TEXT CHECK (method IS NULL OR method IN ('cash', 'transfer')),
+    note TEXT NOT NULL DEFAULT '',
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    cash_session_id INTEGER REFERENCES cash_sessions(id),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_ledger_customer
+    ON customer_ledger(business_id, customer_id, id);
+CREATE INDEX IF NOT EXISTS idx_customer_ledger_cash_session
+    ON customer_ledger(cash_session_id) WHERE cash_session_id IS NOT NULL;
 
 -- Last sequential handed out per business, environment, establishment and emission point.
 CREATE TABLE IF NOT EXISTS einvoice_sequences (
@@ -203,6 +225,11 @@ _EINVOICES_COPY_FAILED = (
 )
 
 
+_SALE_PAYMENTS_COPY_FAILED = (
+    "La migración de los pagos no copió todas las filas y se deshizo. No se perdió ningún dato."
+)
+
+
 class Database:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
@@ -234,6 +261,15 @@ class Database:
             _migrate_products(connection)
             _migrate_sales(connection)
             _migrate_einvoices(connection)
+            _migrate_sale_payments(connection)
+            add_missing_columns(
+                connection,
+                "customers",
+                (
+                    "credit_limit_cents INTEGER CHECK (credit_limit_cents IS NULL "
+                    "OR credit_limit_cents >= 0)",
+                ),
+            )
             # Left NULL on old sales: they were priced with the tax added on top, so a
             # per-line IVA cannot be derived from them and they are never rewritten.
             add_missing_columns(
@@ -297,6 +333,43 @@ def _migrate_sales(connection: sqlite3.Connection) -> None:
         connection.execute(
             "UPDATE sales SET business_id = ? WHERE business_id IS NULL", (businesses[0]["id"],)
         )
+
+
+def _migrate_sale_payments(connection: sqlite3.Connection) -> None:
+    """Rebuild an old `sale_payments` whose CHECK does not accept the "credit" method.
+
+    Runs inside the caller's transaction; nothing else references the table. The copy is
+    checked row for row before the old table goes away, and any failure rolls everything back.
+    """
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sale_payments'"
+    ).fetchone()
+    if row is None or "'credit'" in row["sql"]:
+        return
+    columns = "id, sale_id, method, amount_cents, reference"
+    connection.execute("DROP TABLE IF EXISTS sale_payments_rebuilt")
+    connection.execute(
+        """
+        CREATE TABLE sale_payments_rebuilt (
+            id INTEGER PRIMARY KEY,
+            sale_id INTEGER NOT NULL REFERENCES sales(id),
+            method TEXT NOT NULL CHECK (method IN ('cash', 'transfer', 'card', 'credit')),
+            amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+            reference TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    connection.execute(
+        f"INSERT INTO sale_payments_rebuilt ({columns}) SELECT {columns} FROM sale_payments"
+    )
+    unmatched = connection.execute(
+        f"SELECT COUNT(*) FROM (SELECT {columns} FROM sale_payments "
+        f"EXCEPT SELECT {columns} FROM sale_payments_rebuilt)"
+    ).fetchone()[0]
+    if unmatched:
+        raise RuntimeError(_SALE_PAYMENTS_COPY_FAILED)
+    connection.execute("DROP TABLE sale_payments")
+    connection.execute("ALTER TABLE sale_payments_rebuilt RENAME TO sale_payments")
 
 
 def _migrate_einvoices(connection: sqlite3.Connection) -> None:

@@ -98,7 +98,10 @@ class CashRegisterService:
 
     @staticmethod
     def _expected_cents(connection: sqlite3.Connection, open_row: sqlite3.Row) -> int:
-        """Opening cash plus cash payments minus change given, for the open session."""
+        """Opening cash plus cash payments and cash abonos minus change given, for the open session.
+
+        Credit (fiado) payments are not cash, so they never count here.
+        """
         totals = connection.execute(
             """
             SELECT
@@ -110,11 +113,20 @@ class CashRegisterService:
                 ), 0) AS cash_in,
                 COALESCE((
                     SELECT SUM(change_cents) FROM sales WHERE cash_session_id = ?
-                ), 0) AS change_out
+                ), 0) AS change_out,
+                COALESCE((
+                    SELECT SUM(amount_cents) FROM customer_ledger
+                    WHERE cash_session_id = ? AND kind = 'abono' AND method = 'cash'
+                ), 0) AS abonos_in
             """,
-            (open_row["id"], open_row["id"]),
+            (open_row["id"], open_row["id"], open_row["id"]),
         ).fetchone()
-        expected: int = open_row["opening_cents"] + totals["cash_in"] - totals["change_out"]
+        expected: int = (
+            open_row["opening_cents"]
+            + totals["cash_in"]
+            - totals["change_out"]
+            + totals["abonos_in"]
+        )
         return expected
 
     @staticmethod

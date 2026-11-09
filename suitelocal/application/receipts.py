@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 
+from suitelocal.application.credit import CreditService
 from suitelocal.domain.auth import Session
 from suitelocal.domain.business import SALES_NOTE_REGIME, TAX_REGIMES, charges_iva
 from suitelocal.infrastructure.database import Database
@@ -65,6 +66,8 @@ class Receipt:
     sales_note_number: str | None = None
     # False for the regimes that sell without IVA: the ticket then shows no IVA at all.
     charges_iva: bool = True
+    # What the customer owes right after this sale; None when the sale had no fiado.
+    credit_balance_cents: int | None = None
 
 
 class ReceiptService:
@@ -157,4 +160,5 @@ class ReceiptService:
                 sale["sales_note_number"] if business.tax_regime == SALES_NOTE_REGIME else None
             ),
             charges_iva=charges_iva(business.tax_regime),
+            credit_balance_cents=CreditService(self.database).balance_after_sale(session, sale_id),
         )

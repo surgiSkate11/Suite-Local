@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from suitelocal.domain.business import normalize_sales_note_number
+from suitelocal.domain.credit import (
+    CARGO,
+    CREDIT_METHOD,
+    FIADO_MODULE,
+    check_credit_available,
+)
 from suitelocal.domain.customers import Customer, CustomerData, CustomerHistory, Purchase
 from suitelocal.domain.models import KEEP, Keep, Product, Sale, validate_sale
 from suitelocal.domain.tax import DEFAULT_TAX_RATE_BASIS_POINTS, validate_tax_rate
@@ -372,6 +378,11 @@ class SaleRepository:
             connection.execute("BEGIN IMMEDIATE")
             if customer_id is not None:
                 _require_customer_of_business(connection, customer_id, business_id)
+            credit_cents = sum(
+                payment.amount_cents for payment in sale.payments if payment.method == CREDIT_METHOD
+            )
+            if credit_cents:
+                _check_credit_sale(connection, business_id, customer_id, credit_cents)
             for item in sale.items:
                 row = connection.execute(
                     "SELECT stock FROM products WHERE id = ? AND active = 1",
@@ -454,6 +465,16 @@ class SaleRepository:
                         payment.reference.strip(),
                     ),
                 )
+            if credit_cents and customer_id is not None:
+                # Same transaction as the sale: the debt never exists without its sale.
+                connection.execute(
+                    """
+                    INSERT INTO customer_ledger
+                        (business_id, customer_id, kind, amount_cents, sale_id, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (business_id, customer_id, CARGO, credit_cents, sale_id, user_id),
+                )
             # Runs in the same transaction: if it raises, the whole sale rolls back.
             if on_registered is not None:
                 on_registered(connection, sale_id)
@@ -474,7 +495,7 @@ class SaleRepository:
 _CUSTOMER_NOT_FOUND = "El cliente no existe."
 _CUSTOMER_COLUMNS = (
     "id, business_id, id_type, id_number, full_name, phone, address, email, accepts_offers, "
-    "active, created_at"
+    "active, created_at, credit_limit_cents"
 )
 
 
@@ -491,7 +512,39 @@ def _customer_from_row(row: sqlite3.Row) -> Customer:
         bool(row["accepts_offers"]),
         bool(row["active"]),
         row["created_at"],
+        row["credit_limit_cents"],
     )
+
+
+def _check_credit_sale(
+    connection: sqlite3.Connection,
+    business_id: int,
+    customer_id: int | None,
+    credit_cents: int,
+) -> None:
+    """A credit sale needs the module on, a customer, and room under the customer's limit."""
+    row = connection.execute(
+        "SELECT enabled_modules, decimal_separator FROM business_settings WHERE business_id = ?",
+        (business_id,),
+    ).fetchone()
+    modules = (row["enabled_modules"] if row is not None else "") or ""
+    if FIADO_MODULE not in modules.split(","):
+        raise ValueError("El fiado no está activado para este negocio.")
+    if customer_id is None:
+        raise ValueError("El fiado necesita un cliente seleccionado.")
+    balance = connection.execute(
+        """
+        SELECT COALESCE(SUM(CASE kind WHEN 'cargo' THEN amount_cents ELSE -amount_cents END), 0)
+               AS balance
+        FROM customer_ledger WHERE business_id = ? AND customer_id = ?
+        """,
+        (business_id, customer_id),
+    ).fetchone()["balance"]
+    limit = connection.execute(
+        "SELECT credit_limit_cents FROM customers WHERE id = ?", (customer_id,)
+    ).fetchone()["credit_limit_cents"]
+    separator = (row["decimal_separator"] if row is not None else None) or ","
+    check_credit_available(balance, credit_cents, limit, separator)
 
 
 def _require_customer_of_business(
@@ -543,8 +596,8 @@ class CustomerRepository:
                     """
                     INSERT INTO customers
                         (business_id, id_type, id_number, full_name, phone, address, email,
-                         accepts_offers)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         accepts_offers, credit_limit_cents)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (business_id, *_customer_values(data)),
                 )
@@ -562,7 +615,7 @@ class CustomerRepository:
                     """
                     UPDATE customers
                     SET id_type = ?, id_number = ?, full_name = ?, phone = ?, address = ?,
-                        email = ?, accepts_offers = ?
+                        email = ?, accepts_offers = ?, credit_limit_cents = ?
                     WHERE id = ? AND business_id = ?
                     """,
                     (*_customer_values(data), customer_id, business_id),
@@ -639,7 +692,7 @@ class CustomerRepository:
         return ValueError(f"Ya existe un cliente con esa identificación: {name}{note}.")
 
 
-def _customer_values(data: CustomerData) -> tuple[str | int, ...]:
+def _customer_values(data: CustomerData) -> tuple[str | int | None, ...]:
     return (
         data.id_type,
         data.id_number,
@@ -648,4 +701,5 @@ def _customer_values(data: CustomerData) -> tuple[str | int, ...]:
         data.address,
         data.email,
         int(data.accepts_offers),
+        data.credit_limit_cents,
     )

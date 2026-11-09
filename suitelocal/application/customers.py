@@ -5,6 +5,7 @@ from pathlib import Path
 
 from suitelocal.application.reports import CSV_DELIMITER
 from suitelocal.domain.auth import Session
+from suitelocal.domain.credit import FIADO_MODULE
 from suitelocal.domain.customers import (
     Customer,
     CustomerData,
@@ -15,6 +16,7 @@ from suitelocal.domain.customers import (
 from suitelocal.domain.policies import require_owner
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import CustomerRepository
+from suitelocal.infrastructure.settings import BusinessSettingsRepository
 
 SEARCH_LIMIT = 50
 HISTORY_LIMIT = 20
@@ -30,6 +32,12 @@ class CustomerService:
 
     def __init__(self, database: Database) -> None:
         self.customers = CustomerRepository(database)
+        self.settings = BusinessSettingsRepository(database)
+
+    def credit_enabled(self, session: Session) -> bool:
+        """True when the business sells on credit (fiado), so customers carry a credit limit."""
+        modules = self.settings.get(session.user.business_id).enabled_modules
+        return FIADO_MODULE in modules
 
     def find_by_id_number(self, session: Session, id_number: str) -> Customer | None:
         """The active customer with exactly this identification, or None."""

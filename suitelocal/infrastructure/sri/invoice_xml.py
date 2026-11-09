@@ -135,14 +135,16 @@ def _total_taxes(invoice: InvoiceData) -> str:
 
 
 def _payments(invoice: InvoiceData) -> str:
+    # Cash and credit share the code "01"; the invoice states each code once, with their sum.
+    totals: dict[str, int] = {}
+    for payment in invoice.payments:
+        code = payment_code(payment.method)
+        totals[code] = totals.get(code, 0) + payment.amount_cents
     return (
         "<pagos>"
         + "".join(
-            "<pago>"
-            + _element("formaPago", payment_code(payment.method))
-            + _element("total", _money(payment.amount_cents))
-            + "</pago>"
-            for payment in invoice.payments
+            "<pago>" + _element("formaPago", code) + _element("total", _money(total)) + "</pago>"
+            for code, total in totals.items()
         )
         + "</pagos>"
     )

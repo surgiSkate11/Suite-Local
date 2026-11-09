@@ -28,6 +28,7 @@ from suitelocal.domain.business import (
     validate_sri_environment,
     validate_tax_regime,
 )
+from suitelocal.domain.credit import CREDIT_METHOD, FIADO_MODULE
 from suitelocal.domain.tax import (
     DEFAULT_TAX_RATE_BASIS_POINTS,
     TAX_RATES_BASIS_POINTS,
@@ -82,6 +83,11 @@ class BusinessSettingsRepository:
             raise ValueError("No se encontró la configuración del negocio.")
         configured_methods = row["enabled_payment_methods"] or ",".join(DEFAULT_PAYMENT_METHODS)
         methods = tuple(method for method in configured_methods.split(",") if method)
+        modules = parse_modules(row["enabled_modules"] or "")
+        # Credit is not a setting of its own: the fiado module decides whether it is offered.
+        methods = tuple(method for method in methods if method != CREDIT_METHOD)
+        if FIADO_MODULE in modules:
+            methods += (CREDIT_METHOD,)
         tax_rate = row["tax_rate_basis_points"]
         return BusinessSettings(
             business_id,
@@ -93,7 +99,7 @@ class BusinessSettingsRepository:
             row["ruc"] or "",
             row["tax_regime"] or DEFAULT_TAX_REGIME,
             row["business_type"] or DEFAULT_BUSINESS_TYPE,
-            parse_modules(row["enabled_modules"] or ""),
+            modules,
             row["decimal_separator"] or ",",
             row["address"] or "",
             row["phone"] or "",

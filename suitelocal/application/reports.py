@@ -159,7 +159,12 @@ def _validate_range(session: Session, start: date, end: date) -> None:
         raise ValueError("La fecha inicial no puede ser posterior a la fecha final.")
 
 
-PAYMENT_METHOD_LABELS = {"cash": "Efectivo", "transfer": "Transferencia", "card": "Tarjeta"}
+PAYMENT_METHOD_LABELS = {
+    "cash": "Efectivo",
+    "transfer": "Transferencia",
+    "card": "Tarjeta",
+    "credit": "Fiado",
+}
 
 
 def _format_cell(name: str, value: object) -> str:

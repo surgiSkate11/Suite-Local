@@ -27,7 +27,9 @@ BUYER_ID_MAX_LENGTH = 20
 _IVA_CODES = {1500: "4", 500: "5", 0: "0"}
 # Cash is "sin utilización del sistema financiero", a transfer is "otros con utilización del
 # sistema financiero" and a card is "tarjeta de crédito" (the POS cannot tell debit apart).
-_PAYMENT_CODES = {"cash": "01", "transfer": "20", "card": "19"}
+# A credit (fiado) part is also "01": plazo and unidadTiempo are optional in the 1.1.0 XSD and
+# are left out, so the invoice does not describe the term of the debt.
+_PAYMENT_CODES = {"cash": "01", "transfer": "20", "card": "19", "credit": "01"}
 _WEIGHTS = (2, 3, 4, 5, 6, 7)
 _DIGITS = re.compile(r"[0-9]+")
 
