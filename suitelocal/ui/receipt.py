@@ -1,11 +1,22 @@
 """Internal sale receipt: HTML layout for 58/80 mm paper, Windows printing and PDF export."""
 
 import html
+import logging
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from PySide6.QtCore import QMarginsF, QSizeF, QUrl
+from PySide6.QtCore import (
+    QCoreApplication,
+    QMarginsF,
+    QObject,
+    QRunnable,
+    QSizeF,
+    QThreadPool,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QGuiApplication,
     QImage,
@@ -24,6 +35,10 @@ from suitelocal.ui.payment_dialog import METHOD_LABELS
 
 __all__ = [
     "DEFAULT_PRINTER_LABEL",
+    "InlineExecutor",
+    "PrintExecutor",
+    "PrintJob",
+    "QtPrintExecutor",
     "QtReceiptDevice",
     "ReceiptDevice",
     "ReceiptOutput",
@@ -36,7 +51,11 @@ __all__ = [
     "printable_width_px",
     "printer_status_text",
     "render_receipt_html",
+    "default_print_executor",
+    "log_print_failure",
+    "make_print_job",
     "send_document",
+    "submit_print",
 ]
 
 DEFAULT_PRINTER_LABEL = "Predeterminada del sistema"
@@ -52,6 +71,97 @@ RULE = '<hr style="border-top: 1px dashed black;"/>'
 
 class ReceiptPrintError(RuntimeError):
     """The receipt could not be sent to the printer or the file."""
+
+
+class PrintExecutor(Protocol):
+    """Runs a print job away from the sale screen; tests inject a synchronous one."""
+
+    def run(self, job: Callable[[], None], on_error: Callable[[Exception], None]) -> None:
+        """Run `job` once; if it raises, call `on_error` with the exception on the UI thread."""
+        ...
+
+
+class InlineExecutor:
+    """Runs the job right away on the caller's thread (tests, scripts)."""
+
+    def run(self, job: Callable[[], None], on_error: Callable[[Exception], None]) -> None:
+        try:
+            job()
+        except Exception as error:  # printer drivers raise anything
+            on_error(error)
+
+
+class _Job(QRunnable):
+    def __init__(
+        self,
+        executor: "QtPrintExecutor",
+        job: Callable[[], None],
+        on_error: Callable[[Exception], None],
+    ) -> None:
+        super().__init__()
+        self._executor = executor
+        self._job = job
+        self._on_error = on_error
+
+    def run(self) -> None:
+        try:
+            self._job()
+        except Exception as error:  # printer drivers raise anything
+            self._executor.failed.emit(self._on_error, error)
+
+
+class QtPrintExecutor(QObject):
+    """Runs print jobs one at a time on a dedicated worker thread.
+
+    Create it on the UI thread: failures come back there through a queued signal, so the
+    callbacks may touch widgets. The pool is deliberately limited to ONE thread: tickets keep
+    their order and the QPrinter cache in `QtReceiptDevice` is only ever touched by that single
+    worker, never by two threads at once.
+    """
+
+    failed = Signal(object, object)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pool = QThreadPool(self)
+        self._pool.setMaxThreadCount(1)
+        self.failed.connect(self._deliver)
+
+    def run(self, job: Callable[[], None], on_error: Callable[[Exception], None]) -> None:
+        self._pool.start(_Job(self, job, on_error))
+
+    def wait_for_done(self, timeout_ms: int) -> bool:
+        """Block until the queue is empty (shutdown and tests); False if it timed out."""
+        return self._pool.waitForDone(timeout_ms)
+
+    @staticmethod
+    def _deliver(on_error: Callable[[Exception], None], error: Exception) -> None:
+        on_error(error)
+
+
+_default_executor: QtPrintExecutor | None = None
+
+
+def default_print_executor() -> QtPrintExecutor:
+    """The shared worker, created on first use (always from the UI thread)."""
+    global _default_executor
+    if _default_executor is None:
+        _default_executor = QtPrintExecutor()
+        app = QCoreApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(_wait_for_default_executor)
+    return _default_executor
+
+
+def _wait_for_default_executor() -> None:
+    """Let a ticket that is already printing finish before the app exits."""
+    if _default_executor is not None:
+        _default_executor.wait_for_done(5_000)
+
+
+def log_print_failure(message: str) -> None:
+    """Fallback when nobody listens for print failures."""
+    logging.getLogger(__name__).warning(message)
 
 
 class ReceiptOutput(Protocol):
@@ -215,18 +325,22 @@ def _screen_dpi() -> float:
 
 
 def build_html_document(
-    html_text: str, paper_mm: int, resources: Mapping[str, QImage] | None = None
+    html_text: str,
+    paper_mm: int,
+    resources: Mapping[str, QImage] | None = None,
+    dpi: float | None = None,
 ) -> tuple[QTextDocument, float]:
     """Lay out HTML for a roll of `paper_mm`; returns it with the page height (mm) it needs.
 
-    `resources` are images the HTML refers to by name (`<img src="name">`).
+    `resources` are images the HTML refers to by name (`<img src="name">`). A caller that is not
+    on the UI thread passes `dpi`, because the screen may only be asked there.
     """
     document = QTextDocument()
     document.setDocumentMargin(0)
     for name, image in (resources or {}).items():
         document.addResource(QTextDocument.ResourceType.ImageResource, QUrl(name), image)
     document.setHtml(html_text)
-    dpi = _screen_dpi()
+    dpi = dpi or _screen_dpi()
     document.setTextWidth(printable_width_px(paper_mm, dpi))
     height_mm = document.size().height() / dpi * MM_PER_INCH
     return document, height_mm + 2 * PAGE_MARGIN_MM + TAIL_MM
@@ -252,26 +366,89 @@ def send_document(
     device.print_document(document)
 
 
+@dataclass(frozen=True, slots=True)
+class PrintJob:
+    """Everything a worker needs to print, as plain data.
+
+    No QObject crosses to the worker: the QTextDocument and the QPrinter are both created there.
+    (QImage is an implicitly shared value type, safe to hand over.)
+    """
+
+    html_text: str
+    paper_mm: int
+    printer_name: str
+    dpi: float
+    resources: Mapping[str, QImage] = field(default_factory=dict[str, QImage])
+
+
+def make_print_job(
+    html_text: str,
+    business: BusinessSettings,
+    resources: Mapping[str, QImage] | None = None,
+) -> PrintJob:
+    """Capture the settings and the screen dpi; call it on the UI thread."""
+    return PrintJob(
+        html_text,
+        business.receipt_paper_mm,
+        business.printer_name,
+        _screen_dpi(),
+        dict(resources or {}),
+    )
+
+
+def submit_print(
+    executor: PrintExecutor,
+    device_factory: Callable[[], ReceiptDevice],
+    print_job: PrintJob,
+    on_error: Callable[[Exception], None],
+) -> None:
+    """Queue a print job and return at once.
+
+    The worker lays the document out, builds the printer (slow on some drivers) and spools it.
+    """
+
+    def job() -> None:
+        document, height_mm = build_html_document(
+            print_job.html_text, print_job.paper_mm, print_job.resources, print_job.dpi
+        )
+        device = device_factory()
+        device.use_printer(print_job.printer_name)
+        send_document(device, document, height_mm, print_job.paper_mm)
+
+    executor.run(job, on_error)
+
+
 class ReceiptPrinter:
     """Prints a receipt on the configured Windows printer or saves it as a PDF.
 
     Paper width, printer and decimal separator are read from the settings on every call, so a
-    change made in Ajustes applies to the next ticket.
+    change made in Ajustes applies to the next ticket. Printing is queued and returns at once;
+    a failure reaches `on_failure` as a ready-to-show message.
     """
 
     def __init__(
         self,
         settings: Callable[[], BusinessSettings],
         device_factory: Callable[[], ReceiptDevice] = QtReceiptDevice,
+        executor: PrintExecutor | None = None,
+        on_failure: Callable[[str], None] = log_print_failure,
     ) -> None:
         self._settings = settings
         self._device_factory = device_factory
+        self._executor = executor
+        self._on_failure = on_failure
 
     def print_receipt(self, receipt: Receipt) -> None:
         business = self._settings()
-        device = self._device_factory()
-        device.use_printer(business.printer_name)
-        self._send(device, receipt, business)
+        html_text = render_receipt_html(
+            receipt, business.decimal_separator, business.receipt_paper_mm
+        )
+        submit_print(
+            self._executor or default_print_executor(),
+            self._device_factory,
+            make_print_job(html_text, business),
+            lambda error: self._on_failure(f"No se pudo imprimir el ticket: {error}"),
+        )
 
     def save_pdf(self, receipt: Receipt, path: Path | str) -> None:
         business = self._settings()

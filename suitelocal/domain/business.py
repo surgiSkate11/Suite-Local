@@ -25,6 +25,8 @@ BUSINESS_TYPES = {
 DEFAULT_BUSINESS_TYPE = "otro"
 
 MODULES = frozenset({"mesas", "venta_por_peso", "codigo_barras", "categorias"})
+# Modules that stay valid in stored settings but do nothing yet, so no screen offers them.
+UNAVAILABLE_MODULES = frozenset({"venta_por_peso"})
 
 # SRI environments: "pruebas" is the test service (celcer), "produccion" the real one.
 SRI_ENVIRONMENTS = {"pruebas": "Pruebas", "produccion": "Producción"}
@@ -102,7 +104,7 @@ _TEMPLATES = {
     "cafeteria": _FOOD_SERVICE_TEMPLATE,
     "restaurante": _FOOD_SERVICE_TEMPLATE,
     "ferreteria": ProfileTemplate(
-        frozenset({"codigo_barras", "categorias", "venta_por_peso"}),
+        frozenset({"codigo_barras", "categorias"}),
         ("Herramientas", "Eléctrico", "Plomería", "Pinturas", "Tornillería", "Materiales"),
     ),
     "otro": ProfileTemplate(frozenset({"categorias"}), ()),

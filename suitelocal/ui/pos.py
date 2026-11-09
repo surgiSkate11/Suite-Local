@@ -1097,12 +1097,15 @@ class PosWidget(QWidget):
             buyer = self.buyer_section.buyer(self.cart.grand_total_cents)
             if buyer is None:
                 return
+        if self.session is None:
+            self.notification.emit("No se puede confirmar. No hay una sesión iniciada.", "danger")
+            return
         try:
             sale = self.cart.to_sale(payments)
             sale_id = self.sales.register(
                 sale,
-                business_id=None if self.session is None else self.session.user.business_id,
-                user_id=None if self.session is None else self.session.user.id,
+                business_id=self.session.user.business_id,
+                user_id=self.session.user.id,
                 sales_note_number=self._sales_note_number(),
                 customer_id=self._customer_id(),
             )

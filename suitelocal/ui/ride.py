@@ -22,12 +22,17 @@ from suitelocal.ui.receipt import (
     FONT_POINTS,
     MONOSPACE,
     RULE,
+    PrintExecutor,
     QtReceiptDevice,
     ReceiptDevice,
     build_html_document,
+    default_print_executor,
     escape_html,
+    log_print_failure,
+    make_print_job,
     printable_width_px,
     send_document,
+    submit_print,
 )
 
 __all__ = ["Ride", "RideOutput", "RidePrinter", "build_ride_document", "render_ride_html"]
@@ -163,10 +168,10 @@ def render_ride_html(
     )
 
 
-def build_ride_document(
+def ride_html_and_resources(
     ride: Ride, decimal_separator: str, paper_mm: int
-) -> tuple[QTextDocument, float]:
-    """The laid-out RIDE with its barcode, and the page height (mm) a roll needs for it."""
+) -> tuple[str, dict[str, QImage]]:
+    """The RIDE's HTML and the barcode image it refers to (plain data, no QObject)."""
     width = int(printable_width_px(paper_mm))
     barcode: QImage = render_code128(
         ride.einvoice.access_key,
@@ -174,8 +179,15 @@ def build_ride_document(
         BARCODE_IMAGE_HEIGHT_PX,
         quiet_modules=BARCODE_QUIET_MODULES,
     )
-    html_text = render_ride_html(ride, decimal_separator, paper_mm, width)
-    return build_html_document(html_text, paper_mm, {BARCODE_RESOURCE: barcode})
+    return render_ride_html(ride, decimal_separator, paper_mm, width), {BARCODE_RESOURCE: barcode}
+
+
+def build_ride_document(
+    ride: Ride, decimal_separator: str, paper_mm: int
+) -> tuple[QTextDocument, float]:
+    """The laid-out RIDE with its barcode, and the page height (mm) a roll needs for it."""
+    html_text, resources = ride_html_and_resources(ride, decimal_separator, paper_mm)
+    return build_html_document(html_text, paper_mm, resources)
 
 
 class RidePrinter:
@@ -185,15 +197,26 @@ class RidePrinter:
         self,
         settings: Callable[[], BusinessSettings],
         device_factory: Callable[[], ReceiptDevice] = QtReceiptDevice,
+        executor: PrintExecutor | None = None,
+        on_failure: Callable[[str], None] = log_print_failure,
     ) -> None:
         self._settings = settings
         self._device_factory = device_factory
+        self._executor = executor
+        self._on_failure = on_failure
 
     def print_ride(self, ride: Ride) -> None:
+        """Queue the RIDE for the printer and return at once; a failure reaches `on_failure`."""
         business = self._settings()
-        device = self._device_factory()
-        device.use_printer(business.printer_name)
-        self._send(device, ride, business)
+        html_text, resources = ride_html_and_resources(
+            ride, business.decimal_separator, business.receipt_paper_mm
+        )
+        submit_print(
+            self._executor or default_print_executor(),
+            self._device_factory,
+            make_print_job(html_text, business, resources),
+            lambda error: self._on_failure(f"No se pudo imprimir el RIDE: {error}"),
+        )
 
     def save_pdf(self, ride: Ride, path: Path | str) -> None:
         business = self._settings()

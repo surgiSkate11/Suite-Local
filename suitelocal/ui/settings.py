@@ -60,12 +60,12 @@ ECUADOR_TIME = timezone(timedelta(hours=-5), "ECT")
 NO_SELECTION = "Elegí una categoría de la lista."
 DECIMAL_SEPARATOR_LABELS = {",": "Coma (1.234,56)", ".": "Punto (1,234.56)"}
 # Module code -> (checkbox label, one-line description), in the order they are shown.
+# Modules in UNAVAILABLE_MODULES are left out: they are stored but never offered.
 MODULE_INFO = {
     "mesas": (
         "Mesas y comandas",
         "Cuentas abiertas por mesa, con envío a cocina. Ideal para cafeterías.",
     ),
-    "venta_por_peso": ("Venta por peso", "Productos que se venden por kilo o por libra."),
     "codigo_barras": (
         "Códigos de barras",
         "Vendé escaneando el código de barras del producto.",
@@ -500,7 +500,8 @@ class SettingsWidget(QWidget):
                 tax_regime=self.regime.currentData(),
                 business_type=self.business_type.currentData(),
                 enabled_modules=[
-                    code for code, box in self.module_boxes.items() if box.isChecked()
+                    *(code for code, box in self.module_boxes.items() if box.isChecked()),
+                    *(before.enabled_modules - self.module_boxes.keys()),
                 ],
                 decimal_separator=self.decimal_separator.currentData(),
                 address=self.address.text(),

@@ -141,11 +141,14 @@ class AppShell(QMainWindow):
         self.cash_register = CashRegisterService(database)
         business_id = session.user.business_id
         # The printer reads paper and printer from the saved settings on every ticket.
+        # Printing runs on a worker thread; a failure there comes back as this warning toast.
         self.receipt_output: ReceiptOutput = receipt_output or ReceiptPrinter(
-            lambda: settings.get(business_id)
+            lambda: settings.get(business_id), on_failure=self._warn
         )
         # Same printer and paper as the internal ticket: the RIDE is printed in its place.
-        self.ride_output: RideOutput = ride_output or RidePrinter(lambda: settings.get(business_id))
+        self.ride_output: RideOutput = ride_output or RidePrinter(
+            lambda: settings.get(business_id), on_failure=self._warn
+        )
         self.einvoice_service = EInvoiceService(database, certificates or _no_certificates)
         einvoicing = self._einvoicing_enabled()
         receipts = ReceiptService(database)
@@ -693,6 +696,9 @@ class AppShell(QMainWindow):
 
     def _show_toast(self, message: str, state: str) -> None:
         self.toasts.show_toast(message, state)
+
+    def _warn(self, message: str) -> None:
+        self._show_toast(message, "warning")
 
     def _logout(self) -> None:
         self.logout_requested.emit()
