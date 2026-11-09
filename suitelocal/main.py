@@ -1,6 +1,9 @@
 import argparse
+import os
 import sys
+import tempfile
 from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
 from typing import Protocol
 
@@ -11,7 +14,9 @@ from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository, SaleRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
+from suitelocal.infrastructure.sri._xml import schema_errors
 from suitelocal.infrastructure.sri.certificate_store import CertificateStore
+from suitelocal.infrastructure.sri.invoice_xml import XSD_PATH
 from suitelocal.ui.shell import AppShell
 from suitelocal.ui.theme.fonts import load_inter_font
 from suitelocal.ui.theme.manager import apply_saved_theme
@@ -26,6 +31,19 @@ def certificate_stores(data_directory: Path) -> Callable[[int], CertificateStore
     return store_for
 
 
+def smoke_test() -> int:
+    """Start everything the app needs except its windows, then report 0 (used on the built exe)."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    with tempfile.TemporaryDirectory(prefix="suitelocal-smoke-") as directory:
+        database = Database(Path(directory) / "suitelocal.db")
+        database.initialize()
+        # Fails if the bundled XSD files are missing; the empty document itself is invalid.
+        schema_errors(XSD_PATH, b"<factura/>")
+        _application = QApplication.instance() or QApplication(sys.argv)
+        import_module("suitelocal.ui.login")  # the real start-up imports it lazily
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="SuiteLocal - sistema de gestión offline")
     parser.add_argument(
@@ -33,7 +51,14 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Ruta de la base SQLite que se desea abrir.",
     )
+    parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help="Verifica el arranque (base temporal, esquema SRI, Qt) y sale sin mostrar ventanas.",
+    )
     arguments = parser.parse_args(argv)
+    if arguments.smoke_test:
+        return smoke_test()
     data_directory = Path.home() / "AppData" / "Local" / "SuiteLocal"
     database_path = arguments.database or data_directory / "suitelocal.db"
     database = Database(database_path)

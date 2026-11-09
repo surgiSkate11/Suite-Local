@@ -31,6 +31,32 @@ En PowerShell, desde la carpeta del proyecto:
 python -m pip install -e .
 ```
 
+## Instalador para Windows
+
+El dueño del negocio no necesita instalar Python: recibe un instalador o un zip y lo abre con doble clic.
+
+**Generarlo** (en PowerShell, desde la carpeta del proyecto, con `python -m pip install -e ".[dev]"` hecho antes):
+
+```powershell
+.\packaging\build.ps1
+```
+
+El script limpia `build\` y `dist\`, ejecuta PyInstaller y verifica que exista `dist\SuiteLocal\SuiteLocal.exe`.
+Después:
+
+- Si [Inno Setup 6](https://jrsoftware.org/isinfo.php) está instalado, compila `dist\SuiteLocal-Setup.exe`.
+- Si no, deja `dist\SuiteLocal.zip` como alternativa.
+
+**Instalarlo** (el dueño):
+
+1. Doble clic en `SuiteLocal-Setup.exe` (no pide permisos de administrador; se instala en `%LOCALAPPDATA%\Programs\SuiteLocal`) y seguir el asistente. Crea accesos directos en el menú Inicio y, si se marca, en el escritorio.
+   Con el zip: descomprimirlo y abrir `SuiteLocal\SuiteLocal.exe`.
+2. Abrir SuiteLocal desde el acceso directo.
+
+Los datos (base, respaldos y certificados) viven en `%LOCALAPPDATA%\SuiteLocal`; desinstalar la aplicación **no** los borra.
+
+**Comprobar un build**: `.\dist\SuiteLocal\SuiteLocal.exe --smoke-test` arranca sin ventanas, con una base temporal, y termina con código 0.
+
 ## Uso
 
 ```powershell
