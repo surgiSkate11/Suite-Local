@@ -2,11 +2,13 @@ import sqlite3
 from collections.abc import Sequence
 
 from suitelocal.domain.auth import Session
+from suitelocal.domain.business import charges_iva
 from suitelocal.domain.models import Payment, Sale, SaleItem
 from suitelocal.domain.policies import require_owner
 from suitelocal.domain.tables import ComandaLine, OpenOrder, Table, TableError, TableStatus
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import SaleRepository
+from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.infrastructure.tables_repository import TablesRepository
 
 _ORDER_CHANGED = "La cuenta cambió mientras se cobraba. Revisá la cuenta y volvé a cobrar."
@@ -26,6 +28,7 @@ class TablesService:
     def __init__(self, database: Database) -> None:
         self.tables = TablesRepository(database)
         self.sales = SaleRepository(database)
+        self.settings = BusinessSettingsRepository(database)
 
     def create_table(self, session: Session, name: str, zone: str | None = None) -> Table:
         require_owner(session)
@@ -67,6 +70,15 @@ class TablesService:
     def cancel(self, session: Session, order_id: int) -> None:
         self.tables.cancel(session.user.business_id, order_id)
 
+    def sale_for(self, session: Session, order: OpenOrder, payments: Sequence[Payment]) -> Sale:
+        """The sale an order becomes: the business regime decides whether its lines carry IVA."""
+        regime = self.settings.get(session.user.business_id).tax_regime
+        return Sale(
+            order.sale_items(charges_iva(regime)),
+            sum(payment.amount_cents for payment in payments),
+            tuple(payments),
+        )
+
     def charge(
         self,
         session: Session,
@@ -83,11 +95,7 @@ class TablesService:
         """
         business_id = session.user.business_id
         order = self.tables.get_order(business_id, order_id)
-        sale = Sale(
-            order.sale_items(),
-            sum(payment.amount_cents for payment in payments),
-            tuple(payments),
-        )
+        sale = self.sale_for(session, order, payments)
         charged = _billable_lines(order.sale_items())
 
         def close_order(connection: sqlite3.Connection, sale_id: int) -> None:

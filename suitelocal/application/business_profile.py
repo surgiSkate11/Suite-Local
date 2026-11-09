@@ -79,6 +79,7 @@ class BusinessProfileService:
         receipt_footer: str | None = None,
         receipt_paper_mm: int | None = None,
         printer_name: str | None = None,
+        print_on_charge: bool | None = None,
     ) -> BusinessSettings:
         """Change only the given profile fields; changing the type never applies its template."""
         require_owner(session)
@@ -94,6 +95,7 @@ class BusinessProfileService:
             receipt_footer=receipt_footer,
             receipt_paper_mm=receipt_paper_mm,
             printer_name=printer_name,
+            print_on_charge=print_on_charge,
         )
 
     def update_einvoice(

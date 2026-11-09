@@ -167,9 +167,12 @@ class PaymentDialog(QDialog):
         session: Session | None = None,
         customer_dialog_factory: CustomerDialogFactory = CustomerDialog,
         customer: Customer | None = None,
+        print_by_default: bool = True,
     ) -> None:
         super().__init__(parent)
         self.total_cents = total_cents
+        # The business setting that decides the initial state of the print switch.
+        self.print_by_default = print_by_default
         self.currency_symbol = currency_symbol
         self.decimal_separator = decimal_separator
         self.payments: tuple[Payment, ...] = ()
@@ -424,7 +427,7 @@ class PaymentDialog(QDialog):
         layout.addWidget(change_box)
 
         self.print_switch = SwitchButton("Imprimir ticket al confirmar")
-        self.print_switch.setChecked(True)
+        self.print_switch.setChecked(self.print_by_default)
         layout.addWidget(self.print_switch)
         layout.addStretch()
 

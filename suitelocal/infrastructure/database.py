@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS business_settings (
     ,emission_point TEXT NOT NULL DEFAULT '001'
     ,obligado_contabilidad INTEGER NOT NULL DEFAULT 0 CHECK (obligado_contabilidad IN (0, 1))
     ,trade_name TEXT NOT NULL DEFAULT ''
+    ,print_on_charge INTEGER NOT NULL DEFAULT 1 CHECK (print_on_charge IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -355,6 +356,7 @@ def _migrate_settings(connection: sqlite3.Connection) -> None:
             "obligado_contabilidad INTEGER NOT NULL DEFAULT 0 "
             "CHECK (obligado_contabilidad IN (0, 1))",
             "trade_name TEXT NOT NULL DEFAULT ''",
+            "print_on_charge INTEGER NOT NULL DEFAULT 1 CHECK (print_on_charge IN (0, 1))",
         ),
     )
     if "tax_regime" in added:

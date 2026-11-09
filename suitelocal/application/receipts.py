@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 
 from suitelocal.domain.auth import Session
-from suitelocal.domain.business import SALES_NOTE_REGIME, TAX_REGIMES
+from suitelocal.domain.business import SALES_NOTE_REGIME, TAX_REGIMES, charges_iva
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 
@@ -63,6 +63,8 @@ class Receipt:
     change_cents: int
     legend: str = RECEIPT_LEGEND
     sales_note_number: str | None = None
+    # False for the regimes that sell without IVA: the ticket then shows no IVA at all.
+    charges_iva: bool = True
 
 
 class ReceiptService:
@@ -154,4 +156,5 @@ class ReceiptService:
             sales_note_number=(
                 sale["sales_note_number"] if business.tax_regime == SALES_NOTE_REGIME else None
             ),
+            charges_iva=charges_iva(business.tax_regime),
         )

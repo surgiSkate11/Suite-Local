@@ -189,6 +189,7 @@ class SettingsWidget(QWidget):
         for width in RECEIPT_PAPER_WIDTHS_MM:
             self.receipt_paper.addItem(f"{width} mm", width)
         self.printer = _limited(QComboBox())
+        self.print_on_charge = QCheckBox("Imprimir comprobante al cobrar")
         self.regime.currentIndexChanged.connect(self._update_ruc_hint)
         for field in (self.name, self.ruc, self.address, self.phone, self.receipt_footer):
             field.returnPressed.connect(self.save)
@@ -285,6 +286,13 @@ class SettingsWidget(QWidget):
         form.addRow("Ancho del papel del ticket:", self.receipt_paper)
         form.addRow("Impresora de tickets:", self.printer)
         layout.addLayout(form)
+        layout.addWidget(self.print_on_charge)
+        layout.addWidget(
+            _hint(
+                "Define si el interruptor «Imprimir ticket» de la caja empieza encendido. "
+                "Siempre se puede reimprimir con Ctrl+P."
+            )
+        )
         return card
 
     def _build_einvoice_card(self) -> QFrame:
@@ -438,6 +446,7 @@ class SettingsWidget(QWidget):
             max(self.receipt_paper.findData(current.receipt_paper_mm), 0)
         )
         self._load_printers(current.printer_name)
+        self.print_on_charge.setChecked(current.print_on_charge)
         self._update_ruc_hint()
         self.einvoice_card.setVisible(
             self.session.is_owner and issues_electronic_invoices(current.tax_regime)
@@ -509,6 +518,7 @@ class SettingsWidget(QWidget):
                 receipt_footer=self.receipt_footer.text(),
                 receipt_paper_mm=self.receipt_paper.currentData(),
                 printer_name=self.printer.currentData(),
+                print_on_charge=self.print_on_charge.isChecked(),
             )
         except (ValueError, PermissionError) as error:
             self.message.show_error(str(error))
@@ -545,6 +555,7 @@ class SettingsWidget(QWidget):
             receipt_footer=before.receipt_footer,
             receipt_paper_mm=before.receipt_paper_mm,
             printer_name=before.printer_name,
+            print_on_charge=before.print_on_charge,
         )
 
     def apply_template(self) -> None:

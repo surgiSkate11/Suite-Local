@@ -168,7 +168,9 @@ def test_table_has_category_iva_and_margin_columns(env):
 
 
 def test_margin_is_the_price_base_without_iva_minus_the_cost(env):
-    database, owner, _, categories, _ = env
+    database, owner, _, categories, profile = env
+    # The margin works on the base, which only differs from the price when IVA is charged.
+    profile.update_profile(owner, tax_regime="general", ruc="1790012345001")
     bebidas = categories.create(owner, "Bebidas")
     products = ProductRepository(database)
     # 1.15 at 15 %: base 1.00, so margin 1.00 - 0.60 = 0.40.
@@ -193,7 +195,7 @@ def test_margin_is_the_price_base_without_iva_minus_the_cost(env):
 
 def test_money_follows_the_business_decimal_separator_and_symbol(env):
     database, owner, _, _, profile = env
-    profile.update_profile(owner, decimal_separator=".")
+    profile.update_profile(owner, decimal_separator=".", tax_regime="general", ruc="1790012345001")
     ProductRepository(database).add(
         "A-1", "Cemento", 123_450, 2, cost_cents=100_000, tax_rate_basis_points=500
     )

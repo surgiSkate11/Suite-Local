@@ -69,6 +69,8 @@ def pos(qapp, tmp_path):
         products,
         SaleRepository(database),
         ("cash", "transfer", "card"),
+        # The general regime charges IVA, which these tests read from the totals.
+        tax_regime="general",
         session=owner_session(database),
     )
     yield widget
@@ -207,8 +209,8 @@ def test_scanner_is_refocused_after_each_add(pos):
 # -- quick keys ---------------------------------------------------------------------------
 
 
-def test_quick_keys_show_the_first_six_products_with_name_and_price(pos):
-    assert len(pos.quick_buttons) == 6
+def test_quick_keys_show_the_first_four_products_with_name_and_price(pos):
+    assert len(pos.quick_buttons) == 4
     first = pos.quick_buttons[0]
     assert "Arroz" in first.property("productName")
     assert first.property("priceText") == "$ 2,50"
@@ -747,6 +749,7 @@ def business_settings(**changes) -> BusinessSettings:
         "currency_symbol": "$",
         "low_stock_threshold": 3,
         "enabled_payment_methods": ("cash", "transfer"),
+        "tax_regime": "general",
     }
     return BusinessSettings(**{**values, **changes})
 

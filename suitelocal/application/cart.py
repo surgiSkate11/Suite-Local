@@ -1,13 +1,19 @@
 from dataclasses import dataclass
 
 from suitelocal.domain.models import Payment, Product, Sale, SaleItem
-from suitelocal.domain.tax import split_tax_included, tax_breakdown
+from suitelocal.domain.tax import effective_tax_rate, split_tax_included, tax_breakdown
 
 
 @dataclass(slots=True)
 class CartLine:
     product: Product
     quantity: int = 1
+    # False when the business charges no IVA: the line is then billed at rate 0.
+    charges_iva: bool = True
+
+    @property
+    def tax_rate_basis_points(self) -> int:
+        return effective_tax_rate(self.product.tax_rate_basis_points, charges_iva=self.charges_iva)
 
     @property
     def total_cents(self) -> int:
@@ -15,18 +21,30 @@ class CartLine:
 
     @property
     def base_cents(self) -> int:
-        return split_tax_included(self.total_cents, self.product.tax_rate_basis_points)[0]
+        return split_tax_included(self.total_cents, self.tax_rate_basis_points)[0]
 
     @property
     def tax_cents(self) -> int:
-        return split_tax_included(self.total_cents, self.product.tax_rate_basis_points)[1]
+        return split_tax_included(self.total_cents, self.tax_rate_basis_points)[1]
 
 
 class Cart:
     """Prices already include IVA, so the total is the sum of the lines and nothing is added."""
 
-    def __init__(self) -> None:
+    def __init__(self, charges_iva: bool = True) -> None:
         self._lines: dict[int, CartLine] = {}
+        self._charges_iva = charges_iva
+
+    @property
+    def charges_iva(self) -> bool:
+        """False when the business charges no IVA: every line is billed at rate 0."""
+        return self._charges_iva
+
+    @charges_iva.setter
+    def charges_iva(self, value: bool) -> None:
+        self._charges_iva = value
+        for line in self._lines.values():
+            line.charges_iva = value
 
     @property
     def lines(self) -> tuple[CartLine, ...]:
@@ -55,7 +73,7 @@ class Cart:
     def tax_breakdown(self) -> tuple[tuple[int, int, int], ...]:
         """(rate in basis points, taxable base, IVA) per rate in use, highest rate first."""
         return tax_breakdown(
-            (line.total_cents, line.product.tax_rate_basis_points) for line in self._lines.values()
+            (line.total_cents, line.tax_rate_basis_points) for line in self._lines.values()
         )
 
     def add(self, product: Product) -> None:
@@ -66,7 +84,7 @@ class Cart:
         if line:
             line.quantity = next_quantity
         else:
-            self._lines[product.id] = CartLine(product)
+            self._lines[product.id] = CartLine(product, charges_iva=self._charges_iva)
 
     def remove(self, product_id: int) -> None:
         self._lines.pop(product_id, None)
@@ -95,7 +113,7 @@ class Cart:
                     line.product.name,
                     line.quantity,
                     line.product.price_cents,
-                    line.product.tax_rate_basis_points,
+                    line.tax_rate_basis_points,
                 )
                 for line in self._lines.values()
             ),

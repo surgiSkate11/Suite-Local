@@ -180,6 +180,7 @@ class AppShell(QMainWindow):
             ride_output=self.ride_output,
             einvoicing_enabled=einvoicing,
             customers=customers,
+            print_on_charge=business.print_on_charge,
         )
         self.pages = QStackedWidget()
         self._add_page(self.dashboard)
@@ -202,6 +203,7 @@ class AppShell(QMainWindow):
                 ride_output=self.ride_output,
                 einvoicing_enabled=einvoicing,
                 customers=customers,
+                print_on_charge=business.print_on_charge,
             )
             operation.append(("Mesas", self._add_page(self.tables_widget), "table"))
         self.customers_widget = CustomersWidget(
@@ -533,6 +535,7 @@ class AppShell(QMainWindow):
         if self.tables_widget is not None:
             self.tables_widget.currency_symbol = business.currency_symbol
             self.tables_widget.decimal_separator = business.decimal_separator
+            self.tables_widget.print_on_charge = business.print_on_charge
             self.tables_widget.einvoicing_enabled = self._einvoicing_enabled()
             self.tables_widget.enabled_payment_methods = business.enabled_payment_methods or (
                 "cash",

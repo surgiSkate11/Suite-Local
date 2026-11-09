@@ -71,7 +71,7 @@ class BusinessSettingsRepository:
                 s.business_type, s.enabled_modules, s.decimal_separator, s.address, s.phone,
                 s.receipt_footer, s.receipt_paper_mm, s.printer_name, s.einvoice_enabled,
                 s.sri_environment, s.establishment, s.emission_point, s.obligado_contabilidad,
-                s.trade_name
+                s.trade_name, s.print_on_charge
                 FROM businesses b
                 LEFT JOIN business_settings s ON s.business_id = b.id
                 WHERE b.id = ?
@@ -106,6 +106,8 @@ class BusinessSettingsRepository:
             row["emission_point"] or DEFAULT_SERIES_CODE,
             bool(row["obligado_contabilidad"]),
             row["trade_name"] or "",
+            # NULL only when the business has no settings row yet: printing starts on.
+            row["print_on_charge"] is None or bool(row["print_on_charge"]),
         )
 
     def update(
@@ -173,6 +175,7 @@ class BusinessSettingsRepository:
         receipt_footer: str | None = None,
         receipt_paper_mm: int | None = None,
         printer_name: str | None = None,
+        print_on_charge: bool | None = None,
     ) -> BusinessSettings:
         """Change the given profile fields (None keeps the current value) in one transaction.
 
@@ -192,6 +195,7 @@ class BusinessSettingsRepository:
                 receipt_footer=receipt_footer,
                 receipt_paper_mm=receipt_paper_mm,
                 printer_name=printer_name,
+                print_on_charge=print_on_charge,
             )
         return self.get(business_id)
 
@@ -210,6 +214,7 @@ class BusinessSettingsRepository:
         receipt_footer: str | None = None,
         receipt_paper_mm: int | None = None,
         printer_name: str | None = None,
+        print_on_charge: bool | None = None,
     ) -> None:
         """Validate and write profile fields on the caller's connection and transaction."""
         current = self._load(connection, business_id)
@@ -256,6 +261,7 @@ class BusinessSettingsRepository:
             if printer_name is None
             else normalize_text(printer_name, "El nombre de la impresora", PRINTER_NAME_MAX_LENGTH)
         )
+        new_print = current.print_on_charge if print_on_charge is None else print_on_charge
         connection.execute(
             "INSERT OR IGNORE INTO business_settings (business_id) VALUES (?)", (business_id,)
         )
@@ -264,7 +270,7 @@ class BusinessSettingsRepository:
             UPDATE business_settings
             SET ruc = ?, tax_regime = ?, business_type = ?, enabled_modules = ?,
                 decimal_separator = ?, address = ?, phone = ?, receipt_footer = ?,
-                receipt_paper_mm = ?, printer_name = ?
+                receipt_paper_mm = ?, printer_name = ?, print_on_charge = ?
             WHERE business_id = ?
             """,
             (
@@ -278,6 +284,7 @@ class BusinessSettingsRepository:
                 new_footer,
                 new_paper,
                 new_printer,
+                int(new_print),
                 business_id,
             ),
         )

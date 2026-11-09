@@ -270,9 +270,12 @@ class TablesWidget(QWidget):
         einvoicing_enabled: bool = False,
         customers: CustomerService | None = None,
         customer_dialog_factory: CustomerDialogFactory = CustomerDialog,
+        print_on_charge: bool = True,
     ) -> None:
         super().__init__(parent)
         self.service = service
+        # Initial state of the print switch in the charge dialog.
+        self.print_on_charge = print_on_charge
         self.catalog = catalog
         self.session = session
         self.currency_symbol = currency_symbol
@@ -521,12 +524,8 @@ class TablesWidget(QWidget):
         return button
 
     def _sale_for(self, order: OpenOrder, payments: Sequence[Payment]) -> Sale:
-        """The sale the domain would register; totals and tax are always computed by it."""
-        return Sale(
-            order.sale_items(),
-            sum(payment.amount_cents for payment in payments),
-            tuple(payments),
-        )
+        """The sale the charge would register; totals and tax are always computed by it."""
+        return self.service.sale_for(self.session, order, payments)
 
     def _covering_sale(self, order: OpenOrder) -> Sale:
         return self._sale_for(order, (Payment("cash", _COVERS_ANY_TOTAL_CENTS),))
@@ -755,6 +754,7 @@ class TablesWidget(QWidget):
             enabled_methods=self.enabled_payment_methods,
             sale_label=table_name,
             total_note=self._tax_note(order),
+            print_by_default=self.print_on_charge,
             validate=validate,
             parent=self,
             **invoicing,

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from suitelocal.domain.models import SaleItem
+from suitelocal.domain.tax import effective_tax_rate
 
 OPENED_AT_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -68,14 +69,15 @@ class OpenOrder:
         opened = datetime.strptime(self.opened_at, OPENED_AT_FORMAT)
         return max(0, int((now - opened).total_seconds() // 60))
 
-    def sale_items(self) -> tuple[SaleItem, ...]:
+    def sale_items(self, charges_iva: bool = True) -> tuple[SaleItem, ...]:
+        """The lines as sale items; without IVA every line is billed at rate 0."""
         return tuple(
             SaleItem(
                 line.product_id,
                 line.product_name,
                 line.quantity,
                 line.unit_price_cents,
-                line.tax_rate_basis_points,
+                effective_tax_rate(line.tax_rate_basis_points, charges_iva=charges_iva),
             )
             for line in self.lines
         )

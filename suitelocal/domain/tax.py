@@ -14,6 +14,14 @@ def validate_tax_rate(rate_basis_points: int) -> int:
     return rate_basis_points
 
 
+def effective_tax_rate(rate_basis_points: int, *, charges_iva: bool) -> int:
+    """The rate a sale line is billed at: the product's own, or 0 when the business charges no IVA.
+
+    The price stays final either way; the product keeps its stored rate for when that changes.
+    """
+    return rate_basis_points if charges_iva else 0
+
+
 def split_tax_included(total_cents: int, rate_basis_points: int) -> tuple[int, int]:
     """Split a final price into (taxable base, IVA); base + IVA always equals the total."""
     validate_tax_rate(rate_basis_points)

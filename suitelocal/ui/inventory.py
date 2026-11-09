@@ -17,8 +17,9 @@ from PySide6.QtWidgets import (
 from suitelocal.application.categories import CategoryService
 from suitelocal.application.inventory import InventoryService
 from suitelocal.domain.auth import Session
+from suitelocal.domain.business import charges_iva
 from suitelocal.domain.models import Product
-from suitelocal.domain.tax import TAX_RATES_BASIS_POINTS, split_tax_included
+from suitelocal.domain.tax import TAX_RATES_BASIS_POINTS, effective_tax_rate, split_tax_included
 from suitelocal.infrastructure.repositories import CategoryRepository, ProductRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.ui.components import (
@@ -38,6 +39,7 @@ NO_VALUE = "—"
 NO_CATEGORY = "Sin categoría"
 TABLE_HEADERS = ["Código", "Nombre", "Categoría", "Precio", "IVA", "Margen", "Stock", "Estado"]
 STATUS_COLUMN = len(TABLE_HEADERS) - 1
+TAX_COLUMN = TABLE_HEADERS.index("IVA")
 
 
 def rate_label(rate_basis_points: int) -> str:
@@ -86,6 +88,7 @@ class InventoryWidget(QWidget):
         self.search.textChanged.connect(self.refresh)
 
         form = QFormLayout()
+        self.form = form
         form.addRow("Código:", self.code)
         form.addRow("Nombre:", self.name)
         form.addRow("Categoría:", self.category)
@@ -146,7 +149,21 @@ class InventoryWidget(QWidget):
         layout.addWidget(self.drawer)
         self._fill_categories(None)
         self._select_rate(self.business.tax_rate_basis_points)
+        self._apply_regime()
         self.refresh()
+
+    def _apply_regime(self) -> None:
+        """Without IVA the rate field and column have nothing to say, so they are hidden.
+
+        The products keep their stored rates; the data stays in the hidden column.
+        """
+        charges = charges_iva(self.business.tax_regime)
+        for field in (self.tax_rate, self.form.labelForField(self.tax_rate)):
+            field.setVisible(charges)
+        price_label = self.form.labelForField(self.price)
+        if isinstance(price_label, QLabel):
+            price_label.setText("Precio (con IVA):" if charges else "Precio:")
+        self.table.setColumnHidden(TAX_COLUMN, not charges)
 
     def refresh_profile(self) -> None:
         """Reload the business settings and categories after they changed elsewhere."""
@@ -155,6 +172,7 @@ class InventoryWidget(QWidget):
         self._fill_categories(self.category.currentData())
         if self.editing_id is None:
             self._select_rate(self.business.tax_rate_basis_points)
+        self._apply_regime()
         self.refresh()
 
     def _fill_categories(self, selected_id: int | None) -> None:
@@ -244,12 +262,14 @@ class InventoryWidget(QWidget):
     def _category_name(names: dict[int, str], category_id: int | None) -> str:
         return NO_VALUE if category_id is None else names.get(category_id, NO_VALUE)
 
-    @staticmethod
-    def _margin_text(product: Product, symbol: str, separator: str) -> str:
+    def _margin_text(self, product: Product, symbol: str, separator: str) -> str:
         """Price base without IVA minus the cost; a dash when the cost is unknown."""
         if product.cost_cents is None:
             return NO_VALUE
-        base, _tax = split_tax_included(product.price_cents, product.tax_rate_basis_points)
+        rate = effective_tax_rate(
+            product.tax_rate_basis_points, charges_iva=charges_iva(self.business.tax_regime)
+        )
+        base, _tax = split_tax_included(product.price_cents, rate)
         return format_money(base - product.cost_cents, symbol, separator)
 
     def _plain_amount(self, cents: int) -> str:

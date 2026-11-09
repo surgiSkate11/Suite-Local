@@ -115,10 +115,17 @@ def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
         border: 1px solid {tokens.border_input};
     }}
     QPushButton[variant="secondary"]:hover {{ background: {tokens.brand_50}; }}
+    QPushButton[variant="secondary"]:disabled {{
+        background: {tokens.sunken};
+        color: {tokens.text_400};
+        border: 1px solid {tokens.border};
+    }}
     QPushButton[variant="danger"] {{ background: {tokens.danger}; color: {tokens.on_danger}; }}
     QPushButton[variant="danger"]:hover {{ background: {tokens.text_900}; }}
+    QPushButton[variant="danger"]:disabled {{ background: {tokens.border}; color: {tokens.text_400}; }}
     QPushButton[variant="ghost"] {{ background: transparent; color: {tokens.text_700}; }}
     QPushButton[variant="ghost"]:hover {{ background: {tokens.sunken}; }}
+    QPushButton[variant="ghost"]:disabled {{ background: transparent; color: {tokens.text_400}; }}
     QPushButton[variant="champagne"] {{
         background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
                                     stop: 0 {tokens.champagne_100}, stop: 1 {tokens.champagne_500});

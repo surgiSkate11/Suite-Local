@@ -13,6 +13,8 @@ TAX_REGIMES = {
 }
 DEFAULT_TAX_REGIME = "sin_registro"
 _INVOICING_REGIMES = frozenset({"rimpe_emprendedor", "general"})
+# Regimes whose sales carry no IVA: the price stays final and the whole of it is the base.
+_NO_IVA_REGIMES = frozenset({"sin_registro", "rimpe_popular"})
 
 BUSINESS_TYPES = {
     "tienda": "Tienda",
@@ -78,6 +80,8 @@ class BusinessSettings:
     emission_point: str = DEFAULT_SERIES_CODE
     obligado_contabilidad: bool = False
     trade_name: str = ""
+    # Initial state of the "Imprimir ticket" switch when charging.
+    print_on_charge: bool = True
 
     @property
     def tax_rate_percent(self) -> float:
@@ -130,6 +134,11 @@ def requires_ruc(tax_regime: str) -> bool:
 def issues_electronic_invoices(tax_regime: str) -> bool:
     """True for the regimes that must issue SRI electronic invoices."""
     return validate_tax_regime(tax_regime) in _INVOICING_REGIMES
+
+
+def charges_iva(tax_regime: str) -> bool:
+    """False for the regimes that sell without IVA (no SRI registration, RIMPE popular)."""
+    return tax_regime not in _NO_IVA_REGIMES
 
 
 def validate_business_type(business_type: str) -> str:

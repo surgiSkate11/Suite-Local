@@ -288,17 +288,19 @@ def render_receipt_html(receipt: Receipt, decimal_separator: str, paper_mm: int)
     parts.append(RULE)
     for line in receipt.lines:
         parts.append(f"<div>{escape_html(line.name)}</div>")
-        detail = (
-            f"{line.quantity} × {money(line.unit_price_cents)} "
-            f"(IVA {_percent(line.tax_rate_basis_points)})"
-        )
+        detail = f"{line.quantity} × {money(line.unit_price_cents)}"
+        if receipt.charges_iva:
+            detail += f" (IVA {_percent(line.tax_rate_basis_points)})"
         parts.append(pair(detail, money(line.total_cents)))
     parts.append(RULE)
-    parts.append(pair("Subtotal", money(receipt.subtotal_cents)))
-    for tax in receipt.taxes:
-        parts.append(pair(f"Base {_percent(tax.tax_rate_basis_points)}", money(tax.base_cents)))
-        if tax.tax_rate_basis_points:
-            parts.append(pair(f"IVA {_percent(tax.tax_rate_basis_points)}", money(tax.tax_cents)))
+    if receipt.charges_iva:
+        parts.append(pair("Subtotal", money(receipt.subtotal_cents)))
+        for tax in receipt.taxes:
+            parts.append(pair(f"Base {_percent(tax.tax_rate_basis_points)}", money(tax.base_cents)))
+            if tax.tax_rate_basis_points:
+                parts.append(
+                    pair(f"IVA {_percent(tax.tax_rate_basis_points)}", money(tax.tax_cents))
+                )
     parts.append(pair("<b>TOTAL</b>", f"<b>{money(receipt.total_cents)}</b>", "font-size: 1.2em;"))
     parts.append(RULE)
     for payment in receipt.payments:

@@ -29,6 +29,7 @@ from suitelocal.domain.business import (
     SALES_NOTE_MAX_LENGTH,
     SALES_NOTE_REGIME,
     BusinessSettings,
+    charges_iva,
     issues_electronic_invoices,
 )
 from suitelocal.domain.customers import Customer
@@ -73,7 +74,11 @@ ICONS.setdefault(
 PaymentDialogFactory = Callable[..., PaymentDialog]
 
 
-QUICK_KEY_COUNT = 6
+QUICK_KEY_COUNT = 4
+# The ticket list always leaves room for this many lines; the checkout below it scrolls.
+VISIBLE_TICKET_LINES = 5
+TICKET_LINE_HEIGHT = 64
+EMPTY_TICKET_HEIGHT = 110
 TICKET_COLUMN_WIDTH = 440
 TICKET_COLUMN_NARROW_WIDTH = 392
 COMPACT_BELOW_WIDTH = 900
@@ -103,8 +108,6 @@ DIGIT_KEYS = {
     Qt.Key.Key_2: 2,
     Qt.Key.Key_3: 3,
     Qt.Key.Key_4: 4,
-    Qt.Key.Key_5: 5,
-    Qt.Key.Key_6: 6,
 }
 
 
@@ -165,6 +168,7 @@ class PosWidget(QWidget):
         einvoicing_enabled: bool = False,
         customers: CustomerService | None = None,
         customer_dialog_factory: CustomerDialogFactory = CustomerDialog,
+        print_on_charge: bool = True,
     ) -> None:
         super().__init__(parent)
         self.products = products
@@ -174,6 +178,8 @@ class PosWidget(QWidget):
         self.receipts = receipts
         self.receipt_output = receipt_output
         self.tax_regime = tax_regime
+        # Initial state of the "Imprimir ticket" switch for every new sale.
+        self.print_on_charge = print_on_charge
         self.last_sale_id: int | None = None
         self.currency_symbol = currency_symbol
         self.decimal_separator = decimal_separator
@@ -212,7 +218,7 @@ class PosWidget(QWidget):
                 self.notification.emit,
             )
         self.einvoicing_enabled = einvoicing_enabled
-        self.cart = Cart()
+        self.cart = Cart(charges_iva=charges_iva(tax_regime))
         self.quick_key_delay_ms = 400
         self.ticket_lines: list[TicketLine] = []
         self._selected_id: int | None = None
@@ -395,16 +401,25 @@ class PosWidget(QWidget):
         head.addWidget(self.customer_label)
         layout.addLayout(head)
 
+        # Lines and checkout share one scroll area, so a long ticket or a tall checkout never
+        # squashes the lines; only the charge button stays pinned below it.
         self.lines_scroll = QScrollArea()
         self.lines_scroll.setObjectName("ticketLines")
         self.lines_scroll.viewport().setObjectName("ticketLinesViewport")
         self.lines_scroll.setWidgetResizable(True)
         self.lines_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.lines_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.lines_scroll.setMinimumHeight(110)
+        self.lines_scroll.setMinimumHeight(VISIBLE_TICKET_LINES * TICKET_LINE_HEIGHT)
         host = QWidget()
         host.setObjectName("ticketLinesHost")
-        self.lines_layout = QVBoxLayout(host)
+        # Minimum never lets the layout squeeze the content below its natural height: when the
+        # viewport is shorter the area scrolls instead.
+        host.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
+        lines_list = QWidget()
+        self.lines_layout = QVBoxLayout(lines_list)
         self.lines_layout.setContentsMargins(10, 0, 10, 0)
         self.lines_layout.setSpacing(0)
         self.ticket_empty = _label(
@@ -412,14 +427,17 @@ class PosWidget(QWidget):
         )
         self.ticket_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.ticket_empty.setWordWrap(True)
+        self.ticket_empty.setMinimumHeight(EMPTY_TICKET_HEIGHT)
         self.lines_layout.addWidget(self.ticket_empty)
         self.lines_layout.addStretch()
+        host_layout.addWidget(lines_list, 1)
+        host_layout.addWidget(self._build_total_band())
+        host_layout.addWidget(self._build_checkout())
+        host_layout.addWidget(self._build_secondary_actions())
         self.lines_scroll.setWidget(host)
         layout.addWidget(self.lines_scroll, 1)
-
-        layout.addWidget(self._build_total_band())
-        layout.addWidget(self._build_checkout())
-        layout.addWidget(self._build_actions())
+        layout.addWidget(self._build_charge_bar())
+        self._refresh_charge_label()
         return container
 
     def _build_total_band(self) -> QWidget:
@@ -524,7 +542,7 @@ class PosWidget(QWidget):
         layout.addWidget(self.sales_note_edit)
         self.print_switch = SwitchButton("Imprimir ticket")
         self.print_switch.setObjectName("printSwitch")
-        self.print_switch.setChecked(True)
+        self.print_switch.setChecked(self.print_on_charge)
         self.print_switch.setVisible(self.can_print_ticket)
         self.print_switch.toggled.connect(self._refresh_charge_label)
         self.buyer_section = BuyerSection()
@@ -542,11 +560,10 @@ class PosWidget(QWidget):
         self._on_method_selected(self.method_control.current or "")
         return wrapper
 
-    def _build_actions(self) -> QWidget:
+    def _build_charge_bar(self) -> QWidget:
         wrapper = QWidget()
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(12, 10, 12, 12)
-        layout.setSpacing(6)
         self.charge_button = QPushButton()
         self.charge_button.setObjectName("chargeButton")
         set_variant(self.charge_button, "champagne")
@@ -555,6 +572,14 @@ class PosWidget(QWidget):
         self.charge_amount = QLabel(self._money(0))
         self.charge_hint = KeyHint("F4")
         _overlay_row(self.charge_button, self.charge_amount, self.charge_hint)
+        layout.addWidget(self.charge_button)
+        return wrapper
+
+    def _build_secondary_actions(self) -> QWidget:
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(12, 8, 12, 12)
+        layout.setSpacing(6)
         self.split_button = QPushButton("Dividir pago")
         self.split_button.setObjectName("splitButton")
         set_variant(self.split_button, "secondary")
@@ -569,10 +594,8 @@ class PosWidget(QWidget):
         self.reprint_button.clicked.connect(lambda: self.reprint_last_ticket())
         _overlay_row(self.reprint_button, KeyHint("Ctrl+P"))
         self.reprint_button.setVisible(self.can_print_ticket)
-        layout.addWidget(self.charge_button)
         layout.addWidget(self.split_button)
         layout.addWidget(self.reprint_button)
-        self._refresh_charge_label()
         return wrapper
 
     def _refresh_charge_label(self, _checked: bool = False) -> None:
@@ -615,7 +638,7 @@ class PosWidget(QWidget):
         return super().eventFilter(watched, event)
 
     def _arm_quick_key(self, event: QKeyEvent) -> None:
-        """A lone 1-6 in the empty scanner becomes a quick key unless more keys follow.
+        """A lone 1-4 in the empty scanner becomes a quick key unless more keys follow.
 
         Barcodes and the ``3*`` prefix start with digits too, so the digit is typed normally and
         only counts as a quick key when it is still alone after a short pause.
@@ -709,6 +732,9 @@ class PosWidget(QWidget):
         self.enabled_modules = business.enabled_modules
         self.categories = tuple(categories)
         self.tax_regime = business.tax_regime
+        self.cart.charges_iva = charges_iva(business.tax_regime)
+        self.print_on_charge = business.print_on_charge
+        self.print_switch.setChecked(self.print_on_charge)
         self.einvoicing_enabled = business.einvoice_enabled and issues_electronic_invoices(
             business.tax_regime
         )
@@ -786,13 +812,14 @@ class PosWidget(QWidget):
         )
 
     def refresh_quick_keys(self) -> None:
-        """Quick keys 1-6 point at the first six products of the catalog (alphabetical)."""
+        """Quick keys 1-4 point at the first four products of the catalog; empty slots hide."""
         catalog = self.products.find_active("")[:QUICK_KEY_COUNT]
         self._quick_products = [*catalog, *[None] * (QUICK_KEY_COUNT - len(catalog))]
         for index, product in enumerate(self._quick_products):
             button = self.quick_buttons[index]
             button.setEnabled(product is not None)
-            name = product.name if product else "—"
+            button.setVisible(product is not None)
+            name = product.name if product else ""
             price = self._money(product.price_cents) if product else ""
             self._quick_names[index].setText(name)
             self._quick_prices[index].setText(price)
@@ -994,10 +1021,21 @@ class PosWidget(QWidget):
         self.total_label.setText(self._money(self.cart.grand_total_cents))
         self.subtotal_label.setText(f"Subtotal {self._money(self.cart.subtotal_cents)}")
         self.tax_label.setText(f"IVA incluido {self._money(self.cart.tax_cents)}")
+        # With no IVA the subtotal is the total, so neither detail has anything to add.
+        self.subtotal_label.setVisible(self.cart.charges_iva)
+        self.tax_label.setVisible(self.cart.charges_iva)
         item_count = sum(line.quantity for line in lines)
         self.cart_count.setText(f"{item_count} artículo{'s' if item_count != 1 else ''}")
         self.product_list.update_quantities(self._cart_quantities())
         self._refresh_checkout()
+        # The new line only has its place once the layout ran, so reveal it right after.
+        QTimer.singleShot(0, self, self._reveal_selected_line)
+
+    def _reveal_selected_line(self) -> None:
+        for widget in self.ticket_lines:
+            if widget.product_id == self._selected_id:
+                self.lines_scroll.ensureWidgetVisible(widget, 0, 0)
+                return
 
     # -- inline checkout ----------------------------------------------------------------
 
@@ -1174,6 +1212,7 @@ class PosWidget(QWidget):
         self.received_edit.clear()
         self.reference_edit.clear()
         self.sales_note_edit.clear()
+        self.print_switch.setChecked(self.print_on_charge)
         if self.customer_picker is not None:
             self.customer_picker.clear()
         self.buyer_section.reset()
@@ -1218,6 +1257,7 @@ class PosWidget(QWidget):
             enabled_methods=self.enabled_payment_methods,
             sale_label=self.sale_label,
             total_note=note,
+            print_by_default=self.print_on_charge,
             validate=self.cart.to_sale,
             parent=self,
             **invoicing,

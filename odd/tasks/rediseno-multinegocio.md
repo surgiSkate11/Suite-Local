@@ -42,7 +42,7 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - [x] T9b (S1, S8, S9) Pantalla de caja Atelier + Grafito + cobro (inline y diálogo para dividir) — worker + cierre inline — (commits siguientes; 309 tests)
 
 - [x] T10 (S14) Clientes: registro, búsqueda por cédula en el cobro, historial y exportación de ofertas — gentle-ai-worker
-- [ ] T11 (S15) IVA según régimen y ajuste de impresión por defecto — gentle-ai-worker, después del cierre de código
+- [x] T11 (S15) IVA según régimen y ajuste de impresión por defecto — gentle-ai-worker, después del cierre de código
 
 ## Log
 
@@ -93,3 +93,4 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - L45: T10 Clientes hecho (workers mw7yyxlt cortado, mw84yrju y mw86mufq): registro, cédula + Enter en el cobro, cliente guardado en la venta (también en Mesas, dentro de la misma transacción), comprador de la factura precargado, correo en infoAdicional y pantalla Clientes con CSV de ofertas para el dueño. 1316 tests. Decisiones del padre con permiso del usuario: se borraron los temporales y se deja la revisión trabada de 3a79f68.
 - L46: Cierre de código hecho (worker mw87typu-4-64se): venta por peso oculta, impresión en un hilo propio con datos planos, register() exige negocio y cajero, la factura reemitida usa la fecha nueva. 1333 tests. Capturas revisadas: el panel de cobro creció y aplasta el ticket, la tecla rápida vacía muestra "—", y en Clientes Editar y Desactivar están activos sin selección; van a T11.
 - L47: Commits del cierre de código: 5761bba y 4c73a4f (GGA aprobado). Usuario sobre T11: "hazlo desplazable, puedes quitar algunas teclas rápidas innecesarias, y sí habilita el editar y desactivar al seleccionar". T11 suma: panel de cobro desplazable, como máximo 4 teclas rápidas y sin casillas vacías, y Editar/Desactivar de Clientes habilitados solo con un cliente seleccionado.
+- L48: T11 hecha (worker mw8qot6q-1-2led): IVA según régimen con una sola función de tarifa efectiva, print_on_charge, cobro desplazable con Cobrar fijo, 4 teclas rápidas y estilo deshabilitado visible en Clientes. 1386 tests.

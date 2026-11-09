@@ -19,6 +19,7 @@ from suitelocal.domain.auth import Session
 from suitelocal.domain.models import Payment
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import ProductRepository
+from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.infrastructure.tables_repository import ensure_tables_schema
 from suitelocal.ui.tables import TablesWidget
 
@@ -58,6 +59,10 @@ class Env:
         self.owner = Session(auth.setup_owner("Café", "dueno", "Clave-segura-1", "Clave-segura-1"))
         self.cashier = Session(
             auth.create_cashier(self.owner, "cajero", "Clave-segura-2", "Clave-segura-2")
+        )
+        # The general regime charges IVA; a business without it bills every line at 0 %.
+        BusinessSettingsRepository(self.database).update_profile(
+            self.owner.user.business_id, tax_regime="general", ruc="1790012345001"
         )
         self.products = ProductRepository(self.database)
         self.coffee = self.products.add("C-1", "Café", 150, 10)
