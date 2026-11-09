@@ -46,7 +46,7 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 
 - [x] T10 (S14) Clientes: registro, búsqueda por cédula en el cobro, historial y exportación de ofertas — gentle-ai-worker
 - [x] T11 (S15) IVA según régimen y ajuste de impresión por defecto — gentle-ai-worker, después del cierre de código
-- [ ] T12 (S16) Fiado — gentle-ai-worker
+- [x] T12 (S16) Fiado — gentle-ai-worker
 - [x] T13 (S17) Instalador .exe — gentle-ai-worker, en paralelo con T12
 - [ ] T14 (S18) Respaldo automático e importación de productos — después de T12
 
@@ -102,3 +102,4 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - L48: T11 hecha (worker mw8qot6q-1-2led): IVA según régimen con una sola función de tarifa efectiva, print_on_charge, cobro desplazable con Cobrar fijo, 4 teclas rápidas y estilo deshabilitado visible en Clientes. 1386 tests.
 - L49: El usuario pidió "terminemos con lo q falta" y preguntó por el fiado, que no estaba incluido. Se agregan T12-T14. La prueba contra el SRI sigue pendiente del certificado .p12 del usuario.
 - L50: T13 hecha: de16cb0. Con permiso del usuario ("intala te doy el permiso") se instaló Inno Setup 6.7.3 solo para el usuario, vía winget (JRSoftware.InnoSetup, hash verificado). dist\SuiteLocal-Setup.exe (40 MB) verificado: instala en silencio, arranca con --smoke-test (exit 0) y se desinstala limpio.
+- L51: T12 Fiado hecho (workers mw9cr5u3 cortado + mw9nhhwi): módulo fiado, método credit con cliente obligatorio y límite, cuenta corriente con abonos, caja que excluye el fiado e incluye los abonos en efectivo, SRI código 01 y saldo en el ticket. La migración reconstruye sale_payments verificando fila por fila. 1461 tests.

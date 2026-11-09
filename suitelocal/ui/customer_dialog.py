@@ -1,6 +1,7 @@
 """Quick customer registration and edition: what the cashier asks at the counter."""
 
 from collections.abc import Callable
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -76,6 +77,10 @@ class CustomerDialog(QDialog):
         self.phone_edit = self._line_edit("Teléfono", "Teléfono (opcional)", PHONE_MAX_LENGTH)
         self.address_edit = self._line_edit("Dirección", "Dirección (opcional)", ADDRESS_MAX_LENGTH)
         self.email_edit = self._line_edit("Correo", "Correo (opcional)", EMAIL_MAX_LENGTH)
+        # Only a business that sells on credit has a credit limit to set.
+        self.credit_enabled = customers.credit_enabled(session)
+        self.limit_edit = self._line_edit("Límite de crédito", "Sin límite", 12)
+        self.limit_edit.setToolTip("Lo máximo que este cliente puede deber. Vacío: sin límite.")
         self.offers_check = QCheckBox("Acepta recibir ofertas")
         self.offers_check.setToolTip("Solo se puede aceptar si el cliente tiene un correo.")
         self.message = InlineMessage()
@@ -99,6 +104,8 @@ class CustomerDialog(QDialog):
         form.addRow("Dirección:", self.address_edit)
         form.addRow("Correo:", self.email_edit)
         form.addRow("", self.offers_check)
+        if self.credit_enabled:
+            form.addRow("Límite de crédito:", self.limit_edit)
         buttons = QHBoxLayout()
         buttons.addStretch()
         buttons.addWidget(self.cancel_button)
@@ -134,6 +141,9 @@ class CustomerDialog(QDialog):
         self.address_edit.setText(customer.address)
         self.email_edit.setText(customer.email)
         self.offers_check.setChecked(customer.accepts_offers)
+        if customer.credit_limit_cents is not None:
+            units, cents = divmod(customer.credit_limit_cents, 100)
+            self.limit_edit.setText(f"{units},{cents:02d}")
 
     def _sync_offers(self, _text: str = "") -> None:
         """Offers need an email to be sent to, so the box only works while there is one."""
@@ -141,6 +151,21 @@ class CustomerDialog(QDialog):
         self.offers_check.setEnabled(has_email)
         if not has_email:
             self.offers_check.setChecked(False)
+
+    def _credit_limit_cents(self) -> int | None:
+        """The typed limit in cents; empty means none. Hidden, the saved limit is kept as it is."""
+        if not self.credit_enabled:
+            return None if self._editing is None else self._editing.credit_limit_cents
+        text = self.limit_edit.text().strip().replace(",", ".")
+        if not text:
+            return None
+        try:
+            amount = Decimal(text) * 100
+            if not amount.is_finite():
+                raise InvalidOperation
+            return int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        except InvalidOperation as error:
+            raise ValueError("El límite de crédito debe ser un monto válido.") from error
 
     def _data(self) -> CustomerData:
         return CustomerData(
@@ -151,15 +176,17 @@ class CustomerDialog(QDialog):
             self.address_edit.text(),
             self.email_edit.text(),
             self.offers_check.isChecked(),
+            self._credit_limit_cents(),
         )
 
     def save(self) -> None:
         """Save through the service; a rejected customer shows its Spanish message and stays."""
         try:
+            data = self._data()
             if self._editing is None:
-                saved = self._customers.create(self._session, self._data())
+                saved = self._customers.create(self._session, data)
             else:
-                saved = self._customers.update(self._session, self._editing.id, self._data())
+                saved = self._customers.update(self._session, self._editing.id, data)
         except ValueError as error:
             self.message.show_error(str(error))
             return

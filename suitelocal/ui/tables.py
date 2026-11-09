@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.catalog import CatalogService
+from suitelocal.application.credit import CreditService
 from suitelocal.application.customers import CustomerService
 from suitelocal.application.einvoice import EInvoiceService
 from suitelocal.application.receipts import ReceiptService
@@ -271,6 +272,7 @@ class TablesWidget(QWidget):
         customers: CustomerService | None = None,
         customer_dialog_factory: CustomerDialogFactory = CustomerDialog,
         print_on_charge: bool = True,
+        credit: CreditService | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
@@ -290,6 +292,7 @@ class TablesWidget(QWidget):
         self.last_print_ticket = False
         self.last_buyer: Buyer | None = None
         self.customers = customers
+        self.credit = credit if customers is not None else None
         self.customer_dialog_factory = customer_dialog_factory
         self.last_customer: Customer | None = None
         self.einvoicing_enabled = einvoicing_enabled
@@ -747,6 +750,8 @@ class TablesWidget(QWidget):
                 customer_dialog_factory=self.customer_dialog_factory,
                 customer=None,
             )
+            if self.credit is not None:
+                invoicing["credit"] = self.credit
         dialog = self.payment_dialog_factory(
             total_cents=self._grand_total(order),
             currency_symbol=self.currency_symbol,

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from suitelocal.application.cart import Cart
+from suitelocal.application.credit import CreditService
 from suitelocal.application.customers import CustomerService
 from suitelocal.application.einvoice import EInvoiceService
 from suitelocal.application.receipts import ReceiptService
@@ -32,6 +33,7 @@ from suitelocal.domain.business import (
     charges_iva,
     issues_electronic_invoices,
 )
+from suitelocal.domain.credit import CREDIT_METHOD
 from suitelocal.domain.customers import Customer
 from suitelocal.domain.einvoice import Buyer
 from suitelocal.domain.models import Payment, Product, SaleError
@@ -53,6 +55,7 @@ from suitelocal.ui.components.invoice_checkout import InvoiceCheckout
 from suitelocal.ui.components.product import repolish
 from suitelocal.ui.customer_dialog import CustomerDialog, CustomerDialogFactory
 from suitelocal.ui.payment_dialog import (
+    CREDIT_NEEDS_CUSTOMER,
     METHOD_LABELS,
     PaymentDialog,
     format_money,
@@ -169,6 +172,7 @@ class PosWidget(QWidget):
         customers: CustomerService | None = None,
         customer_dialog_factory: CustomerDialogFactory = CustomerDialog,
         print_on_charge: bool = True,
+        credit: CreditService | None = None,
     ) -> None:
         super().__init__(parent)
         self.products = products
@@ -194,6 +198,7 @@ class PosWidget(QWidget):
         self.last_buyer: Buyer | None = None
         # The "Cliente" field needs the customer service and who is selling.
         self.customers = customers if session is not None else None
+        self.credit = credit if self.customers is not None else None
         self.customer_dialog_factory = customer_dialog_factory
         self.customer_picker: CustomerPicker | None = None
         # Without a session and a printer wired in, the primary action only charges.
@@ -226,7 +231,7 @@ class PosWidget(QWidget):
         self._typed_quantity: int | None = None
         self._quick_products: list[Product | None] = [None] * QUICK_KEY_COUNT
         self._bill_amounts: list[int] = []
-        self._method = self.enabled_payment_methods[0]
+        self._method = self._offered_methods()[0]
         self._compact = False
         self._empty_input = True
         self._quick_digit = 0
@@ -552,6 +557,7 @@ class PosWidget(QWidget):
                 self.customers, self.session, self.customer_dialog_factory
             )
             self.customer_picker.customer_changed.connect(self._on_customer_changed)
+            self._show_credit_balance()
             layout.addWidget(self.customer_picker)
         layout.addWidget(self.buyer_section)
         layout.addWidget(self.print_switch)
@@ -677,8 +683,16 @@ class PosWidget(QWidget):
     def _amount_placeholder(self) -> str:
         return f"0{self.decimal_separator}00"
 
+    def _offered_methods(self) -> tuple[str, ...]:
+        """The methods of the control: credit is charged to a customer, so it needs the field."""
+        return tuple(
+            method
+            for method in self.enabled_payment_methods
+            if method != CREDIT_METHOD or self.customers is not None
+        )
+
     def _new_method_control(self) -> SegmentedControl:
-        labels = [METHOD_LABELS[method] for method in self.enabled_payment_methods]
+        labels = [METHOD_LABELS[method] for method in self._offered_methods()]
         control = SegmentedControl(labels)
         # Payment methods share the ticket width instead of forcing it to fit their full text.
         for segment in control.findChildren(QPushButton):
@@ -742,6 +756,7 @@ class PosWidget(QWidget):
         self.sales_note_edit.setVisible(self.tax_regime == SALES_NOTE_REGIME)
         if methods_changed:
             self.enabled_payment_methods = business.enabled_payment_methods or ("cash",)
+            self._show_credit_balance()
             old = self.method_control
             self.method_control = self._new_method_control()
             self._checkout_layout.removeWidget(old)
@@ -755,6 +770,14 @@ class PosWidget(QWidget):
         self.refresh_quick_keys()
         self.refresh_kpis()
         self.refresh_cart()
+
+    def _show_credit_balance(self) -> None:
+        """The customer field shows what the customer owes only while credit is offered."""
+        if self.customer_picker is not None:
+            offered = CREDIT_METHOD in self.enabled_payment_methods
+            self.customer_picker.show_credit(
+                self.credit if offered else None, self.decimal_separator
+            )
 
     def _on_filter_selected(self, _option: str) -> None:
         self.refresh_products()
@@ -1099,6 +1122,9 @@ class PosWidget(QWidget):
                 )
                 return None
             return (Payment("transfer", total, reference),)
+        if self._method == CREDIT_METHOD and self._customer_id() is None:
+            self.checkout_message.show_error(CREDIT_NEEDS_CUSTOMER)
+            return None
         return (Payment(self._method, total),)
 
     @property
@@ -1250,6 +1276,8 @@ class PosWidget(QWidget):
                 customer_dialog_factory=self.customer_dialog_factory,
                 customer=picker.customer,
             )
+            if self.credit is not None:
+                invoicing["credit"] = self.credit
         dialog = self.payment_dialog_factory(
             total_cents=self.cart.grand_total_cents,
             currency_symbol=self.currency_symbol,

@@ -310,6 +310,8 @@ def render_receipt_html(receipt: Receipt, decimal_separator: str, paper_mm: int)
         parts.append(pair(label, money(payment.amount_cents)))
     if receipt.change_cents:
         parts.append(pair("Cambio", money(receipt.change_cents)))
+    if receipt.credit_balance_cents is not None:
+        parts.append(f"<div><b>Saldo pendiente: {money(receipt.credit_balance_cents)}</b></div>")
     parts.append(RULE)
     parts.append(centered(escape_html(receipt.legend), "font-size: 0.9em;"))
     if business.footer:

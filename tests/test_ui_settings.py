@@ -103,7 +103,7 @@ def test_form_shows_the_current_business_profile(env):
     assert combo_texts(settings.decimal_separator) == ["Coma (1.234,56)", "Punto (1,234.56)"]
     assert settings.decimal_separator.currentText() == "Coma (1.234,56)"
     assert settings.transfer.isChecked()
-    assert set(settings.module_boxes) == {"mesas", "codigo_barras", "categorias"}
+    assert set(settings.module_boxes) == {"mesas", "codigo_barras", "categorias", "fiado"}
 
 
 def test_every_module_has_a_checkbox_and_a_short_description(env):
@@ -113,11 +113,13 @@ def test_every_module_has_a_checkbox_and_a_short_description(env):
         "mesas": "Mesas y comandas",
         "codigo_barras": "Códigos de barras",
         "categorias": "Categorías",
+        "fiado": "Fiado",
     }
     assert {code: label.text() for code, label in settings.module_hints.items()} == {
         "mesas": "Cuentas abiertas por mesa, con envío a cocina. Ideal para cafeterías.",
         "codigo_barras": "Vendé escaneando el código de barras del producto.",
         "categorias": "Agrupá los productos y filtrá la caja por categoría.",
+        "fiado": "Vendé fiado a clientes registrados y anotá sus abonos. Ideal para tiendas.",
     }
 
 

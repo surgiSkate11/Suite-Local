@@ -74,6 +74,10 @@ MODULE_INFO = {
         "Categorías",
         "Agrupá los productos y filtrá la caja por categoría.",
     ),
+    "fiado": (
+        "Fiado",
+        "Vendé fiado a clientes registrados y anotá sus abonos. Ideal para tiendas.",
+    ),
 }
 
 

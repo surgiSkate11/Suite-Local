@@ -25,6 +25,7 @@ from suitelocal.application.auth import AuthService
 from suitelocal.application.cash_register import CashRegisterService
 from suitelocal.application.catalog import CatalogService
 from suitelocal.application.categories import CategoryService
+from suitelocal.application.credit import CreditService
 from suitelocal.application.customers import CustomerService
 from suitelocal.application.einvoice import (
     EInvoiceService,
@@ -162,6 +163,7 @@ class AppShell(QMainWindow):
         )
         self.categories = CategoryService(CategoryRepository(database))
         customers = CustomerService(database)
+        credit = CreditService(database)
         self.pos_widget = PosWidget(
             products,
             sales,
@@ -181,6 +183,7 @@ class AppShell(QMainWindow):
             einvoicing_enabled=einvoicing,
             customers=customers,
             print_on_charge=business.print_on_charge,
+            credit=credit,
         )
         self.pages = QStackedWidget()
         self._add_page(self.dashboard)
@@ -204,15 +207,19 @@ class AppShell(QMainWindow):
                 einvoicing_enabled=einvoicing,
                 customers=customers,
                 print_on_charge=business.print_on_charge,
+                credit=credit,
             )
             operation.append(("Mesas", self._add_page(self.tables_widget), "table"))
         self.customers_widget = CustomersWidget(
             customers,
             session,
+            credit=credit,
             currency_symbol=business.currency_symbol,
             decimal_separator=business.decimal_separator,
         )
         self.customers_widget.notification.connect(self._show_toast)
+        # A cash abono changes the cash the drawer should hold.
+        self.customers_widget.payment_registered.connect(self.refresh_register)
         operation.append(("Clientes", self._add_page(self.customers_widget), "users"))
         if session.is_owner:
             inventory = InventoryWidget(products, session)

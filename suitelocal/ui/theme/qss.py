@@ -580,6 +580,7 @@ def build_stylesheet(tokens: DesignTokens = LIGHT_TOKENS) -> str:
     #paymentIcon {{ border-radius: {tokens.radius_control}px; background: {tokens.brand_100}; }}
     #paymentIcon[method="cash"] {{ background: {tokens.champagne_background}; }}
     #paymentIcon[method="card"] {{ background: {tokens.success_background}; }}
+    #paymentIcon[method="credit"] {{ background: {tokens.champagne_background}; }}
     #paymentRowTitle {{ color: {tokens.text_900}; font-size: 15px; font-weight: 600; }}
     #paymentRowSubtitle {{ color: {tokens.text_500}; font-size: 12px; }}
     #paymentRowAmount {{ color: {tokens.text_900}; font-size: 20px; font-weight: 600; }}

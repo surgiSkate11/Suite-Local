@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from suitelocal.application.credit import CreditService
 from suitelocal.application.customers import CustomerService
 from suitelocal.domain.auth import Session
+from suitelocal.domain.credit import CREDIT_METHOD
 from suitelocal.domain.customers import Customer
 from suitelocal.domain.einvoice import Buyer
 from suitelocal.domain.models import PAYMENT_METHODS, Payment, Sale, SaleItem
@@ -32,8 +34,18 @@ from suitelocal.ui.theme.manager import current_tokens
 
 ICONS.setdefault("transfer", '<path d="M7 7h13l-3-3M17 17H4l3 3"/>')
 ICONS.setdefault("card", '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>')
+ICONS.setdefault(
+    "credit",
+    '<path d="M4 4h12a4 4 0 0 1 4 4v12H8a4 4 0 0 1-4-4z"/><path d="M8 9h8M8 13h5"/>',
+)
 
-METHOD_LABELS = {"cash": "Efectivo", "transfer": "Transferencia", "card": "Tarjeta"}
+METHOD_LABELS = {
+    "cash": "Efectivo",
+    "transfer": "Transferencia",
+    "card": "Tarjeta",
+    "credit": "Fiado",
+}
+CREDIT_NEEDS_CUSTOMER = "El fiado necesita un cliente seleccionado."
 MAX_CASH_UNITS = 99_999_999
 QUICK_BILL_MULTIPLIERS = (1, 5, 10, 20, 50, 100, 200, 500, 1000)
 QUICK_BILL_COUNT = 3
@@ -82,6 +94,7 @@ def method_icon_color(method: str) -> str:
         "cash": tokens.champagne_text,
         "transfer": tokens.brand_800,
         "card": tokens.success,
+        "credit": tokens.champagne_text,
     }.get(method, tokens.brand_800)
 
 
@@ -102,6 +115,7 @@ class PaymentRow(QFrame):
         active: bool,
         removable: bool,
         parent: QWidget | None = None,
+        status_text: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.method = method
@@ -126,7 +140,7 @@ class PaymentRow(QFrame):
         texts.addWidget(self.subtitle_label)
         self.amount_label = QLabel(amount_text)
         self.amount_label.setObjectName("paymentRowAmount")
-        self.status_label = QLabel("Recibido" if received else "En curso")
+        self.status_label = QLabel(status_text or ("Recibido" if received else "En curso"))
         self.status_label.setObjectName("paymentState")
         self.status_label.setProperty("state", "received" if received else "pending")
         layout.addWidget(badge)
@@ -168,6 +182,7 @@ class PaymentDialog(QDialog):
         customer_dialog_factory: CustomerDialogFactory = CustomerDialog,
         customer: Customer | None = None,
         print_by_default: bool = True,
+        credit: CreditService | None = None,
     ) -> None:
         super().__init__(parent)
         self.total_cents = total_cents
@@ -188,14 +203,21 @@ class PaymentDialog(QDialog):
         self.customer_picker: CustomerPicker | None = None
         if customers is not None and session is not None:
             self.customer_picker = CustomerPicker(customers, session, customer_dialog_factory)
+            if credit is not None and CREDIT_METHOD in enabled_methods:
+                self.customer_picker.show_credit(credit, decimal_separator)
             if customer is not None:
                 self.customer_picker.set_customer(customer)
                 untouched = buyer_draft is None or buyer_draft == BuyerDraft.for_customer(customer)
                 if invoicing and untouched:
                     self.buyer_section.apply_customer(customer)
             self.customer_picker.customer_changed.connect(self._on_customer_changed)
+        # Credit is charged to a customer, so it needs the "Cliente" field to exist.
         self._enabled = tuple(
-            method for method in PAYMENT_METHODS if method != "cash" and method in enabled_methods
+            method
+            for method in PAYMENT_METHODS
+            if method != "cash"
+            and method in enabled_methods
+            and (method != CREDIT_METHOD or self.customer_picker is not None)
         )
         self._validate = validate or self._validate_with_sale
         self._noncash: list[Payment] = []
@@ -498,6 +520,8 @@ class PaymentDialog(QDialog):
             error = "La transferencia necesita un número de referencia."
         elif amount_cents > self.remaining_cents:
             error = "Los pagos no pueden superar el total sin efectivo."
+        elif method == CREDIT_METHOD and self.customer is None:
+            error = CREDIT_NEEDS_CUSTOMER
         if error:
             self.message.show_error(error)
             return False
@@ -515,6 +539,9 @@ class PaymentDialog(QDialog):
         if not self.covered:
             return
         payments = self._build_payments()
+        if any(payment.method == CREDIT_METHOD for payment in payments) and self.customer is None:
+            self.message.show_error(CREDIT_NEEDS_CUSTOMER)
+            return
         try:
             self._validate(payments)
         except ValueError as error:
@@ -627,7 +654,11 @@ class PaymentDialog(QDialog):
             row.deleteLater()
         self.payment_rows = []
         for payment in self._noncash:
-            reference = f"ref. {payment.reference}" if payment.reference else "Pago recibido"
+            if payment.method == CREDIT_METHOD:
+                reference, status = "Queda en la cuenta del cliente", "A fiado"
+            else:
+                reference = f"ref. {payment.reference}" if payment.reference else "Pago recibido"
+                status = None
             row = PaymentRow(
                 payment.method,
                 reference,
@@ -635,6 +666,7 @@ class PaymentDialog(QDialog):
                 received=True,
                 active=False,
                 removable=True,
+                status_text=status,
             )
             if row.remove_button is not None:
                 row.remove_button.clicked.connect(

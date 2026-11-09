@@ -12,9 +12,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from suitelocal.application.credit import CreditService
 from suitelocal.application.customers import CustomerService
 from suitelocal.domain.auth import Session
 from suitelocal.domain.customers import Customer
+from suitelocal.domain.money import format_usd
 from suitelocal.ui.components.button import set_variant
 from suitelocal.ui.customer_dialog import CustomerDialog, CustomerDialogFactory
 
@@ -46,6 +48,9 @@ class CustomerPicker(QFrame):
         self._session = session
         self._dialog_factory = dialog_factory
         self.customer: Customer | None = None
+        # Set by show_credit(): the selected customer then shows what they owe.
+        self._credit: CreditService | None = None
+        self._decimal_separator = ","
 
         self.title_label = QLabel("Cliente")
         self.title_label.setObjectName("buyerTitle")
@@ -120,6 +125,12 @@ class CustomerPicker(QFrame):
         if changed:
             self.customer_changed.emit(customer)
 
+    def show_credit(self, credit: CreditService | None, decimal_separator: str = ",") -> None:
+        """Show (or stop showing) the balance of the selected customer next to their name."""
+        self._credit = credit
+        self._decimal_separator = decimal_separator
+        self._show_state()
+
     def clear(self) -> None:
         """ "Quitar": back to no customer, with an empty field."""
         self.id_edit.setReadOnly(False)
@@ -129,13 +140,22 @@ class CustomerPicker(QFrame):
     def _show_state(self, not_registered: bool = False, hint: str = "") -> None:
         customer = self.customer
         if customer is not None:
-            self.status_label.setText(f"✓ {customer.full_name}")
+            self.status_label.setText(f"✓ {customer.full_name}{self._balance_text(customer)}")
         else:
             self.status_label.setText(NOT_REGISTERED if not_registered else hint)
         self.status_label.setVisible(customer is not None or bool(self.status_label.text()))
         self.register_button.setVisible(customer is None and not_registered)
         self.clear_button.setVisible(customer is not None)
         self.search_button.setEnabled(customer is None)
+
+    def _balance_text(self, customer: Customer) -> str:
+        if self._credit is None:
+            return ""
+        try:
+            balance = self._credit.balance_cents(self._session, customer.id)
+        except ValueError:
+            return ""
+        return f" · Saldo pendiente: {format_usd(balance, self._decimal_separator)}"
 
     # -- behavior -----------------------------------------------------------------------
 
