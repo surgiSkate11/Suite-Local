@@ -1,8 +1,13 @@
+import sqlite3
+from collections.abc import Callable
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from typing import Protocol
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -16,10 +21,12 @@ from PySide6.QtWidgets import (
 
 from suitelocal.application.categories import CategoryService
 from suitelocal.application.inventory import InventoryService
+from suitelocal.application.product_import import ImportPlan, ProductImportService
 from suitelocal.domain.auth import Session
 from suitelocal.domain.business import charges_iva
 from suitelocal.domain.models import Product
 from suitelocal.domain.tax import TAX_RATES_BASIS_POINTS, effective_tax_rate, split_tax_included
+from suitelocal.infrastructure.product_import_repository import ProductImportRepository
 from suitelocal.infrastructure.repositories import CategoryRepository, ProductRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 from suitelocal.ui.components import (
@@ -34,6 +41,24 @@ from suitelocal.ui.components import (
     set_variant,
 )
 from suitelocal.ui.payment_dialog import format_money
+from suitelocal.ui.product_import_dialog import ProductImportDialog
+
+
+class ImportDialog(Protocol):
+    def exec(self) -> int: ...
+
+    def deleteLater(self) -> None: ...
+
+
+ImportFileChooser = Callable[[QWidget | None], str | None]
+ImportDialogFactory = Callable[[ImportPlan, QWidget | None], ImportDialog]
+
+
+def choose_import_file(parent: QWidget | None) -> str | None:
+    """Ask for the CSV to import; None when the owner cancels."""
+    path, _ = QFileDialog.getOpenFileName(parent, "Importar productos", "", "CSV (*.csv)")
+    return path or None
+
 
 NO_VALUE = "—"
 NO_CATEGORY = "Sin categoría"
@@ -54,10 +79,19 @@ class InventoryWidget(QWidget):
         products: ProductRepository,
         session: Session,
         parent: QWidget | None = None,
+        *,
+        import_file_chooser: ImportFileChooser = choose_import_file,
+        import_dialog_factory: ImportDialogFactory = ProductImportDialog,
     ) -> None:
         super().__init__(parent)
         self.inventory = InventoryService(products)
         self.session = session
+        self._import_file_chooser = import_file_chooser
+        self._import_dialog_factory = import_dialog_factory
+        self.import_service = ProductImportService(
+            ProductImportRepository(products.database),
+            BusinessSettingsRepository(products.database),
+        )
         self.settings_repository = BusinessSettingsRepository(products.database)
         self.category_service = CategoryService(CategoryRepository(products.database))
         self.business = self.settings_repository.get(session.user.business_id)
@@ -123,6 +157,10 @@ class InventoryWidget(QWidget):
         self.result_count.setObjectName("resultCount")
         toolbar.addWidget(self.result_count)
         toolbar.addStretch()
+        self.import_button = set_variant(QPushButton("Importar productos"), "secondary")
+        self.import_button.clicked.connect(self.import_products)
+        self.import_button.setVisible(session.is_owner)
+        toolbar.addWidget(self.import_button)
         toolbar.addWidget(new_product)
         self.toolbar = toolbar
         title = QLabel("Inventario")
@@ -311,6 +349,35 @@ class InventoryWidget(QWidget):
         self.message.clear_message()
         self.drawer.hide()
 
+    def import_products(self) -> None:
+        """Choose a CSV, preview what it would change and apply it only once confirmed."""
+        path = self._import_file_chooser(self)
+        if path is None:
+            return
+        try:
+            plan = self.import_service.preview(self.session, path)
+        except (OSError, ValueError) as error:
+            self.notification.emit(f"No se pudo leer el archivo. {error}", "danger")
+            return
+        dialog = self._import_dialog_factory(plan, self)
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+        finally:
+            dialog.deleteLater()
+        try:
+            result = self.import_service.apply(self.session, plan)
+        except (ValueError, sqlite3.Error) as error:
+            self.notification.emit(f"No se pudo importar: {error}", "danger")
+            return
+        self.refresh_profile()
+        self.refresh()
+        self.notification.emit(
+            f"Importación lista: {_count(result.created, 'producto', 'creado')} y "
+            f"{result.updated} actualizado{'' if result.updated == 1 else 's'}.",
+            "success",
+        )
+
     def open_new_product(self) -> None:
         self.clear_form()
         self.drawer.set_title("Nuevo producto")
@@ -357,3 +424,8 @@ class InventoryWidget(QWidget):
         if number < 0:
             raise ValueError(f"{label} no puede ser negativo.")
         return number
+
+
+def _count(amount: int, noun: str, participle: str) -> str:
+    suffix = "" if amount == 1 else "s"
+    return f"{amount} {noun}{suffix} {participle}{suffix}"

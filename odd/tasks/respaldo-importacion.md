@@ -12,8 +12,8 @@ Branch `feat/respaldo-importacion` from `feat/multinegocio` 27133d7, worktree `C
 
 ## Tasks
 
-- [x] T1 S2, S4 — automatic daily backup (infrastructure, settings persistence, Settings UI, status bar) — worker A, parent commits — commit: (this commit)
-- [ ] T2 S3, S4 — CSV product import (parser, application service, preview dialog, Inventario button) — worker B, parent commits — commit:
+- [x] T1 S2, S4 — automatic daily backup (infrastructure, settings persistence, Settings UI, status bar) — worker A, parent commits — commit: 05ea782
+- [x] T2 S3, S4 — CSV product import (parser, application service, preview dialog, Inventario button) — worker B, parent commits — commit: (this commit)
 - [ ] T3 S4 — full checks, commit, send ids to 01a1a49b — inline — commit: n/a
 
 ## Log
