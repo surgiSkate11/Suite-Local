@@ -310,9 +310,48 @@ def test_export_debtors_csv_is_owner_only_and_exact(env, tmp_path):
     path = env["credit"].export_debtors_csv(env["owner"], tmp_path / "deudores.csv")
 
     lines = path.read_text(encoding="utf-8-sig").splitlines()
-    assert lines[0] == "Nombres;Cédula/RUC/Pasaporte;Teléfono;Saldo"
-    assert lines[1] == "Ana Pérez;1712345678;;10,00"
+    assert lines[0] == "Nombres;Cédula/RUC/Pasaporte;Teléfono;Saldo;Activo"
+    assert lines[1] == "Ana Pérez;1712345678;;10,00;Sí"
     assert len(lines) == 2
+
+
+def owe_as_deactivated_customer(env):
+    """Luis owes 15,00 and is deactivated afterwards; Ana owes 10,00."""
+    luis = CustomerService(env["database"]).create(
+        env["owner"], CustomerData("cedula", "1798765432", "Luis Mora")
+    )
+    sell(env, 4, [Payment("credit", 1000)])
+    env["sales"].register(
+        Sale((SaleItem(env["product"].id, "Arroz", 6, 250),), 1500, (Payment("credit", 1500),)),
+        business_id=env["owner"].user.business_id,
+        user_id=env["owner"].user.id,
+        customer_id=luis.id,
+    )
+    CustomerService(env["database"]).deactivate(env["owner"], luis.id)
+
+
+def test_a_deactivated_customer_who_still_owes_stays_in_the_debtors_and_the_total(env):
+    owe_as_deactivated_customer(env)
+
+    debtors = env["credit"].debtors(env["cashier"])
+
+    assert [(d.customer.full_name, d.customer.active, d.balance_cents) for d in debtors] == [
+        ("Luis Mora", False, 1500),
+        ("Ana Pérez", True, 1000),
+    ]
+    assert env["credit"].total_owed_cents(env["cashier"]) == 2500
+
+
+def test_the_debtors_csv_marks_the_deactivated_customers(env, tmp_path):
+    owe_as_deactivated_customer(env)
+
+    path = env["credit"].export_debtors_csv(env["owner"], tmp_path / "deudores.csv")
+
+    assert path.read_text(encoding="utf-8-sig").splitlines() == [
+        "Nombres;Cédula/RUC/Pasaporte;Teléfono;Saldo;Activo",
+        "Luis Mora;1798765432;;15,00;No",
+        "Ana Pérez;1712345678;;10,00;Sí",
+    ]
 
 
 def test_credit_limit_is_validated(env):
@@ -357,3 +396,60 @@ def test_old_database_gets_credit_payments_allowed_in_sale_payments(tmp_path):
             connection.execute(
                 "INSERT INTO sale_payments (sale_id, method, amount_cents) VALUES (1, 'xx', 5)"
             )
+
+
+LIMITED_ANA = CustomerData("cedula", "1712345678", "Ana Pérez", credit_limit_cents=2000)
+OWNER_ONLY = "Solo el dueño puede realizar esta acción."
+
+
+def test_a_cashier_cannot_create_a_customer_with_a_credit_limit(env):
+    service = CustomerService(env["database"])
+
+    with pytest.raises(PermissionError, match=OWNER_ONLY):
+        service.create(
+            env["cashier"], CustomerData("cedula", "1798765432", "Luis Mora", credit_limit_cents=1)
+        )
+
+    assert service.find_by_id_number(env["owner"], "1798765432") is None
+
+
+def test_a_cashier_creates_a_customer_without_a_limit(env):
+    service = CustomerService(env["database"])
+
+    created = service.create(env["cashier"], CustomerData("cedula", "1798765432", "Luis Mora"))
+
+    assert created.credit_limit_cents is None
+
+
+def test_a_cashier_cannot_change_or_clear_a_credit_limit(env):
+    service = CustomerService(env["database"])
+    service.update(env["owner"], env["customer"].id, LIMITED_ANA)
+
+    for limit in (5000, None):
+        with pytest.raises(PermissionError, match=OWNER_ONLY):
+            service.update(
+                env["cashier"],
+                env["customer"].id,
+                CustomerData("cedula", "1712345678", "Ana Pérez", credit_limit_cents=limit),
+            )
+
+    assert service.find_by_id_number(env["owner"], "1712345678").credit_limit_cents == 2000
+
+
+def test_a_cashier_edits_other_fields_keeping_the_limit_and_the_owner_changes_it(env):
+    service = CustomerService(env["database"])
+    service.update(env["owner"], env["customer"].id, LIMITED_ANA)
+
+    edited = service.update(
+        env["cashier"],
+        env["customer"].id,
+        CustomerData("cedula", "1712345678", "Ana P. Pérez", credit_limit_cents=2000),
+    )
+    raised = service.update(
+        env["owner"],
+        env["customer"].id,
+        CustomerData("cedula", "1712345678", "Ana P. Pérez", credit_limit_cents=5000),
+    )
+
+    assert (edited.full_name, edited.credit_limit_cents) == ("Ana P. Pérez", 2000)
+    assert raised.credit_limit_cents == 5000

@@ -27,7 +27,7 @@ class CustomerService:
     """Customers of the session's business.
 
     Any signed-in user registers, edits and finds customers (the cashier does it at the counter);
-    deactivating one and exporting the offers list are the owner's.
+    deactivating one, exporting the offers list and setting a credit limit are the owner's.
     """
 
     def __init__(self, database: Database) -> None:
@@ -38,6 +38,10 @@ class CustomerService:
         """True when the business sells on credit (fiado), so customers carry a credit limit."""
         modules = self.settings.get(session.user.business_id).enabled_modules
         return FIADO_MODULE in modules
+
+    def decimal_separator(self, session: Session) -> str:
+        """The business decimal separator, "," or ".", for showing and typing amounts."""
+        return self.settings.get(session.user.business_id).decimal_separator
 
     def find_by_id_number(self, session: Session, id_number: str) -> Customer | None:
         """The active customer with exactly this identification, or None."""
@@ -60,9 +64,15 @@ class CustomerService:
         return matches[:SEARCH_LIMIT]
 
     def create(self, session: Session, data: CustomerData) -> Customer:
+        if data.credit_limit_cents is not None:
+            require_owner(session)
         return self.customers.add(session.user.business_id, validate_customer(data))
 
     def update(self, session: Session, customer_id: int, data: CustomerData) -> Customer:
+        if not session.is_owner:
+            current = self.customers.get(session.user.business_id, customer_id)
+            if current is not None and current.credit_limit_cents != data.credit_limit_cents:
+                require_owner(session)
         return self.customers.update(session.user.business_id, customer_id, validate_customer(data))
 
     def deactivate(self, session: Session, customer_id: int) -> None:

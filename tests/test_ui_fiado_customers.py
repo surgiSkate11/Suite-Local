@@ -194,6 +194,86 @@ def test_editing_with_the_module_off_keeps_the_saved_limit(qapp, tmp_path):
     assert dialog.customer.credit_limit_cents == 2000
 
 
+def set_separator(env, separator: str) -> None:
+    BusinessSettingsRepository(env.database).update_profile(
+        env.owner.user.business_id, decimal_separator=separator
+    )
+
+
+def limited_ana(env, cents: int):
+    return env.customers.update(
+        env.owner,
+        env.ana.id,
+        CustomerData("cedula", "1712345678", "Ana Pérez", credit_limit_cents=cents),
+    )
+
+
+def test_the_limit_field_is_only_for_the_owner(env):
+    owner_dialog = CustomerDialog(env.customers, env.owner)
+    assert owner_dialog.limit_edit.isVisibleTo(owner_dialog) is True
+    cashier_dialog = CustomerDialog(env.customers, env.cashier)
+
+    assert cashier_dialog.limit_edit.isVisibleTo(cashier_dialog) is False
+
+
+def test_a_cashier_creates_a_customer_without_a_limit_from_the_dialog(env):
+    dialog = CustomerDialog(env.customers, env.cashier)
+    dialog.id_edit.setText("1700000001")
+    dialog.name_edit.setText("Rosa")
+    dialog.limit_edit.setText("99")
+
+    dialog.save()
+
+    assert dialog.customer is not None
+    assert dialog.customer.credit_limit_cents is None
+
+
+def test_a_cashier_editing_a_customer_keeps_the_saved_limit(env):
+    dialog = CustomerDialog(env.customers, env.cashier, customer=limited_ana(env, 2000))
+    dialog.name_edit.setText("Ana P. Pérez")
+    dialog.limit_edit.setText("99")
+
+    dialog.save()
+
+    assert dialog.customer is not None
+    assert (dialog.customer.full_name, dialog.customer.credit_limit_cents) == ("Ana P. Pérez", 2000)
+
+
+@pytest.mark.parametrize(
+    ("separator", "shown", "typed", "cents"),
+    [
+        (",", "1234,56", "1.234,5", 123450),
+        (",", "1234,56", "50,5", 5050),
+        (".", "1234.56", "1,234.5", 123450),
+        (".", "1234.56", "50.5", 5050),
+    ],
+)
+def test_the_limit_is_shown_and_parsed_with_the_business_separator(
+    env, separator, shown, typed, cents
+):
+    set_separator(env, separator)
+    dialog = CustomerDialog(env.customers, env.owner, customer=limited_ana(env, 123456))
+    assert dialog.limit_edit.text() == shown
+
+    dialog.limit_edit.setText(typed)
+    dialog.save()
+
+    assert dialog.customer is not None
+    assert dialog.customer.credit_limit_cents == cents
+
+
+@pytest.mark.parametrize(("separator", "text"), [(",", "50.5"), (".", "50,5"), (",", "1.23")])
+def test_a_limit_typed_with_the_other_separator_is_rejected(env, separator, text):
+    set_separator(env, separator)
+    dialog = CustomerDialog(env.customers, env.owner, customer=limited_ana(env, 2000))
+    dialog.limit_edit.setText(text)
+
+    dialog.save()
+
+    assert dialog.customer is None
+    assert "límite de crédito" in dialog.message.text()
+
+
 # -- the abono dialog -----------------------------------------------------------------------
 
 
@@ -368,7 +448,9 @@ def test_only_the_owner_gets_the_debtors_export(env, tmp_path):
 
     owner_page.debtors_export_button.click()
 
-    assert target.read_text(encoding="utf-8-sig").splitlines()[1] == "Ana Pérez;1712345678;;10,00"
+    assert (
+        target.read_text(encoding="utf-8-sig").splitlines()[1] == "Ana Pérez;1712345678;;10,00;Sí"
+    )
     assert notes[-1][1] == "success"
 
 

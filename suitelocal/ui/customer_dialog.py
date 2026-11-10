@@ -1,7 +1,8 @@
 """Quick customer registration and edition: what the cashier asks at the counter."""
 
+import re
 from collections.abc import Callable
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -27,6 +28,7 @@ from suitelocal.domain.customers import (
     Customer,
     CustomerData,
 )
+from suitelocal.domain.money import format_usd
 from suitelocal.ui.components import InlineMessage, set_variant
 
 __all__ = ["CustomerDialog", "CustomerDialogFactory", "guess_id_type"]
@@ -35,6 +37,17 @@ CustomerDialogFactory = Callable[..., "CustomerDialog"]
 
 _CEDULA_DIGITS = 10
 _RUC_DIGITS = 13
+
+
+def _parse_limit(text: str, decimal_separator: str) -> int:
+    """Cents of a typed amount: the business separator is the decimal one, the other groups."""
+    group = "." if decimal_separator == "," else ","
+    plain = rf"\d+(?:{re.escape(decimal_separator)}\d+)?"
+    grouped = rf"\d{{1,3}}(?:{re.escape(group)}\d{{3}})+(?:{re.escape(decimal_separator)}\d+)?"
+    if not re.fullmatch(f"{plain}|{grouped}", text):
+        raise ValueError("El límite de crédito debe ser un monto válido.")
+    amount = Decimal(text.replace(group, "").replace(decimal_separator, ".")) * 100
+    return int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def guess_id_type(number: str) -> str:
@@ -77,8 +90,10 @@ class CustomerDialog(QDialog):
         self.phone_edit = self._line_edit("Teléfono", "Teléfono (opcional)", PHONE_MAX_LENGTH)
         self.address_edit = self._line_edit("Dirección", "Dirección (opcional)", ADDRESS_MAX_LENGTH)
         self.email_edit = self._line_edit("Correo", "Correo (opcional)", EMAIL_MAX_LENGTH)
-        # Only a business that sells on credit has a credit limit to set.
+        # Only a business that sells on credit has a credit limit, and only its owner sets it.
         self.credit_enabled = customers.credit_enabled(session)
+        self._limit_editable = self.credit_enabled and session.is_owner
+        self._separator = customers.decimal_separator(session)
         self.limit_edit = self._line_edit("Límite de crédito", "Sin límite", 12)
         self.limit_edit.setToolTip("Lo máximo que este cliente puede deber. Vacío: sin límite.")
         self.offers_check = QCheckBox("Acepta recibir ofertas")
@@ -104,7 +119,7 @@ class CustomerDialog(QDialog):
         form.addRow("Dirección:", self.address_edit)
         form.addRow("Correo:", self.email_edit)
         form.addRow("", self.offers_check)
-        if self.credit_enabled:
+        if self._limit_editable:
             form.addRow("Límite de crédito:", self.limit_edit)
         buttons = QHBoxLayout()
         buttons.addStretch()
@@ -142,8 +157,9 @@ class CustomerDialog(QDialog):
         self.email_edit.setText(customer.email)
         self.offers_check.setChecked(customer.accepts_offers)
         if customer.credit_limit_cents is not None:
-            units, cents = divmod(customer.credit_limit_cents, 100)
-            self.limit_edit.setText(f"{units},{cents:02d}")
+            shown = format_usd(customer.credit_limit_cents, self._separator)
+            group = "." if self._separator == "," else ","
+            self.limit_edit.setText(shown.removeprefix("$ ").replace(group, ""))
 
     def _sync_offers(self, _text: str = "") -> None:
         """Offers need an email to be sent to, so the box only works while there is one."""
@@ -154,18 +170,10 @@ class CustomerDialog(QDialog):
 
     def _credit_limit_cents(self) -> int | None:
         """The typed limit in cents; empty means none. Hidden, the saved limit is kept as it is."""
-        if not self.credit_enabled:
+        if not self._limit_editable:
             return None if self._editing is None else self._editing.credit_limit_cents
-        text = self.limit_edit.text().strip().replace(",", ".")
-        if not text:
-            return None
-        try:
-            amount = Decimal(text) * 100
-            if not amount.is_finite():
-                raise InvalidOperation
-            return int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        except InvalidOperation as error:
-            raise ValueError("El límite de crédito debe ser un monto válido.") from error
+        text = self.limit_edit.text().strip()
+        return _parse_limit(text, self._separator) if text else None
 
     def _data(self) -> CustomerData:
         return CustomerData(

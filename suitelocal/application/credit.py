@@ -22,7 +22,7 @@ from suitelocal.infrastructure.repositories import CustomerRepository
 from suitelocal.infrastructure.settings import BusinessSettingsRepository
 
 STATEMENT_LIMIT = 100
-DEBTORS_CSV_HEADER = ("Nombres", "Cédula/RUC/Pasaporte", "Teléfono", "Saldo")
+DEBTORS_CSV_HEADER = ("Nombres", "Cédula/RUC/Pasaporte", "Teléfono", "Saldo", "Activo")
 
 _BALANCE_SQL = """
     SELECT COALESCE(SUM(CASE kind WHEN 'cargo' THEN amount_cents ELSE -amount_cents END), 0)
@@ -165,7 +165,7 @@ class CreditService:
         return balance
 
     def debtors(self, session: Session) -> list[Debtor]:
-        """Active customers who owe something, the biggest debt first."""
+        """Customers who owe something, active or not, the biggest debt first."""
         business_id = session.user.business_id
         with self.database.connect() as connection:
             rows = connection.execute(
@@ -181,7 +181,7 @@ class CreditService:
         debtors: list[Debtor] = []
         for row in rows:
             customer = self.customers.get(business_id, row["customer_id"])
-            if customer is not None and customer.active:
+            if customer is not None:
                 debtors.append(Debtor(customer, row["balance"]))
         debtors.sort(key=lambda debtor: (-debtor.balance_cents, debtor.customer.full_name))
         return debtors
@@ -208,6 +208,7 @@ class CreditService:
                             customer.id_number,
                             customer.phone,
                             _plain_amount(debtor.balance_cents),
+                            "Sí" if customer.active else "No",
                         ]
                     )
             os.replace(temp_name, target)
