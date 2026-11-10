@@ -32,6 +32,7 @@ from suitelocal.domain.business import (
     requires_ruc,
 )
 from suitelocal.domain.tax import TAX_RATES_BASIS_POINTS
+from suitelocal.infrastructure.auto_backup import FOLDER_REQUIRED, AutoBackupSettingsRepository
 from suitelocal.infrastructure.backups import BackupError, create_backup, restore_backup
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import Category, CategoryRepository
@@ -49,12 +50,14 @@ from suitelocal.ui.receipt import DEFAULT_PRINTER_LABEL, installed_printer_names
 Confirmer = Callable[[QWidget | None, str, str], bool]
 PrinterNames = Callable[[], Sequence[str]]
 CertificatePicker = Callable[[QWidget | None], Path | None]
+FolderChooser = Callable[[QWidget | None], Path | None]
 
 FIELD_MAX_WIDTH = 460
 SRI_ENVIRONMENT_LABELS = {"pruebas": "Pruebas", "produccion": "Producción"}
 # The owner is warned this long before the signing certificate expires.
 CERTIFICATE_WARNING_DAYS = 30
 NO_CERTIFICATE_TEXT = "Sin certificado cargado"
+NO_BACKUP_FOLDER_TEXT = "Sin carpeta elegida"
 # Ecuador has no daylight saving time, so a fixed offset is the right clock for its dates.
 ECUADOR_TIME = timezone(timedelta(hours=-5), "ECT")
 NO_SELECTION = "Elegí una categoría de la lista."
@@ -90,6 +93,14 @@ def pick_certificate_file(parent: QWidget | None) -> Path | None:
         "Certificado de firma (*.p12 *.pfx);;Todos los archivos (*)",
     )
     return Path(path) if path else None
+
+
+def pick_backup_folder(parent: QWidget | None) -> Path | None:
+    """Ask the owner for the folder of the automatic backups; None when cancelled."""
+    folder = QFileDialog.getExistingDirectory(
+        parent, "Elegir carpeta para los respaldos automáticos", str(Path.home())
+    )
+    return Path(folder) if folder else None
 
 
 def _card(title: str, hint: str | None = None) -> tuple[QFrame, QVBoxLayout]:
@@ -147,9 +158,14 @@ class SettingsWidget(QWidget):
         certificates: Callable[[int], CertificateStore] | None = None,
         pick_certificate: CertificatePicker = pick_certificate_file,
         clock: Callable[[], datetime] | None = None,
+        choose_backup_folder: FolderChooser = pick_backup_folder,
     ) -> None:
         super().__init__(parent)
         self.pick_certificate = pick_certificate
+        self.choose_backup_folder = choose_backup_folder
+        self.auto_backup = AutoBackupSettingsRepository(database)
+        # The folder shown in the card; it is only stored when the page is saved.
+        self._auto_backup_folder = ""
         self.clock = clock or (lambda: datetime.now(ECUADOR_TIME))
         self.settings = settings
         self.printer_names = printer_names
@@ -194,6 +210,12 @@ class SettingsWidget(QWidget):
             self.receipt_paper.addItem(f"{width} mm", width)
         self.printer = _limited(QComboBox())
         self.print_on_charge = QCheckBox("Imprimir comprobante al cobrar")
+        self.auto_backup_folder_button = set_variant(QPushButton("Elegir carpeta…"), "secondary")
+        self.auto_backup_folder_button.clicked.connect(self.pick_auto_backup_folder)
+        self.auto_backup_folder_label = _hint(NO_BACKUP_FOLDER_TEXT)
+        self.auto_backup_enabled = QCheckBox("Respaldar automáticamente cada día")
+        self.auto_backup_keep = _limited(QSpinBox())
+        self.auto_backup_keep.setRange(1, 365)
         self.regime.currentIndexChanged.connect(self._update_ruc_hint)
         for field in (self.name, self.ruc, self.address, self.phone, self.receipt_footer):
             field.returnPressed.connect(self.save)
@@ -229,6 +251,7 @@ class SettingsWidget(QWidget):
         self._loading_einvoice = False
         self._stored_next_sequential = 1
         self._load(current)
+        self._load_auto_backup()
         if session.is_owner:
             self._load_einvoice(current)
         self._reload_categories()
@@ -425,9 +448,32 @@ class SettingsWidget(QWidget):
         actions.addWidget(restore_button)
         actions.addStretch()
         layout.addLayout(actions)
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(self.auto_backup_folder_button)
+        folder_row.addWidget(self.auto_backup_folder_label, 1)
+        layout.addLayout(folder_row)
+        layout.addWidget(self.auto_backup_enabled)
+        form = _form()
+        form.addRow("Conservar los últimos", self.auto_backup_keep)
+        layout.addLayout(form)
         return card
 
     # -- loading ----------------------------------------------------------------------------
+
+    def _load_auto_backup(self) -> None:
+        stored = self.auto_backup.get(self.session.user.business_id)
+        self._show_auto_backup_folder(stored.folder)
+        self.auto_backup_enabled.setChecked(stored.enabled)
+        self.auto_backup_keep.setValue(stored.keep)
+
+    def _show_auto_backup_folder(self, folder: str) -> None:
+        self._auto_backup_folder = folder
+        self.auto_backup_folder_label.setText(folder or NO_BACKUP_FOLDER_TEXT)
+
+    def pick_auto_backup_folder(self) -> None:
+        folder = self.choose_backup_folder(self)
+        if folder is not None:
+            self._show_auto_backup_folder(str(folder))
 
     def _load(self, current: BusinessSettings) -> None:
         """Fill every field from the stored settings."""
@@ -499,8 +545,12 @@ class SettingsWidget(QWidget):
     # -- business data ----------------------------------------------------------------------
 
     def save(self) -> None:
-        """Save data, type, modules and checkout together, or save nothing."""
+        """Save data, type, modules, checkout and backups together, or save nothing."""
         before = self.profile.get(self.session)
+        # Checked up front so a rejected backup choice leaves everything else unsaved too.
+        if self.auto_backup_enabled.isChecked() and not self._auto_backup_folder.strip():
+            self.message.show_error(FOLDER_REQUIRED)
+            return
         methods = ["cash"]
         if self.transfer.isChecked():
             methods.append("transfer")
@@ -540,7 +590,19 @@ class SettingsWidget(QWidget):
             self._restore_profile(before)
             self.message.show_error(str(error))
             return
+        try:
+            self.auto_backup.save(
+                self.session.user.business_id,
+                enabled=self.auto_backup_enabled.isChecked(),
+                folder=self._auto_backup_folder,
+                keep=self.auto_backup_keep.value(),
+            )
+        except ValueError as error:
+            # Unreachable from the form (folder checked above, spin box minimum is 1).
+            self.message.show_error(str(error))
+            return
         self._load(saved)
+        self._load_auto_backup()
         self.message.clear_message()
         self.notification.emit(f"Configuración de {saved.name} actualizada.", "success")
         self.business_changed.emit()

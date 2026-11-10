@@ -2,7 +2,16 @@ import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from PySide6.QtCore import QDate, QEasingCurve, QSize, Qt, QVariantAnimation, Signal
+from PySide6.QtCore import (
+    QDate,
+    QEasingCurve,
+    QObject,
+    QSize,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+    Signal,
+)
 from PySide6.QtGui import QAction, QCloseEvent, QFont, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -37,6 +46,11 @@ from suitelocal.application.receipts import ReceiptService
 from suitelocal.application.tables import TablesService
 from suitelocal.domain.auth import Session
 from suitelocal.domain.business import issues_electronic_invoices
+from suitelocal.infrastructure.auto_backup import (
+    AutoBackupResult,
+    AutoBackupService,
+    format_last_backup,
+)
 from suitelocal.infrastructure.database import Database
 from suitelocal.infrastructure.repositories import (
     CategoryRepository,
@@ -68,6 +82,100 @@ ROLE_LABELS = {"owner": "Dueño", "cashier": "Cajero"}
 # Navigation items keep the page index (or "section") in UserRole, plus these two extras.
 LABEL_ROLE = Qt.ItemDataRole.UserRole + 1
 ICON_ROLE = Qt.ItemDataRole.UserRole + 3
+AUTO_BACKUP_INTERVAL_MS = 3_600_000
+
+
+class AutoBackupRunner(QObject):
+    """Every hour, starts the automatic backup if one is due; a backup never starts over another.
+
+    Whether a backup is due and how it is made live in `infrastructure.auto_backup`; the work
+    goes to an executor (a thread pool in the app), so the UI thread never waits on the disk.
+    """
+
+    # Both are emitted on the UI thread, whatever thread the backup ran on.
+    succeeded = Signal(object)
+    failed = Signal(str)
+    _finished = Signal(object)
+
+    def __init__(
+        self,
+        *,
+        is_due: Callable[[datetime], bool],
+        run: Callable[[datetime], AutoBackupResult],
+        executor: Executor = thread_pool_executor,
+        clock: Callable[[], datetime] | None = None,
+        interval_ms: int = AUTO_BACKUP_INTERVAL_MS,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._is_due = is_due
+        self._run = run
+        self._executor = executor
+        self._clock = clock or (lambda: datetime.now().astimezone())
+        self._running = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(interval_ms)
+        self._timer.timeout.connect(self.tick)
+        self._finished.connect(self._on_finished)
+
+    @property
+    def interval_ms(self) -> int:
+        return self._timer.interval()
+
+    @property
+    def is_active(self) -> bool:
+        return self._timer.isActive()
+
+    @property
+    def running(self) -> bool:
+        return self._running
+
+    def start(self) -> None:
+        self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    def tick(self) -> bool:
+        """Start a backup unless none is due or the previous one has not finished."""
+        if self._running:
+            return False
+        now = self._clock()
+        if not self._is_due(now):
+            return False
+        self._running = True
+
+        def work() -> None:
+            try:
+                result = self._run(now)
+            except Exception as failure:
+                # Whatever the backup raises still has to reach the UI thread, or the running
+                # flag would never clear and every later tick would be skipped.
+                result = AutoBackupResult(None, None, str(failure) or type(failure).__name__)
+            try:
+                self._finished.emit(result)
+            except RuntimeError:
+                # The window was closed while the backup ran: nobody is left to tell.
+                pass
+
+        try:
+            self._executor(work)
+        except BaseException:
+            self._running = False
+            raise
+        return True
+
+    def _on_finished(self, result: object) -> None:
+        try:
+            if not isinstance(result, AutoBackupResult):
+                return
+            if result.error is not None:
+                self.failed.emit(f"No se pudo hacer el respaldo automático: {result.error}")
+            elif result.at is not None:
+                self.succeeded.emit(result.at)
+        finally:
+            # Cleared even if a listener raises, so the next tick can always run.
+            self._running = False
 
 
 def _no_certificates(_business_id: int) -> CertificateStore:
@@ -123,6 +231,8 @@ class AppShell(QMainWindow):
         einvoice_client_for: Callable[[str], SriGateway] | None = None,
         einvoice_executor: Executor = thread_pool_executor,
         ride_output: RideOutput | None = None,
+        auto_backup_executor: Executor = thread_pool_executor,
+        auto_backup_clock: Callable[[], datetime] | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("SuiteLocal")
@@ -377,6 +487,7 @@ class AppShell(QMainWindow):
             self.tables_widget.sale_registered.connect(self.pos_widget.refresh_products)
         self.pages.currentChanged.connect(self._refresh_register_on_page_change)
         self._start_einvoice_runner(einvoice_client_for, einvoice_executor)
+        self._start_auto_backup(auto_backup_executor, auto_backup_clock)
         self.dashboard.quick_action.clicked.connect(lambda: self.pages.setCurrentIndex(1))
         theme_manager().theme_changed.connect(self._apply_theme)
         self._apply_theme(theme_manager().name)
@@ -491,7 +602,7 @@ class AppShell(QMainWindow):
             return holder, label
 
         offline, self.status_offline = item("Funcionando sin internet", "ok")
-        # The backups module records no last-backup time, so only what is true today is shown.
+        backup, self.status_backup = item(format_last_backup(None, None), "idle")
         printer, self.status_printer = item(printer_status_text(self._printer_name), "idle")
         self.status_sri_item, self.status_sri = item("", "warn")
         self.status_sri_item.hide()
@@ -518,6 +629,7 @@ class AppShell(QMainWindow):
         layout.setSpacing(22)
         layout.addWidget(offline)
         layout.addWidget(printer)
+        layout.addWidget(backup)
         layout.addWidget(self.status_sri_item)
         layout.addStretch()
         layout.addWidget(self.status_cash)
@@ -566,6 +678,31 @@ class AppShell(QMainWindow):
             self.einvoices_page.decimal_separator = business.decimal_separator
             self.einvoices_page.refresh()
         self._refresh_einvoice_status()
+        # Turning the backup on (or changing its folder) should not wait for the next hour.
+        self.auto_backup_runner.tick()
+
+    # -- automatic backup -------------------------------------------------------------------
+
+    def _start_auto_backup(self, executor: Executor, clock: Callable[[], datetime] | None) -> None:
+        """Back up at startup and every hour, once per calendar day, off the UI thread."""
+        service = AutoBackupService(self._database, self._session.user.business_id)
+        self._auto_backup_clock = clock or (lambda: datetime.now().astimezone())
+        self.auto_backup_runner = AutoBackupRunner(
+            is_due=service.is_due,
+            run=service.run,
+            executor=executor,
+            clock=self._auto_backup_clock,
+            parent=self,
+        )
+        self.auto_backup_runner.succeeded.connect(self._show_last_backup)
+        self.auto_backup_runner.failed.connect(self._warn)
+        self._show_last_backup(service.last_backup_at())
+        self.auto_backup_runner.start()
+        self.auto_backup_runner.tick()
+
+    def _show_last_backup(self, at: datetime | None) -> None:
+        zone = self._auto_backup_clock().tzinfo
+        self.status_backup.setText(format_last_backup(at, zone))
 
     # -- electronic invoices ----------------------------------------------------------------
 
@@ -622,6 +759,7 @@ class AppShell(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.einvoice_runner.stop()
+        self.auto_backup_runner.stop()
         super().closeEvent(event)
 
     # -- cash register ----------------------------------------------------------------------

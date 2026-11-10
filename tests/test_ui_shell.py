@@ -257,8 +257,8 @@ def test_status_bar_without_open_register(shell):
     assert shell.status_offline.text() == "Funcionando sin internet"
     assert shell.status_printer.text() == "Impresora: predeterminada"
     assert shell.status_cash.isHidden()
-    texts = [label.text().lower() for label in shell.status_bar.findChildren(QLabel)]
-    assert not any("respaldo" in text for text in texts)
+    # No backup was ever made, so the bar says so instead of inventing a date.
+    assert shell.status_backup.text() == "Último respaldo: nunca"
 
 
 def test_status_bar_shows_cash_and_refreshes_after_each_sale(qapp, env):

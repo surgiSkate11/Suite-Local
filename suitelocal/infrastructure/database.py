@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS business_settings (
     ,obligado_contabilidad INTEGER NOT NULL DEFAULT 0 CHECK (obligado_contabilidad IN (0, 1))
     ,trade_name TEXT NOT NULL DEFAULT ''
     ,print_on_charge INTEGER NOT NULL DEFAULT 1 CHECK (print_on_charge IN (0, 1))
+    ,auto_backup_enabled INTEGER NOT NULL DEFAULT 0 CHECK (auto_backup_enabled IN (0, 1))
+    ,auto_backup_folder TEXT NOT NULL DEFAULT ''
+    ,auto_backup_keep INTEGER NOT NULL DEFAULT 7 CHECK (auto_backup_keep >= 1)
+    ,last_auto_backup_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -430,6 +434,10 @@ def _migrate_settings(connection: sqlite3.Connection) -> None:
             "CHECK (obligado_contabilidad IN (0, 1))",
             "trade_name TEXT NOT NULL DEFAULT ''",
             "print_on_charge INTEGER NOT NULL DEFAULT 1 CHECK (print_on_charge IN (0, 1))",
+            "auto_backup_enabled INTEGER NOT NULL DEFAULT 0 CHECK (auto_backup_enabled IN (0, 1))",
+            "auto_backup_folder TEXT NOT NULL DEFAULT ''",
+            "auto_backup_keep INTEGER NOT NULL DEFAULT 7 CHECK (auto_backup_keep >= 1)",
+            "last_auto_backup_at TEXT",
         ),
     )
     if "tax_regime" in added:
