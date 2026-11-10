@@ -196,6 +196,8 @@ class Harness:
         self.failed: list[str] = []
         self.runner.succeeded.connect(self.succeeded.append)
         self.runner.failed.connect(self.failed.append)
+        self.failed_at: list[datetime] = []
+        self.runner.attempt_failed.connect(self.failed_at.append)
 
     def _is_due(self, now: datetime) -> bool:
         return self.due
@@ -273,6 +275,47 @@ def test_a_failed_attempt_emits_one_warning_and_the_next_tick_can_retry(harness)
     assert harness.succeeded == []
     assert harness.runner.running is False
     assert harness.runner.tick() is True
+
+
+def fail_once(harness: Harness, error: str) -> None:
+    harness.outcome = AutoBackupResult(None, None, error)
+    harness.runner.tick()
+    harness.executor.finish_all()
+
+
+def succeed_once(harness: Harness) -> None:
+    harness.outcome = AutoBackupResult(MORNING, Path("x.sqlite"), None)
+    harness.runner.tick()
+    harness.executor.finish_all()
+    harness.due = True
+
+
+def test_the_same_failure_warns_once_but_every_attempt_is_recorded(harness):
+    fail_once(harness, "La carpeta no existe")
+    harness.clock.now = MORNING + timedelta(hours=1)
+    fail_once(harness, "La carpeta no existe")
+
+    assert harness.failed == ["No se pudo hacer el respaldo automático: La carpeta no existe"]
+    assert harness.failed_at == [MORNING, MORNING + timedelta(hours=1)]
+
+
+def test_a_different_failure_warns_again(harness):
+    fail_once(harness, "La carpeta no existe")
+    fail_once(harness, "Disco lleno")
+
+    assert harness.failed == [
+        "No se pudo hacer el respaldo automático: La carpeta no existe",
+        "No se pudo hacer el respaldo automático: Disco lleno",
+    ]
+
+
+def test_after_a_successful_backup_the_same_failure_warns_again(harness):
+    fail_once(harness, "La carpeta no existe")
+    succeed_once(harness)
+    fail_once(harness, "La carpeta no existe")
+
+    assert len(harness.failed) == 2
+    assert harness.succeeded == [MORNING]
 
 
 def test_a_backup_that_raises_still_frees_the_runner(qapp):
@@ -419,7 +462,7 @@ def test_a_failed_backup_shows_exactly_one_warning_toast_and_keeps_the_status(en
     assert len(shown) == 1
     assert shown[0].message.startswith("No se pudo hacer el respaldo automático: ")
     assert shown[0].property("state") == "warning"
-    assert shell.status_backup.text() == "Último respaldo: nunca"
+    assert shell.status_backup.text() == "Último respaldo: falló 10/03 09:30"
     assert stored(database).last_backup_at is None
 
 

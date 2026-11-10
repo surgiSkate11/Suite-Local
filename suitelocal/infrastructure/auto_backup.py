@@ -82,6 +82,11 @@ def format_last_backup(last: datetime | None, zone: tzinfo | None) -> str:
     return f"Último respaldo: {last.astimezone(zone):%d/%m %H:%M}"
 
 
+def format_backup_failure(at: datetime, zone: tzinfo | None) -> str:
+    """The status bar text after a failed attempt, so the problem stays visible."""
+    return f"Último respaldo: falló {at.astimezone(zone):%d/%m %H:%M}"
+
+
 class AutoBackupSettingsRepository:
     def __init__(self, database: Database) -> None:
         self.database = database

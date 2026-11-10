@@ -13,7 +13,7 @@ Branch `feat/respaldo-importacion` from `feat/multinegocio` 27133d7, worktree `C
 ## Tasks
 
 - [x] T1 S2, S4 — automatic daily backup (infrastructure, settings persistence, Settings UI, status bar) — worker A, parent commits — commit: 05ea782
-- [x] T2 S3, S4 — CSV product import (parser, application service, preview dialog, Inventario button) — worker B, parent commits — commit: (this commit)
+- [x] T2 S3, S4 — CSV product import (parser, application service, preview dialog, Inventario button) — worker B, parent commits — commit: 4f234f1
 - [ ] T3 S4 — full checks, commit, send ids to 01a1a49b — inline — commit: n/a
 
 ## Log
@@ -21,3 +21,4 @@ Branch `feat/respaldo-importacion` from `feat/multinegocio` 27133d7, worktree `C
 - L1 User: "continua con las tareas que faltan". Peer assigned T14 with the scope in S2-S4 and told us to branch from the fiado commit 27133d7.
 - L2 T1 and T2 are independent units with disjoint files, so they run as two parallel workers that do not commit; the parent commits each one separately.
 - L3 Both workers died with "child exit unconfirmed" after writing their code. T1 was complete (50 tests). T2 lacked the Inventario wiring; the parent added it inline (8 UI tests were RED) and aligned one UI test with the service message that includes the line number. The old shell test asserting no backup text in the status bar was updated: it now asserts the honest "Último respaldo: nunca".
+- L4 Peer asked (after review of the plan): do not repeat the failure toast every hour; like the SRI runner, warn once per distinct failure and again only after a success; keep the failure visible in the status bar as "Último respaldo: falló dd/mm hh:mm". Done in a separate fix commit with tests.

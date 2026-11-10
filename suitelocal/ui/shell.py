@@ -49,6 +49,7 @@ from suitelocal.domain.business import issues_electronic_invoices
 from suitelocal.infrastructure.auto_backup import (
     AutoBackupResult,
     AutoBackupService,
+    format_backup_failure,
     format_last_backup,
 )
 from suitelocal.infrastructure.database import Database
@@ -95,6 +96,8 @@ class AutoBackupRunner(QObject):
     # Both are emitted on the UI thread, whatever thread the backup ran on.
     succeeded = Signal(object)
     failed = Signal(str)
+    # Every failed attempt, with its time, even when the warning is not repeated.
+    attempt_failed = Signal(object)
     _finished = Signal(object)
 
     def __init__(
@@ -113,6 +116,8 @@ class AutoBackupRunner(QObject):
         self._executor = executor
         self._clock = clock or (lambda: datetime.now().astimezone())
         self._running = False
+        self._attempt_at: datetime | None = None
+        self._last_warning: str | None = None
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self.tick)
@@ -144,6 +149,7 @@ class AutoBackupRunner(QObject):
         if not self._is_due(now):
             return False
         self._running = True
+        self._attempt_at = now
 
         def work() -> None:
             try:
@@ -170,8 +176,15 @@ class AutoBackupRunner(QObject):
             if not isinstance(result, AutoBackupResult):
                 return
             if result.error is not None:
-                self.failed.emit(f"No se pudo hacer el respaldo automático: {result.error}")
+                if self._attempt_at is not None:
+                    self.attempt_failed.emit(self._attempt_at)
+                message = f"No se pudo hacer el respaldo automático: {result.error}"
+                if message != self._last_warning:
+                    # An unplugged drive fails every hour: say it once, until it works again.
+                    self._last_warning = message
+                    self.failed.emit(message)
             elif result.at is not None:
+                self._last_warning = None
                 self.succeeded.emit(result.at)
         finally:
             # Cleared even if a listener raises, so the next tick can always run.
@@ -696,9 +709,15 @@ class AppShell(QMainWindow):
         )
         self.auto_backup_runner.succeeded.connect(self._show_last_backup)
         self.auto_backup_runner.failed.connect(self._warn)
+        self.auto_backup_runner.attempt_failed.connect(self._show_backup_failure)
         self._show_last_backup(service.last_backup_at())
         self.auto_backup_runner.start()
         self.auto_backup_runner.tick()
+
+    def _show_backup_failure(self, at: object) -> None:
+        if isinstance(at, datetime):
+            zone = self._auto_backup_clock().tzinfo
+            self.status_backup.setText(format_backup_failure(at, zone))
 
     def _show_last_backup(self, at: datetime | None) -> None:
         zone = self._auto_backup_clock().tzinfo

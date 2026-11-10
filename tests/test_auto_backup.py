@@ -343,3 +343,13 @@ def test_a_fresh_database_has_the_columns_and_initializing_again_keeps_the_value
     database.initialize()
 
     assert AutoBackupSettingsRepository(database).get(1).keep == 4
+
+
+def test_a_failed_attempt_is_shown_with_its_local_time():
+    from suitelocal.infrastructure.auto_backup import format_backup_failure
+
+    at = datetime(2026, 3, 10, 14, 30, tzinfo=UTC)
+
+    assert format_backup_failure(at, timezone(timedelta(hours=-5))) == (
+        "Último respaldo: falló 10/03 09:30"
+    )
