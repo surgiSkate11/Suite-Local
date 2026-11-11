@@ -48,7 +48,7 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - [x] T11 (S15) IVA según régimen y ajuste de impresión por defecto — gentle-ai-worker, después del cierre de código
 - [x] T12 (S16) Fiado — gentle-ai-worker
 - [x] T13 (S17) Instalador .exe — gentle-ai-worker, en paralelo con T12
-- [ ] T14 (S18) Respaldo automático e importación de productos — después de T12
+- [x] T14 (S18) Respaldo automático e importación de productos — después de T12
 
 ## Log
 
@@ -104,3 +104,4 @@ Rama de trabajo: `feat/multinegocio` (parte de `fix/hallazgos-revision`).
 - L50: T13 hecha: de16cb0. Con permiso del usuario ("intala te doy el permiso") se instaló Inno Setup 6.7.3 solo para el usuario, vía winget (JRSoftware.InnoSetup, hash verificado). dist\SuiteLocal-Setup.exe (40 MB) verificado: instala en silencio, arranca con --smoke-test (exit 0) y se desinstala limpio.
 - L51: T12 Fiado hecho (workers mw9cr5u3 cortado + mw9nhhwi): módulo fiado, método credit con cliente obligatorio y límite, cuenta corriente con abonos, caja que excluye el fiado e incluye los abonos en efectivo, SRI código 01 y saldo en el ticket. La migración reconstruye sale_payments verificando fila por fila. 1461 tests.
 - L52: Revisión del fiado (review-747facd20f7e821c) aprobada con 3 avisos, ya corregidos: solo el dueño fija el límite de crédito (lo verifica el servicio), los deudores inactivos aparecen en la lista y en el CSV (columna Activo), y el límite usa el separador decimal del negocio. 1477 tests.
+- L53: T14 hecha por la sesión 2 (1d83f49, cfd8fef, 5f55cd9; fast-forward sobre b39fe85). 1612 tests. Revisión nativa review-e06bf48be994cb8a aprobada con avisos menores para después: limitar los números del CSV importado (desborde de entero), y que no se acumulen respaldos si falla el registro de la fecha. Instalador reconstruido y verificado (--smoke-test exit 0).
