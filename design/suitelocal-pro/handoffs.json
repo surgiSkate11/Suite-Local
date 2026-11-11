@@ -3,13 +3,13 @@
   "chosen": "04-atelier-grafito.html",
   "handoffs": {
     "04-atelier-grafito.html": {
-      "status": "in_progress",
+      "status": "implemented",
       "queued": false,
       "sentAt": "2026-11-04T22:18:48.485Z",
       "startedAt": "2026-11-04T22:19:14.229Z",
-      "implementedAt": null,
+      "implementedAt": "2026-11-05T11:48:05.735Z",
       "feature": "odd/tasks/rediseno-multinegocio.md",
-      "note": "Merging pending UI branch, then building the light/dark theme system and the new POS in PySide6."
+      "note": "Implemented in PySide6 (commits 2b998d6..93fcda5): light/dark themes, Atelier rail, scanner, quick keys, product cards, floating ticket, inline cash checkout and split-payment dialog. Desktop app, no loopback preview URL. Buttons for features that don't exist yet (discount, suspend, assign customer) are intentionally hidden."
     }
   }
 }
