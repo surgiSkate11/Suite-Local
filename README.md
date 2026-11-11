@@ -36,6 +36,8 @@ python -m pip install -e .
 
 El dueño del negocio no necesita instalar Python: recibe un instalador o un zip y lo abre con doble clic.
 
+Guía completa (generar, subir a Google Drive e instalar en cada empresa): [`docs/INSTALL-GUIDE.md`](docs/INSTALL-GUIDE.md).
+
 **Generarlo** (en PowerShell, desde la carpeta del proyecto, con `python -m pip install -e ".[dev]"` hecho antes):
 
 ```powershell
