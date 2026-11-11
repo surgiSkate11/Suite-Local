@@ -18,7 +18,8 @@ a = Analysis(  # noqa: F821
     binaries=[],
     datas=datas,
     # lxml is imported by name at runtime (import_module), so the analysis cannot see it.
-    hiddenimports=["lxml.etree", "lxml._elementpath"],
+    # openpyxl reads .xlsx in the product import; its et_xmlfile helper is imported lazily.
+    hiddenimports=["lxml.etree", "lxml._elementpath", "openpyxl", "et_xmlfile"],
     hookspath=[],
     runtime_hooks=[],
     excludes=["tkinter", "pytest", "pyright", "ruff", "pip"],

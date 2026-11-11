@@ -10,6 +10,7 @@ Funciona sin internet en una sola computadora con Windows.
   pago dividido y cálculo de cambio.
 - **IVA ecuatoriano** (15 %, 5 % y 0 %) incluido en el precio de cada producto.
 - **Inventario** con categorías, costo, margen y aviso de stock bajo.
+- **Importación de productos** desde Excel (`.xlsx`) o CSV, con vista previa y todo o nada. Columnas: código, nombre, precio y stock (obligatorias); categoría, costo e IVA (opcionales). El formato `.xls` antiguo no se lee: guardalo como `.xlsx` o CSV.
 - **Clientes**: búsqueda por cédula al cobrar, historial de compras y lista de quienes aceptan ofertas.
 - **Mesas y comandas** para cafeterías y restaurantes (módulo opcional).
 - **Apertura y cierre de caja** con arqueo, y **reportes** exportables a CSV (Excel).

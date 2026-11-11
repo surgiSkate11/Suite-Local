@@ -55,8 +55,10 @@ ImportDialogFactory = Callable[[ImportPlan, QWidget | None], ImportDialog]
 
 
 def choose_import_file(parent: QWidget | None) -> str | None:
-    """Ask for the CSV to import; None when the owner cancels."""
-    path, _ = QFileDialog.getOpenFileName(parent, "Importar productos", "", "CSV (*.csv)")
+    """Ask for the Excel or CSV file to import; None when the owner cancels."""
+    path, _ = QFileDialog.getOpenFileName(
+        parent, "Importar productos", "", "Excel o CSV (*.xlsx *.csv)"
+    )
     return path or None
 
 
@@ -158,6 +160,7 @@ class InventoryWidget(QWidget):
         toolbar.addWidget(self.result_count)
         toolbar.addStretch()
         self.import_button = set_variant(QPushButton("Importar productos"), "secondary")
+        self.import_button.setToolTip("Importá productos desde un archivo Excel (.xlsx) o CSV.")
         self.import_button.clicked.connect(self.import_products)
         self.import_button.setVisible(session.is_owner)
         toolbar.addWidget(self.import_button)
@@ -350,7 +353,7 @@ class InventoryWidget(QWidget):
         self.drawer.hide()
 
     def import_products(self) -> None:
-        """Choose a CSV, preview what it would change and apply it only once confirmed."""
+        """Choose an Excel or CSV file, preview it and apply it only once confirmed."""
         path = self._import_file_chooser(self)
         if path is None:
             return

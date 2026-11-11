@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from openpyxl import Workbook
 
 from suitelocal.application.auth import AuthService
 from suitelocal.application.categories import CategoryService
@@ -11,6 +12,7 @@ from suitelocal.application.product_import import (
     ProductImportService,
     RowError,
     parse_product_csv,
+    parse_product_file,
 )
 from suitelocal.domain.auth import Session
 from suitelocal.infrastructure.database import Database
@@ -489,3 +491,294 @@ def test_the_connection_is_released_after_a_failed_apply(env):
         env.service.apply(env.owner, plan)
 
     env.inventory.create_product(env.owner, "C-3", "Sigue funcionando", 100, 1)
+
+
+# -- .xlsx files and number bounds --------------------------------------------------------
+
+
+def xlsx(tmp_path: Path, *rows: tuple[object, ...], name: str = "productos.xlsx") -> Path:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    for row in rows:
+        sheet.append(row)
+    path = tmp_path / name
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+XLSX_HEADER = ("Código", "Nombre", "Precio", "Stock", "Categoría", "Costo", "IVA")
+
+
+def test_an_xlsx_reads_numeric_and_text_cells_into_the_same_rows_as_a_csv(tmp_path):
+    path = xlsx(
+        tmp_path,
+        XLSX_HEADER,
+        ("A-1", "Arroz", 2.5, 10, "Granos", 1.8, 15),
+        ("B-2", "Sal", "1,00", "5", "Granos", "0,40", "5%"),
+        (123, "Pan", 0.3, 9.0, None, None, 0.05),
+    )
+
+    parsed = parse_product_file(path)
+
+    assert parsed.errors == ()
+    assert parsed.rows == (
+        ProductImportRow(2, "A-1", "Arroz", 250, 10, "Granos", 180, 1500),
+        ProductImportRow(3, "B-2", "Sal", 100, 5, "Granos", 40, 500),
+        ProductImportRow(4, "123", "Pan", 30, 9, None, None, 500),
+    )
+    assert parsed.rows[0] == parse_product_csv(csv("A-1;Arroz;2,50;10;Granos;1,80;15")).rows[0]
+
+
+@pytest.mark.parametrize(
+    ("value", "cents"),
+    [(1.15, 115), (0.1 + 0.2, 30), (2.675, 268), (19.99, 1999), (1.005, 101), (0, 0), (7, 700)],
+)
+def test_xlsx_money_is_rounded_to_cents_exactly(tmp_path, value, cents):
+    path = xlsx(tmp_path, XLSX_HEADER, ("A-1", "Arroz", value, 1, None, value, None))
+
+    row = parse_product_file(path).rows[0]
+
+    assert (row.price_cents, row.cost_cents) == (cents, cents)
+
+
+def test_an_xlsx_ignores_empty_rows_and_keeps_the_sheet_row_numbers(tmp_path):
+    path = xlsx(
+        tmp_path,
+        (None, None, None),
+        XLSX_HEADER,
+        (None, None, None, None),
+        ("A-1", "Arroz", 2.5, 10),
+        ("   ", None, ""),
+        ("B-2", "Sal", -1, 5),
+    )
+
+    parsed = parse_product_file(path)
+
+    assert [row.line for row in parsed.rows] == [4]
+    assert [error.line for error in parsed.errors] == [6]
+
+
+def test_an_xlsx_reads_only_the_first_worksheet_and_ignores_extra_columns(tmp_path):
+    workbook = Workbook()
+    first = workbook.active
+    assert first is not None
+    first.append(("Notas", "Stock", "Precio", "Nombre", "Código"))
+    first.append(("x", 4, 3.5, "Aceite", "C-3"))
+    workbook.create_sheet().append(("otra", "hoja"))
+    path = tmp_path / "dos-hojas.xlsx"
+    workbook.save(path)
+    workbook.close()
+
+    assert parse_product_file(path).rows == (
+        ProductImportRow(2, "C-3", "Aceite", 350, 4, None, None, None),
+    )
+
+
+def test_an_xlsx_can_be_read_from_bytes_and_str_paths(tmp_path):
+    path = xlsx(tmp_path, XLSX_HEADER, ("A-1", "Arroz", 2.5, 10))
+
+    assert parse_product_file(path.read_bytes()).rows[0].code == "A-1"
+    assert parse_product_file(str(path)).rows[0].code == "A-1"
+
+
+def test_an_xlsx_is_closed_after_reading_so_it_can_be_deleted(tmp_path):
+    path = xlsx(tmp_path, XLSX_HEADER, ("A-1", "Arroz", 2.5, 10))
+    parse_product_file(path)
+
+    path.unlink()  # fails on Windows while the workbook still holds the file open
+
+    assert not path.exists()
+
+
+def test_an_xlsx_without_products_or_with_a_missing_column_is_an_error(tmp_path):
+    only_header = xlsx(tmp_path, XLSX_HEADER, name="a.xlsx")
+    missing = xlsx(tmp_path, ("Código", "Nombre", "Precio"), ("A", "B", 1), name="b.xlsx")
+
+    assert parse_product_file(only_header).errors == (
+        RowError(1, "El archivo no tiene productos para importar."),
+    )
+    assert parse_product_file(missing).errors == (RowError(1, "Falta la columna «stock»."),)
+
+
+@pytest.mark.parametrize(
+    ("price", "stock", "message"),
+    [
+        (-2, 1, "El precio «-2» no es válido. Debe ser un número positivo."),
+        (2, 1.5, "El stock «1.5» debe ser un número entero, sin negativos."),
+        (2, -1, "El stock «-1» debe ser un número entero, sin negativos."),
+    ],
+)
+def test_xlsx_invalid_numbers_are_row_errors(tmp_path, price, stock, message):
+    path = xlsx(tmp_path, XLSX_HEADER, ("A-1", "Arroz", price, stock))
+
+    parsed = parse_product_file(path)
+
+    assert parsed.rows == ()
+    assert parsed.errors == (RowError(2, message),)
+
+
+def test_xlsx_text_cells_follow_the_csv_rules(tmp_path):
+    path = xlsx(tmp_path, XLSX_HEADER, ("A-1", "Arroz", "abc", 1), ("B-2", "Sal", "1.234,50", 1))
+
+    parsed = parse_product_file(path, decimal_separator=",")
+
+    assert [row.price_cents for row in parsed.rows] == [123450]
+    assert [error.line for error in parsed.errors] == [2]
+
+
+def test_the_old_xls_format_is_rejected_with_a_clear_message(tmp_path):
+    message = "No se puede leer el formato .xls antiguo. Guardá el archivo como .xlsx o CSV."
+    by_name = tmp_path / "productos.XLS"
+    by_name.write_bytes(csv("A-1;Arroz;2,50;10"))
+    by_content = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(64)
+
+    assert parse_product_file(by_name).errors == (RowError(1, message),)
+    assert parse_product_file(by_content).errors == (RowError(1, message),)
+
+
+def test_a_corrupt_xlsx_is_an_error_not_an_exception(tmp_path):
+    broken = tmp_path / "roto.xlsx"
+    broken.write_bytes(b"PK\x03\x04 esto no es un zip")
+    expected = (RowError(1, "No se pudo leer el archivo: no es un Excel (.xlsx) válido."),)
+
+    assert parse_product_file(broken).errors == expected
+    assert parse_product_file(broken.read_bytes()).errors == expected
+
+
+def test_a_missing_xlsx_raises_oserror(tmp_path):
+    with pytest.raises(OSError):
+        parse_product_file(tmp_path / "no-existe.xlsx")
+
+
+# Bounds: price/cost at most 99.999.999,99 and stock at most 1.000.000, in either format.
+PRICE_BOUND = "El precio no puede superar 99.999.999,99."
+COST_BOUND = "El costo no puede superar 99.999.999,99."
+STOCK_BOUND = "El stock no puede superar 1.000.000."
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        ("A-1;Arroz;100000000,00;1", PRICE_BOUND),
+        ("A-1;Arroz;99.999.999,99;1;;100000000;", COST_BOUND),
+        ("A-1;Arroz;" + "9" * 40 + ";1", PRICE_BOUND),
+        ("A-1;Arroz;1;1000001", STOCK_BOUND),
+        ("A-1;Arroz;1;" + "9" * 5000, STOCK_BOUND),
+    ],
+)
+def test_csv_numbers_over_the_bounds_are_row_errors(row, message):
+    parsed = parse_product_csv(csv(row))
+
+    assert parsed.rows == ()
+    assert parsed.errors == (RowError(2, message),)
+
+
+def test_csv_numbers_at_the_bounds_are_accepted():
+    parsed = parse_product_csv(csv("A-1;Arroz;99.999.999,99;1000000;;99.999.999,99;"))
+
+    assert parsed.errors == ()
+    assert (parsed.rows[0].price_cents, parsed.rows[0].cost_cents) == (9_999_999_999,) * 2
+    assert parsed.rows[0].stock == 1_000_000
+
+
+@pytest.mark.parametrize(
+    ("price", "cost", "stock", "message"),
+    [
+        (100_000_000, None, 1, PRICE_BOUND),
+        (99_999_999.995, None, 1, PRICE_BOUND),
+        (1e300, None, 1, PRICE_BOUND),
+        (1, 100_000_000.01, 1, COST_BOUND),
+        (1, None, 1_000_001, STOCK_BOUND),
+        (1, None, 1e30, STOCK_BOUND),
+    ],
+)
+def test_xlsx_numbers_over_the_bounds_are_row_errors(tmp_path, price, cost, stock, message):
+    path = xlsx(tmp_path, XLSX_HEADER, ("A-1", "Arroz", price, stock, None, cost, None))
+
+    parsed = parse_product_file(path)
+
+    assert parsed.rows == ()
+    assert parsed.errors == (RowError(2, message),)
+
+
+def test_xlsx_numbers_at_the_bounds_are_accepted(tmp_path):
+    path = xlsx(
+        tmp_path, XLSX_HEADER, ("A-1", "Arroz", 99_999_999.99, 1_000_000, None, 99_999_999.99, None)
+    )
+
+    row = parse_product_file(path).rows[0]
+
+    assert (row.price_cents, row.cost_cents, row.stock) == (9_999_999_999, 9_999_999_999, 1_000_000)
+
+
+def test_an_out_of_bounds_row_does_not_stop_the_good_rows(tmp_path):
+    path = xlsx(tmp_path, XLSX_HEADER, ("A-1", "Arroz", 1e12, 1), ("B-2", "Sal", 1, 1))
+
+    parsed = parse_product_file(path)
+
+    assert [row.code for row in parsed.rows] == ["B-2"]
+    assert [error.line for error in parsed.errors] == [2]
+
+
+# -- .xlsx through the service: same plan and same apply as a CSV -------------------------
+
+
+def test_the_plan_from_an_xlsx_equals_the_plan_from_the_equivalent_csv(env, tmp_path):
+    env.categories.create(env.owner, "Granos")
+    env.inventory.create_product(env.owner, "A-1", "Arroz viejo", 100, 1)
+    path = xlsx(
+        tmp_path,
+        XLSX_HEADER,
+        ("A-1", "Arroz", 2.5, 10, "Granos", 1.8, 15),
+        ("B-2", "Sal", 1, 5, "Condimentos", None, None),
+        ("B-2", "Repetido", 1, 1),
+        ("C-3", "Mal", "x", 1),
+    )
+    equivalent = csv(
+        "A-1;Arroz;2,50;10;Granos;1,80;15",
+        "B-2;Sal;1,00;5;Condimentos;;",
+        "B-2;Repetido;1,00;1;;;",
+        "C-3;Mal;x;1;;;",
+    )
+
+    from_xlsx = env.service.preview(env.owner, path)
+
+    assert from_xlsx == env.service.preview(env.owner, equivalent)
+    assert [row.code for row in from_xlsx.to_update] == ["A-1"]
+    assert [row.code for row in from_xlsx.to_create] == ["B-2"]
+    assert from_xlsx.categories_to_create == ("Condimentos",)
+    assert [error.line for error in from_xlsx.errors] == [4, 5]
+
+
+def test_apply_from_an_xlsx_creates_the_products_and_the_category(env, tmp_path):
+    path = xlsx(
+        tmp_path,
+        XLSX_HEADER,
+        ("A-1", "Arroz", 1.15, 10, "Granos", 0.7, 5),
+        ("B-2", "Sal", 1, 5, None, None, None),
+    )
+
+    plan = env.service.preview(env.owner, path)
+    result = env.service.apply(env.owner, plan)
+
+    assert (result.created, result.updated, result.categories_created) == (2, 0, 1)
+    rice = env.product("A-1")
+    assert (rice.price_cents, rice.stock, rice.cost_cents) == (115, 10, 70)
+    assert rice.tax_rate_basis_points == 500
+    assert env.category_name(rice.category_id) == "Granos"
+    assert env.product("B-2").price_cents == 100
+
+
+def test_xlsx_preview_is_owner_only_and_a_plan_with_bound_errors_is_refused(env, tmp_path):
+    path = xlsx(tmp_path, XLSX_HEADER, ("A-1", "Arroz", 1e12, 1))
+    before = env.snapshot()
+
+    with pytest.raises(PermissionError):
+        env.service.preview(env.cashier, path)
+    plan = env.service.preview(env.owner, path)
+    with pytest.raises(ValueError, match="errores"):
+        env.service.apply(env.owner, plan)
+
+    assert env.snapshot() == before

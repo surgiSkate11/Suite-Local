@@ -101,9 +101,10 @@ def test_the_import_button_is_there_for_the_owner_and_hidden_for_the_cashier(env
     assert owner_view.import_button.text() == "Importar productos"
     assert not owner_view.import_button.isHidden()
     assert cashier_view.import_button.isHidden()
+    assert ".xlsx" in owner_view.import_button.toolTip()
 
 
-def test_the_default_chooser_asks_for_csv_files_through_qfiledialog(env, monkeypatch):
+def test_the_default_chooser_asks_for_excel_or_csv_files_through_qfiledialog(env, monkeypatch):
     from suitelocal.ui.inventory import choose_import_file
 
     calls: list[tuple[object, ...]] = []
@@ -115,7 +116,7 @@ def test_the_default_chooser_asks_for_csv_files_through_qfiledialog(env, monkeyp
     monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(fake))
 
     assert choose_import_file(None) == "C:/x/productos.csv"
-    assert calls == [("Importar productos", "", "CSV (*.csv)")]
+    assert calls == [("Importar productos", "", "Excel o CSV (*.xlsx *.csv)")]
 
     monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a: ("", "")))
     assert choose_import_file(None) is None
@@ -132,6 +133,27 @@ def test_the_owner_flow_applies_the_plan_refreshes_the_table_and_notifies(env):
     assert len(FakeDialog.plans[0].to_create) == 2
     assert sorted(codes(widget)) == ["A-1", "B-2"]
     assert [c.name for c in widget.all_categories] == ["Granos"]
+    assert env.notices == [("Importación lista: 2 productos creados y 0 actualizados.", "success")]
+
+
+def test_the_owner_flow_imports_an_xlsx_file(env, tmp_path):
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.append(["código", "nombre", "precio", "stock", "categoría"])
+    sheet.append(["A-1", "Arroz", 2.5, 10, "Granos"])
+    sheet.append(["B-2", "Sal", "1,00", "5", None])
+    path = tmp_path / "productos.xlsx"
+    workbook.save(path)
+    workbook.close()
+    widget = env.build()
+    env.chosen = str(path)
+
+    widget.import_button.click()
+
+    assert sorted(codes(widget)) == ["A-1", "B-2"]
     assert env.notices == [("Importación lista: 2 productos creados y 0 actualizados.", "success")]
 
 
